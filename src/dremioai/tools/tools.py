@@ -441,24 +441,14 @@ def system_prompt():
 class GetRelevantMetrics(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_PROMETHEUS | ToolType.FOR_SELF]]
 
-    async def invoke(self) -> Dict[str, Any]:
+    async def invoke(self) -> List[str]:
         """
         Get the names and descriptions of the relevant prometheus metrics for the Dremio cluster.
-        A metric that shares the same value for label 'daas_dremio_com_coordinator_project_id'
-        belongs to the same project
 
-        Returns: A dictionary with
-            - key: name of the metric
-            - value: description of the metric
+        Returns: A list of metric names
         """
-        return {
-            "jobs_total": "Total number of jobs executed in the Dremio cluster",
-            "jobs_failed_total": "Total number of failed jobs executed in the Dremio cluster",
-            "jobs_command_pool_queue_size": "Total number of jobs queued before planning",
-            "jvm_gc_pause_seconds": "Indicates how long the JVM was paused for garbage collection, and also is a rubric to know if the system is in use",
-            "memory_heap_usage": "Indicates the amount of memory used by the JVM",
-            "memory_heap_committed": "Indicates the amount of memory committed by the JVM",
-        }
+        result = await vm.get_metric_names(use_df=True)
+        return result[~result.value.str.startswith("vm")].value.tolist()
 
 
 class GetMetricSchema(Tools):
