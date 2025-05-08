@@ -29,6 +29,7 @@ from typer import Typer, Option, Argument, BadParameter
 from rich import console, table, print as pp
 from click import Choice
 from dremioai.config import settings
+from dremioai.api.oauth2 import get_oauth2_tokens
 from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
@@ -133,6 +134,15 @@ def main(
             print(tool.__name__)
         return
 
+    dremio = settings.instance().dremio
+    if (
+        dremio.oauth_supported
+        and dremio.oauth_configured
+        and (dremio.oauth2.has_expired or dremio.pat is None)
+    ):
+        oauth = get_oauth2_tokens()
+        oauth.update_settings()
+
     app = init(
         uri=cfg.dremio.uri,
         pat=cfg.dremio.pat,
@@ -174,7 +184,10 @@ def show_default_config(
                 pp(
                     dump(
                         settings.instance().model_dump(
-                            exclude_none=True, mode="json", exclude_unset=True
+                            exclude_none=True,
+                            mode="json",
+                            exclude_unset=True,
+                            by_alias=True,
                         )
                     )
                 )
@@ -260,6 +273,10 @@ def create_default_config(
     enable_experimental: Annotated[
         bool, Option(help="Enable experimental features")
     ] = False,
+    oauth_client_id: Annotated[
+        Optional[str],
+        Option(help="The ID of OAuth application, for OAuth2 logon support"),
+    ] = None,
     dry_run: Annotated[
         bool, Option(help="Dry run, do not overwrite the config file. Just print it")
     ] = False,
@@ -271,36 +288,21 @@ def create_default_config(
             "pat": pat,
             "project_id": project_id,
             "enable_experimental": enable_experimental,
+            "oauth": (
+                settings.OAuth2.model_validate({"client_id": oauth_client_id})
+                if oauth_client_id
+                else None
+            ),
         }
     )
     ts = settings.Tools.model_validate({"server_mode": tools.ToolType.FOR_SELF})
     settings.configure(settings.default_config(), force=True)
     settings.instance().dremio = dremio
     settings.instance().tools = ts
-    d = settings.instance().model_dump(
-        exclude_none=True, mode="json", exclude_unset=True
-    )
-
-    add_representer(
-        str,
-        lambda dumper, data: dumper.represent_scalar(
-            "tag:yaml.org,2002:str", data, style=('"' if "@" in data else None)
-        ),
-    )
-    if pat.startswith("@") and d["dremio"]["pat"] != pat:
-        d["dremio"]["pat"] = pat
-    d["tools"]["server_mode"] = mode
-
-    if dry_run:
-        pp(dump(d))
-        return
-
-    dc = settings.default_config()
-    if not dc.exists():
-        dc.parent.mkdir(parents=True, exist_ok=True)
-    with dc.open("w") as f:
-        dump(d, f)
-        pp(f"Created default config file: {dc!s}")
+    if (d := settings.write_settings(dry_run=dry_run)) is not None and dry_run:
+        pp(d)
+    elif not dry_run:
+        pp(f"Created default config file: {settings.default_config()!s}")
 
 
 # --------------------------------------------------------------------------------

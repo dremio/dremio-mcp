@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Authentication Complete</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin-top: 100px;
+    }
+    a {
+      display: inline-block;
+      margin-top: 20px;
+      font-size: 18px;
+      text-decoration: none;
+      color: #007BFF;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+  <script>
+    function closeWindow() {
+      window.close();
+    }
+
+    // Try auto-close after 3 seconds
+    window.onload = function () {
+      setTimeout(closeWindow, 3000);
+    };
+  </script>
+</head>
+<body>
+  <h1>Authentication Successful</h1>
+  <p>You may now close this window.</p>
+  <a href="#" onclick="closeWindow(); return false;">Click here to close</a>
+</body>
+</html>

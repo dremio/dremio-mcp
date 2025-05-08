@@ -14,19 +14,27 @@
 #  limitations under the License.
 #
 
-from pydantic import Field, HttpUrl, AfterValidator, BaseModel, ConfigDict
+from pydantic import (
+    Field,
+    HttpUrl,
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    field_serializer,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Union, Annotated, Self, List, Dict, Any, Callable
 from dremioai.config.tools import ToolType
 from enum import auto, StrEnum
 from pathlib import Path
-from yaml import safe_load
+from yaml import safe_load, add_representer, dump
 from functools import reduce
 from operator import ior
 from shutil import which
 from contextvars import ContextVar, copy_context
 from os import environ
 from importlib.util import find_spec
+from datetime import datetime
 
 
 def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
@@ -49,6 +57,10 @@ class Tools(BaseModel):
         Optional[Union[ToolType, int, str]], AfterValidator(_resolve_tools_settings)
     ] = Field(default=ToolType.FOR_SELF)
     model_config = ConfigDict(validate_assignment=True, use_enum_values=True)
+
+    @field_serializer("server_mode")
+    def serialize_server_mode(self, server_mode: ToolType):
+        return ",".join(m.name for m in ToolType if m & server_mode)
 
 
 class DremioCloudUri(StrEnum):
@@ -90,14 +102,59 @@ class Model(StrEnum):
     openai = auto()
 
 
+class OAuth2(BaseModel):
+    client_id: str
+    refresh_token: Optional[str] = None
+    dremio_user_identifier: Optional[str] = None
+    expiry: Optional[datetime] = None
+    model_config = ConfigDict(validate_assignment=True)
+
+    @property
+    def has_expired(self) -> bool:
+        return self.expiry is not None and self.expiry < datetime.now()
+
+
 class Dremio(BaseModel):
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
     ]
-    pat: Annotated[str, AfterValidator(_resolve_token_file)]
+    raw_pat: Optional[str] = Field(default=None, alias="pat")
     project_id: Optional[str] = None
     enable_experimental: Optional[bool] = False  # enable experimental tools
+    oauth2: Optional[OAuth2] = None
     model_config = ConfigDict(validate_assignment=True)
+
+    @field_serializer("raw_pat")
+    def serialize_pat(self, pat: str):
+        return self.raw_pat if pat != self.raw_pat else pat
+
+    @property
+    def oauth_configured(self) -> bool:
+        return self.oauth2 is not None
+
+    @property
+    def oauth_supported(self) -> bool:
+        return self.project_id is not None
+
+    # @field_validator("_pat", mode="wrap")
+    # @classmethod
+    # def validate_pat(cls, v: str, handler: ValidatorFunctionWrapHandler) -> str:
+    #    v = _resolve_token_file(v)
+    #    return handler(v)
+
+    @property
+    def pat(self) -> str:
+        if v := getattr(self, "_pat_resolved", None):
+            return v
+        if self.raw_pat is not None and self.raw_pat.startswith("@"):
+            self._pat_resolved = _resolve_token_file(self.raw_pat)
+            return self._pat_resolved
+        return self.raw_pat
+
+    @pat.setter
+    def pat(self, v: str):
+        self.raw_pat = v
+        self._pat_resolved = None
 
 
 class OpenAi(BaseModel):
@@ -261,3 +318,26 @@ async def run_with(
 
     ctx = copy_context()
     return await _call()
+
+
+def write_settings(cfg: Path = None, dry_run: bool = False) -> str | None:
+    if cfg is None:
+        cfg = default_config()
+
+    d = instance().model_dump(
+        exclude_none=True, mode="json", exclude_unset=True, by_alias=True
+    )
+    add_representer(
+        str,
+        lambda dumper, data: dumper.represent_scalar(
+            "tag:yaml.org,2002:str", data, style=('"' if "@" in data else None)
+        ),
+    )
+    if dry_run:
+        return dump(d)
+
+    if not cfg.exists() or not cfg.parent.exists():
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+
+    with cfg.open("w") as f:
+        dump(d, f)

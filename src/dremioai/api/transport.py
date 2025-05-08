@@ -1,18 +1,18 @@
-# 
+#
 #  Copyright (C) 2017-2025 Dremio Corporation
-# 
+#
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
-# 
+#
 #      http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 #  Unless required by applicable law or agreed to in writing, software
 #  distributed under the License is distributed on an "AS IS" BASIS,
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-# 
+#
 
 from aiohttp import ClientSession, ClientResponse, ClientResponseError
 from pathlib import Path
@@ -22,6 +22,7 @@ from json import loads
 from pydantic import BaseModel, ValidationError
 
 from dremioai.config import settings
+from dremioai.api.oauth2 import get_oauth2_tokens
 
 DeserializationStrategy: TypeAlias = Union[Callable, BaseModel]
 
@@ -125,12 +126,20 @@ class AsyncHttpClient:
 
 class DremioAsyncHttpClient(AsyncHttpClient):
     def __init__(self, uri: Optional[str] = None, pat: Optional[str] = None):
+        dremio = settings.instance().dremio
+        if (
+            dremio.oauth_supported
+            and dremio.oauth_configured
+            and (dremio.oauth2.has_expired or dremio.pat is None)
+        ):
+            oauth = get_oauth2_tokens()
+            oauth.update_settings()
+
         if uri is None:
-            uri = settings.instance().dremio.uri
+            uri = dremio.uri
         if pat is None:
-            pat = settings.instance().dremio.pat
-        if pat.startswith("@"):
-            pat = Path(pat[1:]).expanduser().read_text().strip()
+            pat = dremio.pat
+
         if uri is None or pat is None:
             raise RuntimeError(f"uri={uri} pat={pat} are required")
         super().__init__(uri, pat)
