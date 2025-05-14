@@ -50,11 +50,7 @@ architecture-beta
 The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple
 
 1. Clone or download this repository.
-2. Install the [uv](https://docs.astral.sh/uv/guides/install-python/) package manager.
-   ```shell
-   brew install uv
-   ```
-   NOTE: The MCP server requires python (3.11 or later)
+2. Install the [uv](https://docs.astral.sh/uv/guides/install-python/) package manager (note that the MCP server requires python 3.11 or later)
 3. Do a sanity check by running the command and validating the output as shown below.
 
 ```shell
@@ -111,10 +107,7 @@ $ uv run dremio-mcp-server config create dremioai \
     --pat @/path/to/tokenfile \
 ```
 
-2. Download and install Claude desktop.
-```shell
-brew install --cask claude
-```
+2. Download and install Claude Desktop ([Claude](https://claude.ai/download))
 
 Note: Claude has system requirements, such as node.js, please validate your system requirements with Claude official documentation. 
 
