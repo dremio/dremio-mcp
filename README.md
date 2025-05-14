@@ -17,7 +17,7 @@ Table of Contents
 
 # Introduction
 
-An **M**odel **C**ontext **P**rotocol ([MCP](https://docs.anthropic.com/en/docs/welcome)) server for easing LLM integration with Dremio.
+This repo provides an **M**odel **C**ontext **P**rotocol ([MCP](https://docs.anthropic.com/en/docs/welcome)) server for easing LLM integration with Dremio. If you are new to MCP and MCP Servers take our Dremio MCP Server course on Dremio University ([DremioU](https://university.dremio.com/course/dremio-mcp)). If you are familiar with these concepts already please proceed below.
 
 ```mermaid
 %%{init:
@@ -50,8 +50,12 @@ architecture-beta
 The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple
 
 1. Clone or download this repository.
-2. Install the [uv](https://docs.astral.sh/uv/guides/install-python/) package manager. The MCP server requires python (3.11 or later)
-3. Do a sanity check by doing
+2. Install the [uv](https://docs.astral.sh/uv/guides/install-python/) package manager.
+   ```shell
+   brew install uv
+   ```
+   NOTE: The MCP server requires python (3.11 or later)
+3. Do a sanity check by running the command and validating the output as shown below.
 
 ```shell
 # cd <toplevel git dir> or add `--directory <toplevel git dir>`
@@ -85,17 +89,21 @@ There are two configurations necessary before the MCP server can be invoked.
 
 The quickest way to do this setup is -
 
-1. Create the dremio config file using
+1. Create the dremio config file as outlined below and be prepared with these values
 
 ```shell
 $ uv run dremio-mcp-server config create dremioai \
     --uri <dremio uri> \
+    # the endpoint portion of the URL for your environment
     --pat <dremio pat> \
+    # https://docs.dremio.com/current/security/authentication/personal-access-tokens/#using-a-pat
     # optional: add your project ID if setting up for dremio cloud
     # --project-id <dremio project id>
 ```
 
-Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. Example: 
+Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. 
+
+Example: 
 
 ```shell
 $ uv run dremio-mcp-server config create dremioai \
@@ -103,13 +111,20 @@ $ uv run dremio-mcp-server config create dremioai \
     --pat @/path/to/tokenfile \
 ```
 
-2. Download and install Claude desktop. And then create the Claude config file using
+2. Download and install Claude desktop.
+```shell
+brew install --cask claude
+```
+
+Note: Claude has system requirements, such as node.js, please validate your system requirements with Claude official documentation. 
+
+3. Create the Claude config file using
 
 ```shell
 $ uv run dremio-mcp-server config create claude
 ```
 
-3. Validate the config files using
+4. Validate the config files using
 
 ```shell
 $ uv run dremio-mcp-server config list --type claude
