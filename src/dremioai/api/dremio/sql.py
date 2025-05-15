@@ -202,7 +202,10 @@ async def get_results(
         )
         raise RuntimeError(f"Job {qs.id} failed: {emsg}")
 
-    limit = 500
+    if job.row_count == 0:
+        return pd.DataFrame() if use_df else JobResultsWrapper([])
+
+    limit = min(500, job.row_count)
 
     results = await run_in_parallel(
         [
