@@ -209,7 +209,7 @@ def show_default_config(
             cc = get_claude_config_path()
             pp(f"Default config file: '{cc!s}' (exists = {cc.exists()!s})")
             if not show_filename:
-                pp(load(cc.open()))
+                jdump(load(cc.open()), sys.stdout, indent=2)
 
 
 cc = Typer(

@@ -85,6 +85,7 @@ def run_sql(
 
     if query is not None:
         query = Path(query[1:]).read_text().strip() if query.startswith("@") else query
+        query = f"/* dremioai: submitter=cli */\n{query}"
         result = asyncio.run(sql.run_query(uri, pat, project_id, query, as_df=use_df))
     else:
         result = asyncio.run(
