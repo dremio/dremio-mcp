@@ -79,7 +79,7 @@ $ uv run dremio-mcp-server --help
 There are two configurations necessary before the MCP server can be invoked.
 
 1. **The server config file**: This will cover the details of connecting and communicating with Dremio
-2. **The LLM config file**: This covers configuring the LLM desktop app (Claude for now) to make it aware of the MCP server
+2. **The LLM config file**: This covers configuring the LLM desktop app (Claude for now but VS Code with GitHub Copilot in Agent mode can also be configured) to make it aware of the MCP server
 
 ## Quick start
 
@@ -220,6 +220,36 @@ And then add this section
 ```
 
 This will pickup the default location of MCP server config file. It can also be passed in the `args` section above as `"--config-file", "<custom config file>"` after `run`
+
+### VS Code Configuration
+
+`Prerequisites` - VS Code with GitHub Copilot in Agent Mode
+
+We have two options to add Dremio MCP Server in VS Code:
+
+- **Option 1 in Workspace Settings** (VS Code Workspace Specific)
+Add a *.vscode/mcp.json* file (snippet below) to your workspace to configure Dremio MCP server for a workspace and share configurations with team members.
+
+- **Option 2 in User Settings** (User specific across all VS Code workspaces)
+Specify the server in your user settings (*settings.json*) to enable Dremio MCP server across all workspaces
+
+**Sample JSON snippet of settings to be added to both the above options**
+```json
+{
+    "servers": {
+        "Dremio MCP Server": {
+            "type": "stdio",
+            "command": "uv",
+            "args": [
+                "run",
+                "--directory", "<toplevel git directory>"
+                "dremio-mcp-server",
+                "run"
+            ]
+        }
+    }
+}
+```
 
 # Further Documentation
 
