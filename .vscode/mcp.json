@@ -1,0 +1,14 @@
+{
+    "servers": {
+        "Dremio MCP Server": {
+            "type": "stdio",
+            "command": "uv",
+            "args": [
+                "run",
+                "--directory", "<toplevel git directory>",
+                "dremio-mcp-server",
+                "run"
+            ]
+        }
+    }
+}
