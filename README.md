@@ -93,9 +93,15 @@ $ uv run dremio-mcp-server config create dremioai \
     # the endpoint portion of the URL for your environment
     --pat <dremio pat> \
     # https://docs.dremio.com/current/security/authentication/personal-access-tokens/#using-a-pat
-    # optional: add your project ID if setting up for dremio cloud
+    # required for cloud: add your project ID if setting up for dremio cloud
     # --project-id <dremio project id>
 ```
+
+Note: the uri is api endpoint associated with your environment:
+
+- For a cloud based US deployment https://app.dremio.cloud/	use https://ap.dremio.cloud/
+- For a cloud based EU deployment https://app.eu.dremio.cloud/ use https://api.eu.dremio.cloud/
+- For self managed deployment https://<coordinator‑host>:9047 use https://api.<coordinator‑host>:9047
 
 Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. 
 
