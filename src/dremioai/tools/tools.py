@@ -193,7 +193,13 @@ class GetFailedJobDetails(Tools):
                 - error: error message
                 - count: count of jobs
         """
-        query = f"""select job_id as id,
+        table = (
+            "sys.project.jobs_recent"
+            if settings.instance().dremio.project_id
+            else "sys.jobs_recent"
+        )
+        query = f"""/* dremioai: submitter={self.__class__.__name__} */
+            select job_id as id,
             query_type as queryType,
             status as state,
             submitted_ts as startTime,
@@ -203,31 +209,37 @@ class GetFailedJobDetails(Tools):
                     user_name as "user",
             engine,
             error_msg
-            from   sys.project.jobs_recent
+            from   {table}
             where to_date(submitted_ts) >= current_date - interval '7' day
             and status in ('CANCELED', 'FAILED')"""
-        jdf = await sql.run_query(query=query, use_df=True)
-        jdf["date"] = jdf["startTime"].dt.date
+        try:
+            jdf = await sql.run_query(query=query, use_df=True)
+            jdf["date"] = jdf["startTime"].dt.date
 
-        # lookup only those who have erorrs to get detailed error messages
-        return {
-            "Number of jobs over 7 days": jdf.shape[0],
-            "Job categories by day, queryType and state": self.group_by(
-                jdf, ["date", "queryType", "state"]
-            ),
-            "Job count by day, queryType and engine": self.group_by(
-                jdf, ["date", "queryType", "engine"]
-            ),
-            "Job count by day, queryType, user": self.group_by(
-                jdf, ["date", "queryType", "user"]
-            ),
-            "Job count by day, queriedDataset and state": self.group_by(
-                jdf.explode("queriedDatasets"), ["date", "queriedDatasets", "state"]
-            ),
-            "Job count by day, queryType and error": self.group_by(
-                jdf, ["date", "queryType", "error_msg"]
-            ),
-        }
+            # lookup only those who have erorrs to get detailed error messages
+            return {
+                "Number of jobs over 7 days": jdf.shape[0],
+                "Job categories by day, queryType and state": self.group_by(
+                    jdf, ["date", "queryType", "state"]
+                ),
+                "Job count by day, queryType and engine": self.group_by(
+                    jdf, ["date", "queryType", "engine"]
+                ),
+                "Job count by day, queryType, user": self.group_by(
+                    jdf, ["date", "queryType", "user"]
+                ),
+                "Job count by day, queriedDataset and state": self.group_by(
+                    jdf.explode("queriedDatasets"), ["date", "queriedDatasets", "state"]
+                ),
+                "Job count by day, queryType and error": self.group_by(
+                    jdf, ["date", "queryType", "error_msg"]
+                ),
+            }
+        except RuntimeError as e:
+            return {
+                "error": str(e),
+                "message": "The query failed. Please check the syntax and try again",
+            }
 
 
 class RunSqlQuery(Tools):
@@ -246,9 +258,15 @@ class RunSqlQuery(Tools):
             raise ValueError(
                 "The query contains a DML statement. Only select queries are allowed"
             )
-
-        df = await sql.run_query(query=s, use_df=True)
-        return df.to_dict(orient="records")
+        try:
+            s = f"/* dremioai: submitter={self.__class__.__name__} */\n{s}"
+            df = await sql.run_query(query=s, use_df=True)
+            return df.to_dict(orient="records")
+        except RuntimeError as e:
+            return {
+                "error": str(e),
+                "message": "The query failed. Please check the syntax and try again",
+            }
 
     def get_parameters(self):
         return Parameters(
