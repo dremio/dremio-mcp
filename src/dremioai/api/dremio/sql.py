@@ -42,7 +42,7 @@ class ArcticSource(BaseModel):
 
 class Query(BaseModel):
     sql: str = Field(..., alias="sql")
-    context: Optional[Any] = None
+    context: Optional[List[str]] = None
     references: Optional[Dict[str, ArcticSource]] = None
 
 
