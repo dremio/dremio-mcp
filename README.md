@@ -99,7 +99,7 @@ $ uv run dremio-mcp-server config create dremioai \
 
 Note: the uri is api endpoint associated with your environment:
 
-- For a cloud based US deployment https://app.dremio.cloud/	use https://ap.dremio.cloud/
+- For Dremio cloud based in the US region (https://app.dremio.cloud)	use `https://api.dremio.cloud` or use the short hand `prod`
 - For a cloud based EU deployment https://app.eu.dremio.cloud/ use https://api.eu.dremio.cloud/
 - For self managed deployment https://<coordinator‑host>:9047 use https://api.<coordinator‑host>:9047
 
