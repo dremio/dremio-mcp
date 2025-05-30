@@ -101,7 +101,7 @@ Note: the uri is api endpoint associated with your environment:
 
 - For Dremio cloud based in the US region (https://app.dremio.cloud)	use `https://api.dremio.cloud` or use the short hand `prod`
 - For Dremio cloud based in the EMEA region (https://app.eu.dremio.cloud)	use `https://api.eu.dremio.cloud` or use the short hand `prodemea`
-- For self managed deployment https://<coordinator‑host>:9047 use https://api.<coordinator‑host>:9047
+- For SW/K8S deployments use https://<coordinator‑host>:<9047 or custom port>
 
 Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. 
 
