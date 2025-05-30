@@ -45,6 +45,8 @@ from dremioai.api.prometheus import vm
 from dremioai.api.dremio.catalog import get_schema, get_lineage, get_descriptions
 from csv import reader
 from io import StringIO
+from sqlglot import parse_one
+from sqlglot import expressions
 
 logger = log.logger(__name__)
 
@@ -244,6 +246,31 @@ class GetFailedJobDetails(Tools):
 
 class RunSqlQuery(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
+    _safe = [
+        expressions.Select,
+        expressions.With,
+        expressions.Union,
+    ]
+
+    @staticmethod
+    def ensure_query_allowed(s: str):
+        if settings.instance().dremio.allow_dml:
+            return
+
+        try:
+            q = parse_one(s)
+            if any(isinstance(q, t) for t in RunSqlQuery._safe):
+                return
+        except:
+            if not re.search(
+                r"\b(drop|insert|update|truncate|delete|copy into|alter|create)\b",
+                s,
+                re.IGNORECASE,
+            ):
+                return
+        raise ValueError(
+            "The query contains a DML statement. Only select queries are allowed"
+        )
 
     async def invoke(self, s: str) -> Dict[str, List[Any]]:
         """Run a SELECT sql query on the Dremio cluster and return the results.
@@ -253,11 +280,7 @@ class RunSqlQuery(Tools):
         Args:
             s: sql query
         """
-        # TODO: graduate to a more sophisticated SQL parser and check to allow better queries
-        if re.search(r"(drop|insert|update|truncate|delete)", s, re.IGNORECASE):
-            raise ValueError(
-                "The query contains a DML statement. Only select queries are allowed"
-            )
+        RunSqlQuery.ensure_query_allowed(s)
         try:
             s = f"/* dremioai: submitter={self.__class__.__name__} */\n{s}"
             df = await sql.run_query(query=s, use_df=True)
@@ -476,6 +499,8 @@ class GetRelevantMetrics(Tools):
             "jvm_gc_pause_seconds": "Indicates how long the JVM was paused for garbage collection, and also is a rubric to know if the system is in use",
             "memory_heap_usage": "Indicates the amount of memory used by the JVM",
             "memory_heap_committed": "Indicates the amount of memory committed by the JVM",
+            "dremio_engine_executors": "Number of executors running in the Dremio engine. It correlates to dremio_engine_replica_running using engine_id label",
+            "dremio_engine_replica_running": "Number of running replicas in the Dremio engine. It correlates to dremio_engine_executors using engine_id label",
         }
 
 

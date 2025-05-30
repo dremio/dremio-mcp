@@ -122,6 +122,7 @@ class Dremio(BaseModel):
     project_id: Optional[str] = None
     enable_experimental: Optional[bool] = False  # enable experimental tools
     oauth2: Optional[OAuth2] = None
+    allow_dml: Optional[bool] = False
     model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")
