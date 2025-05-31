@@ -145,7 +145,7 @@ Default config file: '/Users/..../Library/Application Support/Claude/claude_desk
     }
 }
 
-$ uv run dremio-mcp-server config list --type claude
+$ uv run dremio-mcp-server config list --type dremioai
 Default config file: /Users/..../.config/dremioai/config.yaml (exists = True)
 dremio:
   enable_experimental: false
