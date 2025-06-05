@@ -16,6 +16,7 @@ dremio:
   uri: https://api.dremio.cloud
   pat: your-pat-here
   project_id: project123
+  experimental_enabled: false
 tools:
   server_mode: FOR_SELF
 ```
@@ -79,6 +80,8 @@ Server modes:
 -   `FOR_DATA_PATTERNS`: Data pattern analysis
 -   `EXPERIMENTAL`: Experimental features
 
+NOTE: if you intend to use experimental features you must also set experimental_enabled: true as shown above. 
+
 Multiple modes can be combined using comma separation: `FOR_SELF,FOR_PROMETHEUS`
 
 ### Prometheus Settings
@@ -139,8 +142,8 @@ Example:
 dremio:
   uri: "https://api.dremio.cloud"
   pat: "@~/tokens/dremio.pat"
-  project_id: "project123" # optional only for DC
-
+  project_id: "project123" # required only for DC
+  enable_experimental: <bool> # Optional: Enable experimental features
 tools:
   server_mode: "FOR_SELF,FOR_DATA_PATTERNS"
 
