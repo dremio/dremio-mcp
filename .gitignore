@@ -1,2 +1,8 @@
 *.pyc
 .venv
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo

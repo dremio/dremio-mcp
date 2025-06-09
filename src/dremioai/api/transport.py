@@ -137,9 +137,50 @@ class DremioAsyncHttpClient(AsyncHttpClient):
 
         if uri is None:
             uri = dremio.uri
+
+        # Determine authentication method
         if pat is None:
-            pat = dremio.pat
+            if dremio.pat is not None:
+                # Use PAT from settings
+                pat = dremio.pat
+            elif dremio.has_username_password:
+                # Use username/password authentication
+                pat = self._authenticate_with_username_password(uri, dremio.username, dremio.password)
+            else:
+                raise RuntimeError("No authentication method configured. Either 'pat' or 'username/password' must be provided")
 
         if uri is None or pat is None:
             raise RuntimeError(f"uri={uri} pat={pat} are required")
         super().__init__(uri, pat)
+
+    def _authenticate_with_username_password(self, uri: str, username: str, password: str) -> str:
+        """Authenticate with Dremio using username/password and return the token"""
+        import asyncio
+        return asyncio.run(self._get_auth_token(uri, username, password))
+
+    async def _get_auth_token(self, uri: str, username: str, password: str) -> str:
+        """Get authentication token from Dremio using username/password"""
+        login_url = f"{uri}/apiv2/login"
+        login_data = {
+            "userName": username,
+            "password": password
+        }
+
+        async with ClientSession() as session:
+            logger().info(f"Authenticating with Dremio at {login_url}")
+            async with session.post(
+                login_url,
+                json=login_data,
+                headers={"content-type": "application/json"},
+                ssl=False
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise RuntimeError(f"Authentication failed: {response.status} - {error_text}")
+
+                auth_response = await response.json()
+                if "token" not in auth_response:
+                    raise RuntimeError("Authentication response missing token")
+
+                logger().info("Successfully authenticated with username/password")
+                return auth_response["token"]

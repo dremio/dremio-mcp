@@ -21,6 +21,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     field_serializer,
+    model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Union, Annotated, Self, List, Dict, Any, Callable
@@ -119,6 +120,8 @@ class Dremio(BaseModel):
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
     ]
     raw_pat: Optional[str] = Field(default=None, alias="pat")
+    username: Optional[str] = None
+    password: Optional[str] = None
     project_id: Optional[str] = None
     enable_experimental: Optional[bool] = False  # enable experimental tools
     oauth2: Optional[OAuth2] = None
@@ -129,6 +132,22 @@ class Dremio(BaseModel):
     def serialize_pat(self, pat: str):
         return self.raw_pat if pat != self.raw_pat else pat
 
+    @model_validator(mode='after')
+    def validate_auth_method(self) -> 'Dremio':
+        """Validate authentication method configuration"""
+        has_pat = self.raw_pat is not None
+        has_user_pass = self.username is not None and self.password is not None
+
+        # Allow configurations with no authentication for backward compatibility
+        # The actual authentication requirement will be enforced at runtime
+        if has_pat and has_user_pass:
+            raise ValueError("Cannot specify both 'pat' and 'username/password' authentication methods")
+
+        if (self.username is None) != (self.password is None):
+            raise ValueError("Both 'username' and 'password' must be provided together")
+
+        return self
+
     @property
     def oauth_configured(self) -> bool:
         return self.oauth2 is not None
@@ -136,6 +155,11 @@ class Dremio(BaseModel):
     @property
     def oauth_supported(self) -> bool:
         return self.project_id is not None
+
+    @property
+    def has_username_password(self) -> bool:
+        """Check if username/password authentication is configured"""
+        return self.username is not None and self.password is not None
 
     # @field_validator("_pat", mode="wrap")
     # @classmethod
