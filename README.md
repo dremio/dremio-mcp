@@ -103,15 +103,28 @@ Note: the uri is api endpoint associated with your environment:
 - For Dremio cloud based in the EMEA region (https://app.eu.dremio.cloud)	use `https://api.eu.dremio.cloud` or use the short hand `prodemea`
 - For SW/K8S deployments use https://<coordinator‑host>:<9047 or custom port>
 
-Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. 
+**Authentication Options:**
 
-Example: 
+The Dremio MCP supports two authentication methods:
 
+**Option 1: Personal Access Token (PAT)**
 ```shell
 $ uv run dremio-mcp-server config create dremioai \
     --uri <dremio uri> \
-    --pat @/path/to/tokenfile \
+    --pat <your_pat_token>
 ```
+
+**Option 2: Username/Password**
+```shell
+$ uv run dremio-mcp-server config create dremioai \
+    --uri <dremio uri> \
+    --username <your_username> \
+    --password <your_password>
+```
+
+Note: For security purposes, if you don't want credentials to leak into your shell history file, you can:
+- For PAT: Create a file with your PAT and reference it with `--pat @/path/to/tokenfile`
+- For passwords: Use environment variables or interactive prompts (future enhancement)
 
 2. Download and install Claude Desktop ([Claude](https://claude.ai/download))
 
@@ -171,16 +184,23 @@ This file is located by default at `$HOME/.config/dremioai/config.yaml` but can 
 #### Format
 
 ```yaml
-# The dremio section contains 3 main things - the URI to connect, PAT to use
-# and optionally the project_id if using with Dremio Cloud
+# The dremio section contains the URI to connect and authentication credentials
+# Choose either PAT or username/password authentication
 dremio:
     uri: https://.... # the Dremio URI
+
+    # Option 1: Personal Access Token (PAT)
     pat: "@~/ws/tokens/idl.token" # PAT can be put in a file and used here with @ prefix
+
+    # Option 2: Username/Password (alternative to PAT)
+    # username: your_username
+    # password: your_password
+
     # optional
-    # project_id: ....
+    # project_id: .... # Required for Dremio Cloud
 
 tools:
-    server_mode: FOR_DATA_PATTERNS # the serverm
+    server_mode: FOR_DATA_PATTERNS # the server mode
 
 # Optionally the MCP server can also connect and use a prometheus configuration if it
 # has been enabled for your Dremio cluster (typically useful for SW installations)

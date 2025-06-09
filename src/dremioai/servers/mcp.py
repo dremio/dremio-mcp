@@ -91,6 +91,8 @@ ty = Typer(context_settings=dict(help_option_names=["-h", "--help"]))
 def main(
     dremio_uri: Annotated[Optional[str], Option(help="Dremio URI")] = None,
     dremio_pat: Annotated[Optional[str], Option(help="Dremio PAT")] = None,
+    dremio_username: Annotated[Optional[str], Option(help="Dremio username")] = None,
+    dremio_password: Annotated[Optional[str], Option(help="Dremio password")] = None,
     dremio_project_id: Annotated[
         Optional[str], Option(help="Dremio Project Id")
     ] = None,
@@ -123,6 +125,8 @@ def main(
             {
                 "dremio.uri": dremio_uri,
                 "dremio.pat": dremio_pat,
+                "dremio.username": dremio_username,
+                "dremio.password": dremio_password,
                 "dremio.project_id": dremio_project_id,
                 "tools.server_mode": mode,
             }
@@ -267,11 +271,23 @@ def create_default_config(
         ),
     ],
     pat: Annotated[
-        str,
+        Optional[str],
         Option(
-            help="The Dremio PAT. If it starts with @ then treat the rest is treated as a filename"
+            help="The Dremio PAT. If it starts with @ then treat the rest is treated as a filename. Cannot be used with --username/--password."
         ),
-    ],
+    ] = None,
+    username: Annotated[
+        Optional[str],
+        Option(
+            help="Dremio username for authentication. Must be used with --password. Cannot be used with --pat."
+        ),
+    ] = None,
+    password: Annotated[
+        Optional[str],
+        Option(
+            help="Dremio password for authentication. Must be used with --username. Cannot be used with --pat."
+        ),
+    ] = None,
     project_id: Annotated[
         Optional[str],
         Option(help="The Dremio project id, only if connecting to Dremio Cloud"),
@@ -291,20 +307,39 @@ def create_default_config(
         bool, Option(help="Dry run, do not overwrite the config file. Just print it")
     ] = False,
 ):
+    # Validate authentication method
+    has_pat = pat is not None
+    has_user_pass = username is not None and password is not None
+
+    if not has_pat and not has_user_pass:
+        raise BadParameter("Either --pat or both --username and --password must be provided")
+
+    if has_pat and has_user_pass:
+        raise BadParameter("Cannot specify both --pat and --username/--password authentication methods")
+
+    if (username is None) != (password is None):
+        raise BadParameter("Both --username and --password must be provided together")
+
     mode = "|".join([tools.ToolType[m.upper()].name for m in mode])
-    dremio = settings.Dremio.model_validate(
-        {
-            "uri": uri,
-            "pat": pat,
-            "project_id": project_id,
-            "enable_experimental": enable_experimental,
-            "oauth": (
-                settings.OAuth2.model_validate({"client_id": oauth_client_id})
-                if oauth_client_id
-                else None
-            ),
-        }
-    )
+    dremio_config = {
+        "uri": uri,
+        "project_id": project_id,
+        "enable_experimental": enable_experimental,
+        "oauth": (
+            settings.OAuth2.model_validate({"client_id": oauth_client_id})
+            if oauth_client_id
+            else None
+        ),
+    }
+
+    # Add authentication method
+    if has_pat:
+        dremio_config["pat"] = pat
+    else:
+        dremio_config["username"] = username
+        dremio_config["password"] = password
+
+    dremio = settings.Dremio.model_validate(dremio_config)
     ts = settings.Tools.model_validate({"server_mode": mode})
     settings.configure(settings.default_config(), force=True)
     settings.instance().dremio = dremio
