@@ -104,7 +104,7 @@ class Acceleration(BaseModel):
 
 class Job(BaseModel):
     job_state: JobState = Field(..., alias="jobState")
-    row_count: int = Field(..., alias="rowCount")
+    row_count: Optional[int] = Field(default=0, alias="rowCount")
     error_message: Optional[str] = Field(default=None, alias="errorMessage")
     started_at: Optional[datetime] = Field(default=None, alias="startedAt")
     ended_at: Optional[datetime] = Field(default=None, alias="endedAt")

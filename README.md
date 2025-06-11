@@ -176,9 +176,9 @@ This file is located by default at `$HOME/.config/dremioai/config.yaml` but can 
 dremio:
     uri: https://.... # the Dremio URI
     pat: "@~/ws/tokens/idl.token" # PAT can be put in a file and used here with @ prefix
-    # optional
-    # project_id: ....
-
+    project_id: <string> Project ID required for Dremio Cloud
+    enable_experimental: <bool> # Optional: Enable experimental features
+    allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
 tools:
     server_mode: FOR_DATA_PATTERNS # the serverm
 
