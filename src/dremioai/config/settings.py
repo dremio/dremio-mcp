@@ -194,34 +194,6 @@ def _resolve_executable(executable: str) -> str:
     return str(executable)
 
 
-class MCPTransport(StrEnum):
-    stdio = "stdio"
-    streamable_http = "streamable-http"
-    sse = "sse"
-
-
-class MCPServerConfig(BaseModel):
-    transport: MCPTransport = Field(default=MCPTransport.stdio)
-    host: str = Field(default="127.0.0.1")
-    port: int = Field(default=8000)
-    path: str = Field(default="/mcp")
-    oauth_enabled: bool = Field(default=False)
-    oauth_client_id: Optional[str] = Field(default=None)
-    oauth_client_secret: Optional[str] = Field(default=None)
-    oauth_scopes: List[str] = Field(default_factory=lambda: ["mcp.access"])
-    model_config = ConfigDict(validate_assignment=True)
-
-    @property
-    def is_http_transport(self) -> bool:
-        return self.transport in [MCPTransport.streamable_http, MCPTransport.sse]
-
-    @property
-    def server_url(self) -> str:
-        if self.is_http_transport:
-            return f"http://{self.host}:{self.port}{self.path}"
-        return None
-
-
 class MCPServer(BaseModel):
     command: Annotated[str, AfterValidator(_resolve_executable)]
     args: Optional[List[str]] = Field(default_factory=list)
@@ -247,7 +219,6 @@ class BeeAI(BaseModel):
 class Settings(BaseSettings):
     dremio: Optional[Dremio] = Field(default=None)
     tools: Optional[Tools] = Field(default_factory=Tools)
-    mcp_server: Optional[MCPServerConfig] = Field(default_factory=MCPServerConfig)
     prometheus: Optional[Prometheus] = Field(default=None)
     langchain: Optional[LangChain] = Field(default=None)
     beeai: Optional[BeeAI] = Field(default=None)

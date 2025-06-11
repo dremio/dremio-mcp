@@ -31,7 +31,6 @@ from rich import console, table, print as pp
 from click import Choice
 from dremioai.config import settings
 from dremioai.api.oauth2 import get_oauth2_tokens
-from dremioai.servers.oauth_middleware import create_oauth_middleware
 from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
@@ -74,45 +73,6 @@ def init(
     return mcp
 
 
-def run_with_transport(mcp: FastMCP, mcp_config: settings.MCPServerConfig):
-    """Run MCP server with specified transport configuration"""
-    if mcp_config.transport == settings.MCPTransport.stdio:
-        # Default STDIO transport
-        mcp.run()
-    elif mcp_config.transport == settings.MCPTransport.streamable_http:
-        # Add OAuth middleware if enabled
-        if mcp_config.oauth_enabled:
-            oauth_middleware = create_oauth_middleware(mcp_config)
-            if oauth_middleware:
-                # Note: FastMCP doesn't directly support middleware,
-                # but we can add it via custom routes or ASGI integration
-                log.logger().info(
-                    "OAuth middleware enabled for streamable-http transport"
-                )
-
-        mcp.run(
-            transport="streamable-http",
-            host=mcp_config.host,
-            port=mcp_config.port,
-            path=mcp_config.path,
-        )
-    elif mcp_config.transport == settings.MCPTransport.sse:
-        # Add OAuth middleware if enabled
-        if mcp_config.oauth_enabled:
-            oauth_middleware = create_oauth_middleware(mcp_config)
-            if oauth_middleware:
-                log.logger().info("OAuth middleware enabled for SSE transport")
-
-        mcp.run(
-            transport="sse",
-            host=mcp_config.host,
-            port=mcp_config.port,
-            path=mcp_config.path,
-        )
-    else:
-        raise ValueError(f"Unsupported transport: {mcp_config.transport}")
-
-
 app = None
 # if __name__ != "__main__":
 # if mode := os.environ.get("MODE"):
@@ -122,10 +82,6 @@ app = None
 
 def _mode() -> List[str]:
     return [tt.name for tt in tools.ToolType]
-
-
-def _transport() -> List[str]:
-    return [t.value for t in settings.MCPTransport]
 
 
 ty = Typer(context_settings=dict(help_option_names=["-h", "--help"]))
@@ -145,27 +101,6 @@ def main(
     mode: Annotated[
         Optional[List[str]],
         Option("-m", "--mode", help="MCP server mode", click_type=Choice(_mode())),
-    ] = None,
-    transport: Annotated[
-        Optional[str],
-        Option(
-            "-t",
-            "--transport",
-            help="MCP server transport",
-            click_type=Choice(_transport()),
-        ),
-    ] = None,
-    host: Annotated[Optional[str], Option(help="Host for HTTP transports")] = None,
-    port: Annotated[Optional[int], Option(help="Port for HTTP transports")] = None,
-    path: Annotated[Optional[str], Option(help="Path for HTTP transports")] = None,
-    oauth_enabled: Annotated[
-        Optional[bool], Option(help="Enable OAuth for HTTP transports")
-    ] = None,
-    oauth_client_id: Annotated[
-        Optional[str], Option(help="OAuth client ID for MCP server")
-    ] = None,
-    oauth_client_secret: Annotated[
-        Optional[str], Option(help="OAuth client secret for MCP server")
     ] = None,
     list_tools: Annotated[
         bool, Option(help="List available tools for this mode and exit")
@@ -190,13 +125,6 @@ def main(
                 "dremio.pat": dremio_pat,
                 "dremio.project_id": dremio_project_id,
                 "tools.server_mode": mode,
-                "mcp_server.transport": transport,
-                "mcp_server.host": host,
-                "mcp_server.port": port,
-                "mcp_server.path": path,
-                "mcp_server.oauth_enabled": oauth_enabled,
-                "mcp_server.oauth_client_id": oauth_client_id,
-                "mcp_server.oauth_client_secret": oauth_client_secret,
             }
         )
     )
@@ -223,9 +151,7 @@ def main(
         project_id=cfg.dremio.project_id,
         mode=cfg.tools.server_mode,
     )
-
-    # Run with configured transport
-    run_with_transport(app, cfg.mcp_server)
+    app.run()
 
 
 tc = Typer(
@@ -294,22 +220,14 @@ cc = Typer(
 tc.add_typer(cc)
 
 
-def create_default_mcpserver_config(transport: str = "stdio") -> Dict[str, Any]:
+def create_default_mcpserver_config() -> Dict[str, Any]:
     if (uv := which("uv")) is not None:
         uv = Path(uv).resolve()
         dir = str(Path(os.getcwd()).resolve())
-
-        if transport == "stdio":
-            return {
-                "command": str(uv),
-                "args": ["run", "--directory", dir, "dremio-mcp-server", "run"],
-            }
-        else:
-            # For HTTP transports, provide URL instead of command
-            return {
-                "url": f"http://127.0.0.1:8000/mcp",
-                "transport": transport,
-            }
+        return {
+            "command": str(uv),
+            "args": ["run", "--directory", dir, "dremio-mcp-server", "run"],
+        }
     else:
         raise FileNotFoundError("uv command not found. Please install uv")
 
@@ -369,28 +287,6 @@ def create_default_config(
         Optional[str],
         Option(help="The ID of OAuth application, for OAuth2 logon support"),
     ] = None,
-    mcp_transport: Annotated[
-        Optional[str],
-        Option(help="MCP server transport", click_type=Choice(_transport())),
-    ] = "stdio",
-    mcp_host: Annotated[
-        Optional[str], Option(help="MCP server host for HTTP transports")
-    ] = "127.0.0.1",
-    mcp_port: Annotated[
-        Optional[int], Option(help="MCP server port for HTTP transports")
-    ] = 8000,
-    mcp_path: Annotated[
-        Optional[str], Option(help="MCP server path for HTTP transports")
-    ] = "/mcp",
-    mcp_oauth_enabled: Annotated[
-        bool, Option(help="Enable OAuth for MCP server HTTP transports")
-    ] = False,
-    mcp_oauth_client_id: Annotated[
-        Optional[str], Option(help="OAuth client ID for MCP server")
-    ] = None,
-    mcp_oauth_client_secret: Annotated[
-        Optional[str], Option(help="OAuth client secret for MCP server")
-    ] = None,
     dry_run: Annotated[
         bool, Option(help="Dry run, do not overwrite the config file. Just print it")
     ] = False,
@@ -410,21 +306,9 @@ def create_default_config(
         }
     )
     ts = settings.Tools.model_validate({"server_mode": mode})
-    mcp_server_config = settings.MCPServerConfig.model_validate(
-        {
-            "transport": mcp_transport,
-            "host": mcp_host,
-            "port": mcp_port,
-            "path": mcp_path,
-            "oauth_enabled": mcp_oauth_enabled,
-            "oauth_client_id": mcp_oauth_client_id,
-            "oauth_client_secret": mcp_oauth_client_secret,
-        }
-    )
     settings.configure(settings.default_config(), force=True)
     settings.instance().dremio = dremio
     settings.instance().tools = ts
-    settings.instance().mcp_server = mcp_server_config
     if (d := settings.write_settings(dry_run=dry_run)) is not None and dry_run:
         pp(d)
     elif not dry_run:
