@@ -50,7 +50,7 @@ architecture-beta
 The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple
 
 1. Clone or download this repository.
-2. Install the [uv](https://docs.astral.sh/uv/guides/install-python/) package manager (note that the MCP server requires python 3.11 or later)
+2. Install the [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager (note that the MCP server requires python 3.11 or later)
 3. Do a sanity check by running the command and validating the output as shown below.
 
 ```shell
@@ -97,7 +97,7 @@ $ uv run dremio-mcp-server config create dremioai \
     # --project-id <dremio project id>
 ```
 
-Note: the uri is api endpoint associated with your environment:
+Note: the uri is the api endpoint associated with your environment:
 
 - For Dremio cloud based in the US region (https://app.dremio.cloud)	use `https://api.dremio.cloud` or use the short hand `prod`
 - For Dremio cloud based in the EMEA region (https://app.eu.dremio.cloud)	use `https://api.eu.dremio.cloud` or use the short hand `prodemea`
