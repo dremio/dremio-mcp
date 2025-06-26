@@ -46,6 +46,10 @@ def get_log_directory(app_name: str = "dremioai") -> Path:
     return base_dir
 
 
+def get_log_file() -> Path:
+    return get_log_directory() / "dremioai.log"
+
+
 def logger(name=None):
     if not structlog.is_configured():
         configure()
@@ -82,8 +86,7 @@ def configure(enable_json_logging=None, to_file=False):
 
     # Set up file logging if requested
     if to_file:
-        log_dir = get_log_directory()
-        log_file_path = log_dir / "dremioai.log"
+        log_file_path = get_log_file()
 
         # Configure rotating file handler
         file_handler = RotatingFileHandler(

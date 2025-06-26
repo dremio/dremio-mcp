@@ -12,6 +12,10 @@ Table of Contents
        - [Format](#format)
        - [Modes](#modes)
     - [The LLM (Claude) config file](#the-llm-claude-config-file)
+- [Logging](#logging)
+  - [Log File Locations](#log-file-locations)
+  - [Log Features](#log-features)
+  - [Enabling File Logging](#enabling-file-logging)
 - [Further Documentation](#further-documentation)
 - [Additional Information](#additional-information)
 
@@ -226,6 +230,47 @@ And then add this section
 ```
 
 This will pickup the default location of MCP server config file. It can also be passed in the `args` section above as `"--config-file", "<custom config file>"` after `run`
+
+# Logging
+
+The Dremio MCP server automatically writes log files to platform-specific directories following operating system conventions. This helps with troubleshooting and monitoring the server's operation.
+
+## Log File Locations
+
+The log files are stored in the following locations based on your operating system:
+
+### Linux
+- **Directory**: `~/.local/share/dremioai/logs/`
+- **Full path**: `~/.local/share/dremioai/logs/dremioai.log`
+- **XDG compliance**: Respects `$XDG_DATA_HOME` environment variable if set
+
+### macOS
+- **Directory**: `~/Library/Logs/dremioai/`
+- **Full path**: `~/Library/Logs/dremioai/dremioai.log`
+
+### Windows
+- **Directory**: `%LOCALAPPDATA%\dremioai\logs\`
+- **Full path**: `%LOCALAPPDATA%\dremioai\logs\dremioai.log`
+- **Typical location**: `C:\Users\<username>\AppData\Local\dremioai\logs\dremioai.log`
+
+
+## Controlling File Logging
+
+By default, the MCP server logs to the logfile mentioned above. To control it further, you can use the following environment variables and command line options:
+
+1. **Use JSON format**: `JSON_LOGGING=1` or pass `--enable-json-logging` for structured JSON logs 
+2. **Disable file logging**: pass `--no-log-to-file` to disable writing logs to file
+
+Example:
+```shell
+$ uv run dremio-mcp-server run --no-log-to-file --enable-json-logging
+
+# OR 
+
+$ uv run dremio-mcp-server run --enable-json-logging
+```
+
+The log directory is automatically created if it doesn't exist, so no manual setup is required.
 
 # Further Documentation
 

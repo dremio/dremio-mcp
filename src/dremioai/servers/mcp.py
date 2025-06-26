@@ -105,13 +105,13 @@ def main(
     list_tools: Annotated[
         bool, Option(help="List available tools for this mode and exit")
     ] = False,
-    log_to_file: Annotated[Optional[bool], Option(help="Log to file")] = False,
+    log_to_file: Annotated[Optional[bool], Option(help="Log to file")] = True,
+    enable_json_logging: Annotated[
+        Optional[bool], Option(help="Enable JSON logs")
+    ] = False,
 ):
-    if not list_tools:
-        log.configure(enable_json_logging=True, to_file=True)
-    else:
-        log.configure(enable_json_logging=True, to_file=log_to_file)
-        log.set_level("DEBUG")
+    log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
+    log.set_level("DEBUG")
 
     if mode is not None:
         mode = [tools.ToolType[m.upper()] for m in mode]
@@ -205,6 +205,7 @@ def show_default_config(
                         )
                     )
                 )
+            pp(f"Default log file: {log.get_log_file()!s}")
         case ConfigTypes.claude:
             cc = get_claude_config_path()
             pp(f"Default config file: '{cc!s}' (exists = {cc.exists()!s})")
