@@ -17,6 +17,12 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
+from mcp.server.fastmcp.server import Settings as MCPSettings
+from mcp.server.auth.settings import (
+    AuthSettings,
+    ClientRegistrationOptions,
+    RevocationOptions,
+)
 from mcp.cli.claude import get_claude_config_path
 from pydantic.networks import AnyUrl
 from dremioai.tools import tools
@@ -30,22 +36,50 @@ from typer import Typer, Option, Argument, BadParameter
 from rich import console, table, print as pp
 from click import Choice
 from dremioai.config import settings
-from dremioai.api.oauth2 import get_oauth2_tokens
+from dremioai.api.oauth2 import get_oauth2_tokens, get_oauth_urls
 from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
 import asyncio
 from yaml import dump, add_representer
 import sys
+from dremioai.api.oauth2 import get_dremio_cloud_issuer_url, get_required_scope
+from dremioai.servers.auth.provider import DremioCloudOAuthProvider
+from starlette.requests import Request
+from starlette.responses import Response, JSONResponse
+
+
+class Transports(StrEnum):
+    stdio = auto()
+    streamable_http = "streamable-http"
 
 
 def init(
-    uri: str = None,
-    pat: str = None,
-    project_id: str = None,
+    transport: Transports = Transports.stdio,
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
 ) -> FastMCP:
-    mcp = FastMCP("Dremio", level="DEBUG")
+    opts = {"level": "DEBUG"}
+    oauth_provider = None
+    if transport == Transports.streamable_http:
+        scopes = get_required_scope().split()
+        opts["auth"] = AuthSettings.model_validate(
+            {
+                "issuer_url": get_dremio_cloud_issuer_url(),
+                "required_scopes": scopes,
+                "client_registration_options": ClientRegistrationOptions.model_validate(
+                    {"enabled": False, "default_scopes": scopes, "valid_scopes": scopes}
+                ),
+                "revocation_options": RevocationOptions.model_validate(
+                    {"enabled": False}
+                ),
+            }
+        )
+        oauth_provider = DremioCloudOAuthProvider()
+    mcp = FastMCP(
+        "Dremio",
+        auth_server_provider=oauth_provider,
+        **opts,
+    )
     mode = reduce(ior, mode) if mode is not None else None
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
@@ -70,6 +104,25 @@ def init(
     mcp.add_prompt(
         Prompt.from_function(tools.system_prompt, "System Prompt", "System Prompt")
     )
+
+    if transport == Transports.streamable_http:
+
+        @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+        async def protected_resource_metadata(request: Request) -> Response:
+            url = get_dremio_cloud_issuer_url()
+            auth, tok = get_oauth_urls()
+            return JSONResponse(
+                {
+                    "issuer": url,
+                    "authorization_endpoint": auth,
+                    "token_endpoint": tok,
+                    "response_types_supported": ["code"],
+                    "response_modes_supported": ["query"],
+                    "grant_types_supported": ["authorization_code", "refresh_token"],
+                    "code_challenge_methods_supported": ["S256"],
+                }
+            )
+
     return mcp
 
 
@@ -106,6 +159,7 @@ def main(
         bool, Option(help="List available tools for this mode and exit")
     ] = False,
     log_to_file: Annotated[Optional[bool], Option(help="Log to file")] = False,
+    streamable_http: Annotated[Optional[bool], Option(help="Streamable HTTP")] = False,
 ):
     if not list_tools:
         log.configure(enable_json_logging=True, to_file=True)
@@ -145,13 +199,9 @@ def main(
         oauth = get_oauth2_tokens()
         oauth.update_settings()
 
-    app = init(
-        uri=cfg.dremio.uri,
-        pat=cfg.dremio.pat,
-        project_id=cfg.dremio.project_id,
-        mode=cfg.tools.server_mode,
-    )
-    app.run()
+    transport = Transports.streamable_http if streamable_http else Transports.stdio
+    app = init(transport, mode=cfg.tools.server_mode)
+    app.run(transport=transport.value)
 
 
 tc = Typer(

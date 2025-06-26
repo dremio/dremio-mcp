@@ -7,6 +7,7 @@ from urllib.parse import urlencode, urlparse
 from dremioai.config import settings
 from datetime import datetime, timedelta
 from importlib.resources import files
+from typing import List, Tuple
 import webbrowser
 import asyncio
 
@@ -97,21 +98,32 @@ def get_pkce_pair(length=96):
     return code_verifier, code_challenge
 
 
+def get_dremio_cloud_issuer_url() -> str:
+    base = urlparse(settings.instance().dremio.uri)
+    if base.netloc.startswith("api."):
+        base = base._replace(netloc=f"login.{base.netloc[4:]}")
+    return base.geturl()
+
+
+def get_required_scope() -> str:
+    return "dremio.all offline_access"
+
+
+def get_oauth_urls() -> Tuple[str, str]:
+    url = get_dremio_cloud_issuer_url()
+    return f"{url}/oauth/authorize", f"{url}/oauth/token"
+
+
 class OAuth2:
     def __init__(self):
         if settings.instance().dremio.oauth2.client_id is None:
             raise RuntimeError("oauth_client_id is not set in the config file")
 
-        base = urlparse(settings.instance().dremio.uri)
-        if base.netloc.startswith("api."):
-            base = base._replace(netloc=f"login.{base.netloc[4:]}")
-        url = base.geturl()
-
         self.client_id = settings.instance().dremio.oauth2.client_id
-        self.authorize_url = f"{url}/oauth/authorize"
-        self.access_token_url = f"{url}/oauth/token"
+        url = get_dremio_cloud_issuer_url()
+        self.authorize_url, self.access_token_url = get_oauth_urls()
         self.redirect_port = 8976
-        self.scope = "dremio.all offline_access"
+        self.scope = get_required_scope()
         self.code_verifier, self.code_challenge = get_pkce_pair()
         self.init_params = {
             "client_id": self.client_id,
