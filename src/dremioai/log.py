@@ -93,6 +93,7 @@ def configure(enable_json_logging=None, to_file=False):
             log_file_path, maxBytes=10 * 1024 * 1024, backupCount=5  # 10MB
         )
         file_handler.setLevel(level())
+        logging.getLogger().handlers.clear()
         logging.getLogger().addHandler(file_handler)
 
     renderer = (

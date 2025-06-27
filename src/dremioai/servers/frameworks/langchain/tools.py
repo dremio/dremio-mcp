@@ -1,18 +1,18 @@
-# 
+#
 #  Copyright (C) 2017-2025 Dremio Corporation
-# 
+#
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
-# 
+#
 #      http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 #  Unless required by applicable law or agreed to in writing, software
 #  distributed under the License is distributed on an "AS IS" BASIS,
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-# 
+#
 from langchain_core.tools.structured import StructuredTool
 from langchain_core.tools.base import create_schema_from_function
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -40,10 +40,12 @@ def discover_tools(For: ToolType = None) -> List[StructuredTool]:
     return [instantiate(tool) for tool in get_tools(For=For)]
 
 
-def discover_prompt() -> ChatPromptTemplate:
+def discover_prompt(with_prompt: str = None) -> ChatPromptTemplate:
+    if with_prompt is None:
+        with_prompt = system_prompt()
     return ChatPromptTemplate.from_messages(
         [
-            ("system", system_prompt()),
+            ("system", with_prompt),
             (
                 "system",
                 "You must respond in Markdown or tables in tab separated values format",
