@@ -1,42 +1,37 @@
-# 
+#
 #  Copyright (C) 2017-2025 Dremio Corporation
-# 
+#
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
-# 
+#
 #      http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 #  Unless required by applicable law or agreed to in writing, software
 #  distributed under the License is distributed on an "AS IS" BASIS,
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-# 
+#
 
 from pydantic import (
     BaseModel,
     Field,
-    AfterValidator,
-    ValidationError,
     ConfigDict,
     field_validator,
 )
 from typing import (
-    Annotated,
     List,
-    Dict,
-    AnyStr,
-    Any,
-    Literal,
     Union,
     Optional,
 )
 from dremioai.api.util import UStrEnum
 from datetime import datetime
-from enum import auto, StrEnum
+from enum import auto
 from dremioai.config import settings
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
+from dremioai.api.dremio.catalog import get_schemas
+import pandas as pd
 
 
 class QueryType(UStrEnum):
@@ -80,7 +75,7 @@ class JobStatus(UStrEnum):
     INVALID_STATE = auto()
 
 
-class Category(StrEnum):
+class Category(UStrEnum):
     JOB = auto()
     VIEW = auto()
     TABLE = auto()
@@ -93,9 +88,9 @@ class Category(StrEnum):
 
 
 class UserOrRole(UStrEnum):
-    USER_TYPE_UNSPECIFIED = auto()
-    USER_TYPE_USER = auto()
-    USER_TYPE_ROLE = auto()
+    UNSPECIFIED = auto()
+    USER = auto()
+    ROLE = auto()
 
 
 class EnterpriseDatasetType(UStrEnum):
@@ -161,6 +156,15 @@ class EnterpriseSearchCatalogObject(BaseModel):
     func_sql: Optional[str] = Field(default=None, alias="functionSql")
     owner: Optional[EnterpriseSearchUserOrRoleObject] = None
 
+    def as_df_dict(self):
+        return {
+            "path": self.path,
+            "name": ".".join(f'"{p}"' for p in self.path),
+            "type": self.type,
+            "tags": ",".join(self.labels),
+            "description": self.wiki,
+        }
+
 
 class EnterpriseSearchResultsObject(BaseModel):
     category: Optional[Category] = None
@@ -209,7 +213,9 @@ class EnterpriseSearchResultsWrapper(BaseModel):
     results: List[EnterpriseSearchResultsObject] = Field(default_factory=list)
 
 
-async def get_search_results(search: str | Search) -> EnterpriseSearchResultsWrapper:
+async def get_search_results(
+    search: str | Search, use_df: bool = False
+) -> EnterpriseSearchResultsWrapper | pd.DataFrame:
     if isinstance(search, str):
         search = Search(query=search)
 
@@ -217,9 +223,14 @@ async def get_search_results(search: str | Search) -> EnterpriseSearchResultsWra
         settings.instance().dremio.uri, settings.instance().dremio.pat
     )
 
+    endpoint = (
+        f"/v0/projects/{settings.instance().dremio.project_id}/search"
+        if settings.instance().dremio.project_id
+        else "/api/v3/search"
+    )
     result = []
     response = await client.post(
-        "/api/v3/search",
+        endpoint,
         body=search.model_dump(exclude_none=True),
         deser=EnterpriseSearchResults,
     )
@@ -229,9 +240,20 @@ async def get_search_results(search: str | Search) -> EnterpriseSearchResultsWra
             break
         search.next_page_token = response.next_page_token
         response = await client.post(
-            "/api/v3/search",
+            endpoint,
             body=search.model_dump(exclude_none=True),
             deser=EnterpriseSearchResults,
         )
+
+    if use_df:
+        result = [r for r in result if r.category in (Category.TABLE, Category.VIEW)]
+
+        data = [r.catalog.as_df_dict() for r in result]
+        paths = [p["path"] for p in data]
+        if schemas := await get_schemas(paths, include_tags=True, flatten=True):
+            for ix, schema in enumerate(schemas):
+                data[ix]["schema"] = schema.get("schema")
+
+        return pd.DataFrame(data=data)
 
     return EnterpriseSearchResultsWrapper(results=result)

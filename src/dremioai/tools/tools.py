@@ -43,6 +43,7 @@ from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.api.prometheus import vm
 from dremioai.api.dremio.catalog import get_schema, get_lineage, get_descriptions
+from dremioai.api.util import run_in_parallel
 from csv import reader
 from io import StringIO
 from sqlglot import parse_one
@@ -284,7 +285,7 @@ class RunSqlQuery(Tools):
         try:
             s = f"/* dremioai: submitter={self.__class__.__name__} */\n{s}"
             df = await sql.run_query(query=s, use_df=True)
-            return df.to_dict(orient="records")
+            return {"results": df.to_dict(orient="records")}
         except RuntimeError as e:
             return {
                 "error": str(e),
@@ -317,7 +318,7 @@ class BuildUsageReport(Tools):
         _, projects_usage, engines_usage = await usage.get_consolidated_usage()
         if by == "PROJECT":
             return projects_usage.to_dict(orient="records")
-        return engines_usage.to_dict(orient="records")
+        return {"results": engines_usage.to_dict(orient="records")}
 
 
 class Resource(Tools):
@@ -366,18 +367,21 @@ class GetUsefulSystemTableNames(Tools):
 class GetSchemaOfTable(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
 
-    async def invoke(self, table_name: str) -> List[Dict[str, str]]:
+    async def invoke(self, table_name: Union[str | List[str]]) -> List[Dict[str, str]]:
         """Gets the schema of the given table.
 
         Args:
-            table_name: name of the table, including the schema
+            table_name: string with the name of the table, including the schema. Or list of paths that make up the table
 
         Returns:
             A dictionary with information about the table. The field "fields" is a list of dictionaries
             that give column names and types. Optionally :"text" field and "tag" filed can provide more
             information about the table
         """
-        paths = list(reader(StringIO(table_name), delimiter="."))
+        if isinstance(table_name, list):
+            paths = table_name
+        else:
+            paths = list(reader(StringIO(table_name), delimiter="."))
         result = await get_schema(paths[0], include_tags=True)
         if result and "sql" in result:
             del result["sql"]
@@ -399,7 +403,7 @@ class GetTableOrViewLineage(Tools):
         return await get_lineage(table_name)
 
 
-class SemanticSearch(Tools):
+class SearchTableAndViews(Tools):
     For: ClassVar[
         Annotated[
             ToolType,
@@ -407,23 +411,28 @@ class SemanticSearch(Tools):
         ]
     ]
 
-    async def invoke(
-        self, query: str, category: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Runs a semantic search on the Dremio cluster using the given query
+    async def invoke(self, query: str) -> Dict[str, Any]:
+        """Runs a semantic search on the Dremio cluster to find tables and views that match the query.
 
         Args:
             query: The query to run
-            category: Optionally a category to search for. One of TABLE, VIEW, JOB, SOURCE, FOLDER. Search all categories if unspecified
 
         Returns:
-            A json representation with the results of the search
+            A dict with "results" key that is a list of objects that describe the found tables and views.
+            Each object has "name", "type" (TABLE or VIEW), "tags", "description" keys, along with "schema"
+            key that lists the entire schema of the table or view. You can rely on this schema and avoid
+            calling GetSchemaOfTable tool.
         """
-        if category:
-            category = search.Category[category.upper()]
-        sq = search.Search(query=query, filter=category)
-        res = await search.get_search_results(sq)
-        return res.model_dump_json(exclude_none=True, indent=2)
+        res = await run_in_parallel(
+            [
+                search.get_search_results(
+                    search.Search(query=query, filter=category), use_df=True
+                )
+                for category in (search.Category.TABLE, search.Category.VIEW)
+            ]
+        )
+        res = pd.concat(res)
+        return {"results": res.to_dict(orient="records")}
 
 
 def _subclasses(cls):
@@ -474,8 +483,8 @@ def system_prompt():
     - If the user prompt is in non English language, you must first translate it to English before attempting to search. Respond in the language of the user's prompt.
     - You must check your answer before finalizing the Result.
     - You must use various SQL select statements to calculate statistics and distribution of columns from the table;
-    - You must use GetSchemaOfTable tool to get the schema of the table before running any queries on it.
-    - You must use organization ids instead of name when generating a final report
+    - You must use TO_DATE instead of DATE to convert to date type
+    - To create INTERVAL use CAST(1 as INTERVAL DAY); instead of DAY, HOUR, MONTH, MIN can be used as well
     """
 
 

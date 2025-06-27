@@ -129,6 +129,7 @@ async def get_schema(
     dataset_path_or_id: Optional[Union[List[str], str]],
     by_id: Optional[bool] = False,
     include_tags: Optional[bool] = False,
+    flatten: Optional[bool] = False,
 ) -> Dict[str, Any]:
     client = AsyncHttpClient()
     project_id = settings.instance().dremio.project_id
@@ -163,6 +164,18 @@ async def get_schema(
         for i, r in enumerate(extras):
             k, v = extras[r]
             schema[k] = results[i].get(r, {}).get(v)
+        if flatten:
+            flattened_schema = {
+                "schema": {
+                    c.get("name", ""): c.get("type", {}).get("name", "unknown")
+                    for c in schema.get("fields", [])
+                }
+            }
+            for k in extras.values():
+                if v := schema.get(k[0]):
+                    flattened_schema[k[0]] = v
+            schema = flattened_schema
+
     return schema
 
 
@@ -170,10 +183,11 @@ async def get_schemas(
     dataset_path_or_ids: List[Union[List[str], str]],
     by_id: Optional[bool] = False,
     include_tags: Optional[bool] = False,
-) -> Dict[str, Any]:
+    flatten: Optional[bool] = False,
+) -> List[Dict[str, Any]]:
 
     return await run_in_parallel(
-        [get_schema(p, by_id, include_tags) for p in dataset_path_or_ids]
+        [get_schema(p, by_id, include_tags, flatten) for p in dataset_path_or_ids]
     )
 
 

@@ -1,18 +1,18 @@
-# 
+#
 #  Copyright (C) 2017-2025 Dremio Corporation
-# 
+#
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
-# 
+#
 #      http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 #  Unless required by applicable law or agreed to in writing, software
 #  distributed under the License is distributed on an "AS IS" BASIS,
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-# 
+#
 
 
 from langchain_ollama import ChatOllama
@@ -21,7 +21,7 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import ToolMessage, AIMessage
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 from prompt_toolkit.formatted_text import HTML
@@ -34,7 +34,8 @@ from typing import List, Optional, Annotated
 from dremioai import log
 from dremioai.config import settings
 from typer import Typer, Option
-from rich import print as pp
+from rich.console import Console
+from rich.markdown import Markdown
 from dremioai.servers.frameworks.langchain.tools import discover_tools, discover_prompt
 
 # def system_prompt():
@@ -66,6 +67,7 @@ def main(
             show_default=True,
         ),
     ] = settings.default_config(),
+    debug: Annotated[bool, Option(help="Enable debug logging")] = False,
 ):
 
     settings.configure(config_file)
@@ -98,7 +100,7 @@ def main(
         model=llm,
         tools=discover_tools(settings.instance().tools.server_mode),
         prompt=discover_prompt(),
-        debug=True,
+        debug=debug,
     )
 
     # agent = create_openai_tools_agent(
@@ -108,6 +110,7 @@ def main(
     # agent_executor = AgentExecutor(agent=agent, tools=registered_tools, verbose=True)
     # chain = chat_prompt | llm | StrOutputParser()
     chat_history = []
+    console = Console()
 
     while True:
         try:
@@ -120,11 +123,11 @@ def main(
         if chat_history:
             args["chat_history"] = chat_history
         response: Dict[str, List[ToolMessage, AIMessage]] = executor.invoke(args)
-        for message in response:
-            if isinstance(message, ToolMessage):
-                message.pretty_print()
+        # for message in response:
+        #     if isinstance(message, ToolMessage):
+        #         message.pretty_print()
 
-        response["messages"][-1].pretty_print()
+        console.print(Markdown(str(response["messages"][-1].content)))
         chat_history.extend(
             [("human", user_input), ("system", response["messages"][-1].content)]
         )

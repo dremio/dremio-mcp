@@ -35,7 +35,7 @@ def common_args(
         Option("-c", "--config", help="The config file with Dremio connection details"),
     ] = None,
 ):
-    settings.configure(config_file)
+    settings.configure(config_file, force=True)
 
 
 app = Typer(context_settings=dict(help_option_names=["-h", "--help"]))
