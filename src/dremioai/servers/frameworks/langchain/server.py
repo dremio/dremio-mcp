@@ -79,7 +79,7 @@ def main(
         }
     )
     session = PromptSession(
-        history=FileHistory(Path("~/.mcp.history").expanduser()), style=custom_style
+        history=FileHistory(Path.home() / ".mcp.history"), style=custom_style
     )
 
     if settings.instance().langchain.ollama is not None:

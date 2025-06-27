@@ -473,7 +473,7 @@ def system_prompt():
     - In general prefer to illustrate results using interactive graphical plots
     - Use UNNEST instead of FLATTEN for arrays like queriedDatasets
     - Use ARRAY_TO_STRING([array], ',') to convert arrays to strings
-    - Make sure to ensure reserved words like count, etc are enclosed in double quotes
+    - Make sure to ensure reserved words like count, etc are enclosed in double quotes. You must not quote reserved words if they are input to a function like EXTRACT.
     - Components in paths to views and tables must be double-quoted.
     - You must distinguish between user requests that intend to get a result of a SQL query or to generate SQL. The result of the former is the SQL query's result, the result of the latter is a SQL query.
     - You must use correct SQL syntax, you may use "EXPLAIN" to validate SQL or run it with LIMIT 1 to validate the syntax.
