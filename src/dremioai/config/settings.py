@@ -21,6 +21,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     field_serializer,
+    AliasChoices,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Union, Annotated, Self, List, Dict, Any, Callable
@@ -120,7 +121,11 @@ class Dremio(BaseModel):
     ]
     raw_pat: Optional[str] = Field(default=None, alias="pat")
     project_id: Optional[str] = None
-    enable_experimental: Optional[bool] = False  # enable experimental tools
+    enable_experimental: Optional[bool] = Field(
+        default=False,
+        alias=AliasChoices("enable_experimental", "enable_search"),
+        description="enable experimental tools",
+    )
     oauth2: Optional[OAuth2] = None
     allow_dml: Optional[bool] = False
     model_config = ConfigDict(validate_assignment=True)
