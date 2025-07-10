@@ -54,7 +54,7 @@ dremio:
   uri: <string|DremioCloudUri> # Dremio instance URI
   pat: <string> # Personal Access Token
   project_id: <string> # Optional: Project ID for Dremio Cloud
-  enable_experimental: <bool> # Optional: Enable experimental features
+  enable_search: <bool> # Optional: Enable semantic search
   allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
 ```
 
@@ -145,7 +145,7 @@ dremio:
   uri: "https://api.dremio.cloud"
   pat: "@~/tokens/dremio.pat"
   project_id: "project123" # required only for DC
-  enable_experimental: <bool> # Optional: Enable experimental features
+  enable_search: <bool> # Optional: Enable semantic search features
   allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
 tools:
   server_mode: "FOR_SELF,FOR_DATA_PATTERNS"

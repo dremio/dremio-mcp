@@ -281,9 +281,7 @@ def create_default_config(
         Optional[List[str]],
         Option("-m", "--mode", help="MCP server mode", click_type=Choice(_mode())),
     ] = [tools.ToolType.FOR_DATA_PATTERNS.name],
-    enable_experimental: Annotated[
-        bool, Option(help="Enable experimental features")
-    ] = False,
+    enable_search: Annotated[bool, Option(help="Enable semantic search")] = False,
     oauth_client_id: Annotated[
         Optional[str],
         Option(help="The ID of OAuth application, for OAuth2 logon support"),
@@ -298,7 +296,7 @@ def create_default_config(
             "uri": uri,
             "pat": pat,
             "project_id": project_id,
-            "enable_experimental": enable_experimental,
+            "enable_search": enable_search,
             "oauth": (
                 settings.OAuth2.model_validate({"client_id": oauth_client_id})
                 if oauth_client_id

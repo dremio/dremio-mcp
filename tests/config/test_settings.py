@@ -96,3 +96,18 @@ def test_create_default_config(mock_config_dir):
     )
     tools = settings.instance().tools
     assert tools.server_mode == mode
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        (name, value)
+        for name in ("enable_search", "enable_experimental")
+        for value in (True, False)
+    ],
+)
+def test_experimental_rename(name: str, value: bool):
+    d = settings.Dremio.model_validate(
+        {name: value, "uri": "https://foo", "pat": "bar"}
+    )
+    assert d.enable_search == value

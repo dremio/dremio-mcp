@@ -54,8 +54,13 @@ architecture-beta
 The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple
 
 1. Clone or download this repository.
-2. Install the [uv](https://docs.astral.sh/uv/guides/install-python/) package manager (note that the MCP server requires python 3.11 or later)
-3. Do a sanity check by running the command and validating the output as shown below.
+2. Install the [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager (note that the MCP server requires python 3.11 or later)
+  - If you install this for the first time, restart your terminal at the end of the install
+3. Ensure that you have python installed by running the command below. It should show python 3.11 or later (If you don't have python installed, follow the instructions [here](https://docs.astral.sh/uv/guides/install-python/) OR simply run `uv python install`)
+```shell
+$ uv python find
+```
+4. Do a sanity check by running the command and validating the output as shown below.
 
 ```shell
 # cd <toplevel git dir> or add `--directory <toplevel git dir>`
@@ -152,7 +157,7 @@ Default config file: '/Users/..../Library/Application Support/Claude/claude_desk
 $ uv run dremio-mcp-server config list --type dremioai
 Default config file: /Users/..../.config/dremioai/config.yaml (exists = True)
 dremio:
-  enable_experimental: false
+  enable_search: false
   pat: ....
   uri: ....
 tools:
@@ -181,7 +186,7 @@ dremio:
     uri: https://.... # the Dremio URI
     pat: "@~/ws/tokens/idl.token" # PAT can be put in a file and used here with @ prefix
     project_id: <string> Project ID required for Dremio Cloud
-    enable_experimental: <bool> # Optional: Enable experimental features
+    enable_search: <bool> # Optional: Enable semantic search
     allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
 tools:
     server_mode: FOR_DATA_PATTERNS # the serverm

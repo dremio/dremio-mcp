@@ -152,7 +152,7 @@ def is_tool_for(
             return False
 
     if (For := get_for(tool)) is not None:
-        if For & ToolType.EXPERIMENTAL and not dremio.enable_experimental:
+        if For & ToolType.EXPERIMENTAL and not dremio.enable_search:
             return False
         return (For & tool_type) != 0  # == tool_type
     return False

@@ -121,9 +121,9 @@ class Dremio(BaseModel):
     ]
     raw_pat: Optional[str] = Field(default=None, alias="pat")
     project_id: Optional[str] = None
-    enable_experimental: Optional[bool] = Field(
+    enable_search: Optional[bool] = Field(
         default=False,
-        alias=AliasChoices("enable_experimental", "enable_search"),
+        alias=AliasChoices("enable_search", "enable_experimental"),
         description="enable experimental tools",
     )
     oauth2: Optional[OAuth2] = None
