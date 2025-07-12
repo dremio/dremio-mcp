@@ -208,6 +208,37 @@ There are 3 modes
 
 Multiple modes can be specified with separated by `,`
 
+#### SQL Protocol Options
+
+The MCP server supports two protocols for SQL execution:
+
+1. **REST** (default): Uses Dremio's REST API for SQL execution
+   - Compatible with all Dremio deployments
+   - Standard HTTP-based communication
+   - Suitable for most use cases
+
+2. **FLIGHT_SQL**: Uses Apache Arrow Flight SQL for SQL execution
+   - More efficient for large result sets
+   - Direct binary data transfer
+   - Requires Flight SQL endpoint to be accessible (typically port 443 for Dremio Cloud)
+
+To configure the SQL protocol, add the `sql_protocol` field to your Dremio configuration:
+
+```yaml
+dremio:
+    uri: https://api.eu.dremio.cloud
+    pat: your-personal-access-token
+    project_id: your-project-id
+    sql_protocol: FLIGHT_SQL  # or REST (default)
+```
+
+Or use the environment variable:
+```bash
+export DREMIO_SQL_PROTOCOL=FLIGHT_SQL
+```
+
+**Note**: Flight SQL requires the `adbc-driver-flightsql` package, which is automatically installed with the MCP server.
+
 ### The LLM (Claude) config file
 
 To setup the Claude config file (refer to [this as an example](https://modelcontextprotocol.io/quickstart/user#2-add-the-filesystem-mcp-server)) edit the Claude desktop config file

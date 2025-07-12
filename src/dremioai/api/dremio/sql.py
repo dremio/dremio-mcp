@@ -27,6 +27,7 @@ import itertools
 
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.config import settings
+from dremioai.log import logger
 
 
 class ArcticSourceType(UStrEnum):
@@ -228,16 +229,67 @@ async def get_results(
     return jr
 
 
-async def run_query(
+async def run_query_flightsql(
     query: Union[Query, str], use_df: bool = False
 ) -> Union[JobResultsWrapper, pd.DataFrame]:
-    client = AsyncHttpClient()
+    """Run query using Flight SQL protocol."""
+    try:
+        from dremioai.api.transport_flightsql import FlightSQLTransport
+    except ImportError:
+        raise RuntimeError("Flight SQL support requires adbc-driver-flightsql. Install with: pip install adbc-driver-flightsql")
+
     if not isinstance(query, Query):
         query = Query(sql=query)
 
-    project_id = settings.instance().dremio.project_id
-    endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
-    qs: QuerySubmission = await client.post(
-        f"{endpoint}/sql", body=query.model_dump(), deser=QuerySubmission
-    )
-    return await get_results(project_id, qs, use_df=use_df, client=client)
+    config = settings.instance().dremio
+
+    try:
+        # Create Flight SQL transport
+        client = FlightSQLTransport(
+            uri=config.uri,
+            pat=config.pat,
+            project_id=config.project_id
+        )
+
+        # Execute query
+        df = await client.execute_query(query.sql)
+
+        if use_df:
+            return df
+        else:
+            # Convert DataFrame back to JobResultsWrapper format for compatibility
+            rows = df.to_dict('records')
+            schema = [ResultSchema(name=col, type=ResultSchemaType(name="VARCHAR")) for col in df.columns]
+            result = JobResults(rowCount=len(df), schema=schema, rows=rows)
+            return JobResultsWrapper([result])
+
+    except Exception as e:
+        logger().error(f"Flight SQL query execution failed: {e}")
+        raise RuntimeError(f"Flight SQL query execution failed: {e}")
+
+
+async def run_query(
+    query: Union[Query, str], use_df: bool = False
+) -> Union[JobResultsWrapper, pd.DataFrame]:
+    """Run query using the configured SQL protocol (REST or Flight SQL)."""
+    config = settings.instance().dremio
+
+    # Check if Flight SQL is configured
+    sql_protocol = getattr(config, 'sql_protocol', 'REST').upper()
+
+    if sql_protocol == 'FLIGHT_SQL':
+        logger().info("Using Flight SQL protocol for query execution")
+        return await run_query_flightsql(query, use_df)
+    else:
+        logger().info("Using REST protocol for query execution")
+        # Original REST implementation
+        client = AsyncHttpClient()
+        if not isinstance(query, Query):
+            query = Query(sql=query)
+
+        project_id = settings.instance().dremio.project_id
+        endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
+        qs: QuerySubmission = await client.post(
+            f"{endpoint}/sql", body=query.model_dump(), deser=QuerySubmission
+        )
+        return await get_results(project_id, qs, use_df=use_df, client=client)
