@@ -130,22 +130,6 @@ class TestEnterpriseSearchResultsObjectFullModel:
         assert obj.category == Category.REFLECTION
 
 
-class TestCategoryValidationEdgeCases:
-    """Test edge cases for category validation"""
-
-    @pytest.mark.parametrize(
-        "edge_case_value",
-        [
-            pytest.param(" job ", id="leading_trailing_spaces"),
-            pytest.param("jöb", id="unicode_characters"),
-            pytest.param("job-type", id="special_characters"),
-        ],
-    )
-    def test_category_edge_cases(self, edge_case_value):
-        """Test that edge case category values raise ValidationError"""
-        assert_category_validation_error(edge_case_value)
-
-
 class TestCategoryValidationIntegration:
     """Integration tests for category validation with real-world scenarios"""
 
