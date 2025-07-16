@@ -91,6 +91,7 @@ class UserOrRole(UStrEnum):
     UNSPECIFIED = auto()
     USER = auto()
     ROLE = auto()
+    USER_TYPE_USER = auto()
 
 
 class EnterpriseDatasetType(UStrEnum):
@@ -178,6 +179,20 @@ class EnterpriseSearchResultsObject(BaseModel):
     catalog: Optional[EnterpriseSearchCatalogObject] = Field(
         default=None, alias="catalogObject"
     )
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def validate_category(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            try:
+                # Try to match case-insensitively by converting to uppercase
+                return Category[v.upper()]
+            except KeyError:
+                # If no match found, return the original value to let Pydantic handle the error
+                return v
+        return v
 
 
 class EnterpriseSearchResults(BaseModel):
