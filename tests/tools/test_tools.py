@@ -615,9 +615,9 @@ async def test_run_sql_query_through_fastmcp_direct():
 
             # Verify the result structure
             assert isinstance(actual_result, dict)
-            assert "results" in actual_result
-            assert len(actual_result["results"]) == 1
-            assert actual_result["results"][0]["test_column"] == 1
+            assert "result" in actual_result
+            assert len(actual_result["result"]) == 1
+            assert actual_result["result"][0]["test_column"] == 1
 
             # Also verify the content blocks contain the JSON representation
             assert len(content_blocks) == 1
