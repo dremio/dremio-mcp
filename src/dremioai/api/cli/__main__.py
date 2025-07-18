@@ -59,6 +59,15 @@ def run_catalog(dataset_id: Annotated[str, Option(...)]):
     pp(lineage)
 
 
+@catalog_app.command(name="schema")
+def run_catalog(
+    id_or_path: Annotated[str, Option(help="Dataset ID or path")],
+    by_id: Annotated[bool, Option(help="Whether the dataset id is an id")] = False,
+):
+    schema = asyncio.run(catalog.get_schema(id_or_path, by_id=by_id))
+    pp(schema)
+
+
 # _qg = "Query / Job ID "
 @sql_app.command("run")
 def run_sql(

@@ -273,7 +273,7 @@ class RunSqlQuery(Tools):
             "The query contains a DML statement. Only select queries are allowed"
         )
 
-    async def invoke(self, s: str) -> Dict[str, List[Any]]:
+    async def invoke(self, s: str) -> Dict[str, List[Dict[Any, Any]]]:
         """Run a SELECT sql query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes
         You are premitted to run only SELECT queries. No DML statements are allowed.
@@ -285,7 +285,7 @@ class RunSqlQuery(Tools):
         try:
             s = f"/* dremioai: submitter={self.__class__.__name__} */\n{s}"
             df = await sql.run_query(query=s, use_df=True)
-            return {"results": df.to_dict(orient="records")}
+            return {"result": df.to_dict(orient="records")}
         except RuntimeError as e:
             return {
                 "error": str(e),
