@@ -1,0 +1,14 @@
+{
+  "id": "job123-456-789",
+  "jobState": "COMPLETED",
+  "rowCount": 42,
+  "errorMessage": "",
+  "startedAt": "2024-01-01T10:00:00.000Z",
+  "endedAt": "2024-01-01T10:00:05.123Z",
+  "queryType": "REST",
+  "queueName": "SMALL",
+  "queueId": "SMALL",
+  "resourceSchedulingStartedAt": "2024-01-01T10:00:00.500Z",
+  "resourceSchedulingEndedAt": "2024-01-01T10:00:01.000Z",
+  "cancellationReason": ""
+}

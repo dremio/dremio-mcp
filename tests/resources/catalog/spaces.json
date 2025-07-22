@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "id": "space1",
+      "name": "Sample Space",
+      "type": "SPACE",
+      "path": ["Sample Space"],
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "tag": "abc123"
+    },
+    {
+      "id": "space2", 
+      "name": "Analytics",
+      "type": "SPACE",
+      "path": ["Analytics"],
+      "createdAt": "2024-01-02T00:00:00.000Z",
+      "tag": "def456"
+    }
+  ]
+}

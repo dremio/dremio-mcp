@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "test_column": 1
+    }
+  ],
+  "schema": [
+    {
+      "name": "test_column",
+      "type": "INTEGER"
+    }
+  ],
+  "rowCount": 1
+}

@@ -125,7 +125,7 @@ class AsyncHttpClient:
 
 
 class DremioAsyncHttpClient(AsyncHttpClient):
-    def __init__(self, uri: Optional[str] = None, pat: Optional[str] = None):
+    def __init__(self):
         dremio = settings.instance().dremio
         if (
             dremio.oauth_supported
@@ -135,10 +135,8 @@ class DremioAsyncHttpClient(AsyncHttpClient):
             oauth = get_oauth2_tokens()
             oauth.update_settings()
 
-        if uri is None:
-            uri = dremio.uri
-        if pat is None:
-            pat = dremio.pat
+        uri = dremio.uri
+        pat = dremio.pat
 
         if uri is None or pat is None:
             raise RuntimeError(f"uri={uri} pat={pat} are required")

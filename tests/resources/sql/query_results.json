@@ -1,0 +1,28 @@
+{
+  "rows": [
+    {
+      "id": 1,
+      "name": "Alice",
+      "department": "Engineering",
+      "salary": 75000
+    },
+    {
+      "id": 2,
+      "name": "Bob", 
+      "department": "Marketing",
+      "salary": 65000
+    },
+    {
+      "id": 3,
+      "name": "Charlie",
+      "department": "Engineering", 
+      "salary": 80000
+    }
+  ],
+  "schema": [
+    {"name": "id", "type": "INTEGER"},
+    {"name": "name", "type": "VARCHAR"},
+    {"name": "department", "type": "VARCHAR"},
+    {"name": "salary", "type": "INTEGER"}
+  ]
+}

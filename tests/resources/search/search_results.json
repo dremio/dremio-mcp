@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "name": "test_table",
+      "type": "TABLE",
+      "tags": [],
+      "description": "Test table for search results",
+      "schema": [
+        {
+          "name": "id",
+          "type": "INTEGER"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        }
+      ]
+    }
+  ],
+  "more": false,
+  "nextPageToken": null
+}

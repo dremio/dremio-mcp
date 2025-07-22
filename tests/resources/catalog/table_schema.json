@@ -1,0 +1,30 @@
+{
+  "entityType": "dataset",
+  "id": "test-table-id",
+  "path": ["test_schema", "test_table"],
+  "tag": "test-tag",
+  "type": "PHYSICAL_DATASET",
+  "fields": [
+    {
+      "name": "id",
+      "type": {
+        "name": "INTEGER"
+      }
+    },
+    {
+      "name": "name",
+      "type": {
+        "name": "VARCHAR"
+      }
+    },
+    {
+      "name": "created_date",
+      "type": {
+        "name": "TIMESTAMP"
+      }
+    }
+  ],
+  "approximateRecordCount": 1000,
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "description": "Test table schema"
+}

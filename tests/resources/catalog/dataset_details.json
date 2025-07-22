@@ -1,0 +1,32 @@
+{
+  "id": "dataset-123",
+  "name": "employees",
+  "type": "DATASET",
+  "path": ["Sample Space", "employees"],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "tag": "xyz789",
+  "fields": [
+    {
+      "name": "id",
+      "type": "INTEGER",
+      "nullable": false
+    },
+    {
+      "name": "name", 
+      "type": "VARCHAR",
+      "nullable": false
+    },
+    {
+      "name": "department",
+      "type": "VARCHAR", 
+      "nullable": true
+    },
+    {
+      "name": "salary",
+      "type": "INTEGER",
+      "nullable": true
+    }
+  ],
+  "rowCount": 1000,
+  "sizeBytes": 50000
+}
