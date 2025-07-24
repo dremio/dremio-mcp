@@ -15,11 +15,12 @@
 #
 
 import json
-import asyncio
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
-from unittest.mock import AsyncMock, MagicMock
-from aiohttp import ClientResponse, ClientSession
+from unittest.mock import MagicMock
+from aiohttp import ClientSession
+from collections import OrderedDict
 
 
 class MockResponse:
@@ -84,7 +85,7 @@ class HttpMockFramework:
 
     def __init__(self, resources_dir: str = "tests/resources"):
         self.resources_dir = Path(resources_dir)
-        self.mock_responses: Dict[str, str] = {}
+        self.mock_responses = OrderedDict()
         self.original_session = None
 
     def load_mock_data(self, endpoint: str, filename: str) -> "HttpMockFramework":
@@ -123,7 +124,7 @@ class HttpMockFramework:
         """Get mock response for a URL"""
         # Extract endpoint from full URL
         for endpoint, data in self.mock_responses.items():
-            if endpoint in url:
+            if re.search(endpoint, url):
                 return MockResponse(data)
 
         # Default response if no mock found
@@ -157,7 +158,7 @@ class HttpMockFramework:
 
 
 # Convenience function for quick setup
-def mock_http_client(mock_data: Dict[str, str]) -> HttpMockFramework:
+def mock_http_client(mock_data: OrderedDict[str, str]) -> HttpMockFramework:
     """
     Create and configure an HTTP mock framework
 

@@ -1,18 +1,18 @@
-# 
+#
 #  Copyright (C) 2017-2025 Dremio Corporation
-# 
+#
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
 #  You may obtain a copy of the License at
-# 
+#
 #      http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 #  Unless required by applicable law or agreed to in writing, software
 #  distributed under the License is distributed on an "AS IS" BASIS,
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-# 
+#
 
 from pydantic import BaseModel, Field, BeforeValidator
 from typing import List, Dict, Union, Optional, Any, Annotated
@@ -105,14 +105,14 @@ async def get_projects(
     project_ids: Optional[Union[List[str], str]] = None,
     use_df: Optional[bool] = False,
 ) -> Union[pd.DataFrame, ProjectsList]:
-    client = AsyncHttpClient(uri=uri, pat=pat)
+    client = AsyncHttpClient()
 
     if project_ids:
         if isinstance(engine_ids, str):
             engine_ids = [engine_ids]
 
         async def _fetch_one(pid: str):
-            client = AsyncHttpClient(uri=uri, pat=pat)
+            client = AsyncHttpClient()
             return await client.get(f"/v0/projects/{pid}", deser=Project)
 
         pl = await run_in_parallel([_fetch_one(p) for p in project_ids])

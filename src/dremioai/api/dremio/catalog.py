@@ -110,7 +110,7 @@ class LineageResponse(BaseModel):
     children: List[LineageChildren]
 
 
-async def get_lineage(dataset_id_or_path: str) -> str:
+async def get_lineage(dataset_id_or_path: str) -> Dict[str, Any]:
     client = AsyncHttpClient()
     if "." in dataset_id_or_path:
         response = await get_schema(dataset_id_or_path, by_id=False)
@@ -122,7 +122,7 @@ async def get_lineage(dataset_id_or_path: str) -> str:
         f"{endpoint}/{dataset_id_or_path}/graph",
         deser=LineageResponse,
     )
-    return result.model_dump_json()
+    return result.model_dump()
 
 
 async def get_schema(

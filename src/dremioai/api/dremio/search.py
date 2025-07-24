@@ -219,10 +219,7 @@ async def get_search_results(
     if isinstance(search, str):
         search = Search(query=search)
 
-    client = AsyncHttpClient(
-        settings.instance().dremio.uri, settings.instance().dremio.pat
-    )
-
+    client = AsyncHttpClient()
     endpoint = (
         f"/v0/projects/{settings.instance().dremio.project_id}/search"
         if settings.instance().dremio.project_id

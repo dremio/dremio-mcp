@@ -7,7 +7,9 @@
   "schema": [
     {
       "name": "test_column",
-      "type": "INTEGER"
+      "type": {
+        "name": "INTEGER"
+      }
     }
   ],
   "rowCount": 1

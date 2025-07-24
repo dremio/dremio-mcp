@@ -156,7 +156,7 @@ async def get_usage(
     if isinstance(project_ids, str):
         params.for_project_id(project_ids)
 
-    client = AsyncHttpClient(uri=uri, pat=pat)
+    client = AsyncHttpClient()
 
     async def _get_usage(p: Params) -> Usage:
         p = p.model_dump() if p is not None else None

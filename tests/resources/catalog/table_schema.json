@@ -1,30 +1,30 @@
 {
-  "entityType": "dataset",
-  "id": "test-table-id",
-  "path": ["test_schema", "test_table"],
-  "tag": "test-tag",
-  "type": "PHYSICAL_DATASET",
-  "fields": [
-    {
-      "name": "id",
-      "type": {
-        "name": "INTEGER"
-      }
+    "entityType": "dataset",
+    "id": "3d9d748f-35af-477b-9ded-dd63b01d803b",
+    "type": "PHYSICAL_DATASET",
+    "path": ["Samples", "samples.dremio.com", "NYC-taxi-trips-iceberg"],
+    "createdAt": "2025-06-27T14:30:04.122Z",
+    "tag": "c182d6b8-4c0b-471b-8137-037325998e67",
+    "format": {
+        "type": "Iceberg",
+        "fullPath": ["Samples", "samples.dremio.com", "NYC-taxi-trips-iceberg"],
+        "isFolder": true,
+        "location": "s3://samples.dremio.com/NYC-taxi-trips-iceberg",
+        "ignoreOtherFileFormats": false,
+        "metaStoreType": "HDFS",
+        "parquetDataFormat": {"type": "Parquet", "isFolder": false, "ignoreOtherFileFormats": false, "autoCorrectCorruptDates": true},
+        "dataFormatTypeList": ["PARQUET"]
     },
-    {
-      "name": "name",
-      "type": {
-        "name": "VARCHAR"
-      }
-    },
-    {
-      "name": "created_date",
-      "type": {
-        "name": "TIMESTAMP"
-      }
-    }
-  ],
-  "approximateRecordCount": 1000,
-  "createdAt": "2024-01-01T00:00:00.000Z",
-  "description": "Test table schema"
+    "schemaOutdated": false,
+    "accessControlList": {"users": [], "roles": []},
+    "owner": {"ownerId": "f6fe5313-3b5c-48fd-ad87-9dfcff13635b", "ownerType": "USER"},
+    "fields": [
+        {"name": "pickup_datetime", "type": {"name": "TIMESTAMP"}, "isPartitioned": false, "isSorted": false},
+        {"name": "passenger_count", "type": {"name": "BIGINT"}, "isPartitioned": false, "isSorted": false},
+        {"name": "trip_distance_mi", "type": {"name": "DOUBLE"}, "isPartitioned": false, "isSorted": false},
+        {"name": "fare_amount", "type": {"name": "DOUBLE"}, "isPartitioned": false, "isSorted": false},
+        {"name": "tip_amount", "type": {"name": "DOUBLE"}, "isPartitioned": false, "isSorted": false},
+        {"name": "total_amount", "type": {"name": "DOUBLE"}, "isPartitioned": false, "isSorted": false}
+    ],
+    "approximateStatisticsAllowed": false
 }

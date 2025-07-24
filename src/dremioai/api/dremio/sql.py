@@ -160,7 +160,7 @@ class JobResultsParams(BaseModel):
 async def _fetch_results(
     uri: str, pat: str, project_id: str, job_id: str, off: int, limit: int
 ) -> JobResults:
-    client = AsyncHttpClient(uri=uri, pat=pat)
+    client = AsyncHttpClient()
     params = JobResultsParams(offset=off, limit=limit)
     endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
     return await client.get(
@@ -182,7 +182,7 @@ async def get_results(
         qs = QuerySubmission(id=qs)
 
     if client is None:
-        client = AsyncHttpClient(uri=uri, pat=pat)
+        client = AsyncHttpClient()
 
     endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
     job: Job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)

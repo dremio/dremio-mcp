@@ -1,0 +1,52 @@
+{
+  "sources": [
+    {
+      "id": "21077e5d-fe6f-4a29-843f-58fa3acb17c2",
+      "path": [
+        "Samples"
+      ],
+      "tag": "Iz1v71CeTQY=",
+      "type": "CONTAINER",
+      "containerType": "SOURCE",
+      "createdAt": "2022-02-14T21:57:48.794Z"
+    }
+  ],
+  "parents": [
+    {
+      "id": "3419fa3a-b5b3-4438-b864-a27ec4e18752",
+      "path": [
+        "Samples",
+        "samples.dremio.com",
+        "zips.json"
+      ],
+      "tag": "MAntohVzwLw=",
+      "type": "DATASET",
+      "datasetType": "PROMOTED",
+      "createdAt": "2023-01-18T18:49:09.669Z"
+    }
+  ],
+  "children": [
+    {
+      "id": "170e211e-4235-4d8d-acb5-3d4dbfe99c75",
+      "path": [
+        "@dremio",
+        "NYC_zip"
+      ],
+      "tag": "OWKrfpEKzW4=",
+      "type": "DATASET",
+      "datasetType": "VIRTUAL",
+      "createdAt": "2023-01-25T02:11:46.344Z"
+    },
+    {
+      "id": "7f79c068-a3c3-4af7-8cd4-35896ef0a0e0",
+      "path": [
+        "@dremio",
+        "Chicago_zip"
+      ],
+      "tag": "gsaDW5h4GCs=",
+      "type": "DATASET",
+      "datasetType": "VIRTUAL",
+      "createdAt": "2023-01-25T00:09:12.461Z"
+    }
+  ]
+}
