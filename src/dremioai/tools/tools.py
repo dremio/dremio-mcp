@@ -26,6 +26,10 @@ from typing import (
     ClassVar,
     get_args,
     get_type_hints,
+    Callable,
+    TypeVar,
+    ParamSpec,
+    Awaitable,
 )
 
 from pathlib import Path
@@ -33,6 +37,7 @@ from dataclasses import dataclass, asdict, field
 from enum import auto, IntFlag
 from dremioai import log
 import re
+import functools
 
 import pandas as pd
 
@@ -48,8 +53,15 @@ from csv import reader
 from io import StringIO
 from sqlglot import parse_one
 from sqlglot import expressions
+from mcp.server.fastmcp.server import Context
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken
 
 logger = log.logger(__name__)
+
+# Type variables for the secured decorator
+P = ParamSpec("P")
+T = TypeVar("T")
 
 
 @dataclass
@@ -90,44 +102,25 @@ class Tool:
 
 
 class Tools:
-    def __init__(self, uri=None, pat=None, project_id=None):
-        settings.instance().with_overrides(
-            {"dremio.uri": uri, "dremio.pat": pat, "dremio.project_id": project_id}
-        )
-
-    @property
-    def dremio_uri(self):
-        return settings.instance().dremio.uri
-
-    @property
-    def pat(self):
-        return settings.instance().dremio.pat
-
-    @property
-    def project_id(self):
-        return settings.instance().dremio.project_id
-
     async def invoke(self):
         raise NotImplementedError("Subclasses should implement this method")
 
-    def get_parameters(self):
-        return Parameters()
 
-    # support for LangChain tools as compatiblity
-    def as_tool(self):
-        return Tool(
-            function=Function(
-                name=self.__class__.__name__,
-                description=self.invoke.__doc__,
-                parameters=self.get_parameters(),
+# A decorator to ensure a tool that needs to access Dremio runs with the correct token
+# if invoked through streamable HTTP transport _with_ a valid Dremio bearer token
+# It is a no-op if the tool is invoked through stdio transport, as MCP server ensures
+# proper PAT is used for all requests.
+def secured(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+
+    @functools.wraps(fn)
+    async def _impl(self, *args: P.args, **kw: P.kwargs) -> T:
+        if isinstance((token := get_access_token()), AccessToken):
+            return await settings.run_with(
+                fn, {"dremio.pat": token.token}, (self,) + args, kw
             )
-        )
+        return await fn(self, *args, **kw)
 
-
-JobType: TypeAlias = Union[
-    List[Literal["UI", "ACCELERATION", "INTERNAL", "EXTERNAL"]], str
-]
-StatusType: TypeAlias = Union[List[Literal["COMPLETED", "CANCELED", "FAILED"]], str]
+    return _impl
 
 
 def _get_class_var_hints(tool: Tools, name: str) -> bool:
@@ -164,6 +157,7 @@ class GetFailedJobDetails(Tools):
     def group_by(self, df, by):
         return df.groupby(by).size().reset_index(name="count").to_dict(orient="records")
 
+    @secured
     async def invoke(self) -> Dict[str, Any]:
         """Get the stats and details of failed or canceled jobs executed in the Dremio cluster in the past 7 days
         along with a split by job type
@@ -273,6 +267,7 @@ class RunSqlQuery(Tools):
             "The query contains a DML statement. Only select queries are allowed"
         )
 
+    @secured
     async def invoke(self, s: str) -> Dict[str, List[Dict[Any, Any]]]:
         """Run a SELECT sql query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes
@@ -292,19 +287,12 @@ class RunSqlQuery(Tools):
                 "message": "The query failed. Please check the syntax and try again",
             }
 
-    def get_parameters(self):
-        return Parameters(
-            properties={
-                "sql": Property(type="string", description="The sql query to run")
-            },
-            required=["sql"],
-        )
-
 
 class BuildUsageReport(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
     project_id_required: ClassVar[Annotated[bool, True]]
 
+    @secured
     async def invoke(
         self, by: Optional[Literal["PROJECT", "ENGINE"]] = "ENGINE"
     ) -> Dict[str, Any]:
@@ -367,6 +355,7 @@ class GetUsefulSystemTableNames(Tools):
 class GetSchemaOfTable(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
 
+    @secured
     async def invoke(self, table_name: Union[str | List[str]]) -> Dict[str, Any]:
         """Gets the schema of the given table.
 
@@ -391,6 +380,7 @@ class GetSchemaOfTable(Tools):
 class GetTableOrViewLineage(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
 
+    @secured
     async def invoke(self, table_name: Union[str, List[str]]) -> Dict[str, Any]:
         """Finds the lineage of a table or view in the Dremio cluster
 
@@ -411,6 +401,7 @@ class SearchTableAndViews(Tools):
         ]
     ]
 
+    @secured
     async def invoke(self, query: str) -> Dict[str, Any]:
         """Runs a semantic search on the Dremio cluster to find tables and views that match the query.
 

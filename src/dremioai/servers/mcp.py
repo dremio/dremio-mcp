@@ -38,14 +38,57 @@ import asyncio
 from yaml import dump, add_representer
 import sys
 
+from mcp.server.auth.middleware.auth_context import (
+    AuthContextMiddleware,
+    get_access_token,
+)
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from starlette.middleware import Middleware
+from starlette.middleware.authentication import AuthenticationMiddleware
+
+
+class Transports(StrEnum):
+    stdio = auto()
+    streamable_http = "streamable-http"
+
+
+class FastMCPServerWithAuthToken(FastMCP):
+    class DelegatingTokenVerifier(TokenVerifier):
+        async def verify_token(self, token: str) -> AccessToken | None:
+            log.logger("verify_token").info(f"Verifying token: {token}")
+            return (
+                AccessToken(
+                    token=token,  # Include the token itself
+                    client_id="unused-client",
+                    scopes=["read"],
+                )
+                if token
+                else None
+            )
+
+    def streamable_http_app(self):
+        token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
+        app = super().streamable_http_app()
+        app.add_middleware(AuthContextMiddleware)
+        app.add_middleware(
+            AuthenticationMiddleware, backend=BearerAuthBackend(token_verifier)
+        )
+        log.logger("streamable_http_app").info(
+            f"Adding auth middleware {app.user_middleware}"
+        )
+        return app
+
 
 def init(
-    uri: str = None,
-    pat: str = None,
-    project_id: str = None,
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
+    transport: Transports = Transports.stdio,
 ) -> FastMCP:
-    mcp = FastMCP("Dremio", level="DEBUG")
+    mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
+    log.logger("init").info(
+        f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
+    )
+    mcp = mcp_cls("Dremio", level="DEBUG")
     mode = reduce(ior, mode) if mode is not None else None
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
@@ -74,10 +117,6 @@ def init(
 
 
 app = None
-# if __name__ != "__main__":
-# if mode := os.environ.get("MODE"):
-# mode = [tools.ToolType[m.upper()] for m in ",".split(mode)]
-# app = init(mode=mode)
 
 
 def _mode() -> List[str]:
@@ -89,53 +128,26 @@ ty = Typer(context_settings=dict(help_option_names=["-h", "--help"]))
 
 @ty.command(name="run", help="Run the DremioAI MCP server")
 def main(
-    dremio_uri: Annotated[Optional[str], Option(help="Dremio URI")] = None,
-    dremio_pat: Annotated[Optional[str], Option(help="Dremio PAT")] = None,
-    dremio_project_id: Annotated[
-        Optional[str], Option(help="Dremio Project Id")
-    ] = None,
     config_file: Annotated[
         Optional[Path],
         Option("-c", "--cfg", help="The config yaml for various options"),
     ] = None,
-    mode: Annotated[
-        Optional[List[str]],
-        Option("-m", "--mode", help="MCP server mode", click_type=Choice(_mode())),
-    ] = None,
-    list_tools: Annotated[
-        bool, Option(help="List available tools for this mode and exit")
-    ] = False,
     log_to_file: Annotated[Optional[bool], Option(help="Log to file")] = True,
     enable_json_logging: Annotated[
         Optional[bool], Option(help="Enable JSON logs")
     ] = False,
+    enable_streaming_http: Annotated[
+        Optional[bool], Option(help="Run MCP as streaming HTTP")
+    ] = False,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level("DEBUG")
+    if enable_streaming_http:
+        transport = Transports.streamable_http
+    else:
+        transport = Transports.stdio
 
-    if mode is not None:
-        mode = [tools.ToolType[m.upper()] for m in mode]
-
-    cfg = (
-        settings.configure(config_file)
-        .get()
-        .with_overrides(
-            {
-                "dremio.uri": dremio_uri,
-                "dremio.pat": dremio_pat,
-                "dremio.project_id": dremio_project_id,
-                "tools.server_mode": mode,
-            }
-        )
-    )
-    if list_tools:
-        log.logger().info(f"Starting Dremio tools with {cfg}")
-        mode = reduce(ior, mode) if mode is not None else None
-        log.logger().info(f"Listing available tools for mode={mode}")
-        for tool in tools.get_tools(For=mode):
-            print(tool.__name__)
-        return
-
+    cfg = settings.configure(config_file).get()
     dremio = settings.instance().dremio
     if (
         dremio.oauth_supported
@@ -146,12 +158,10 @@ def main(
         oauth.update_settings()
 
     app = init(
-        uri=cfg.dremio.uri,
-        pat=cfg.dremio.pat,
-        project_id=cfg.dremio.project_id,
         mode=cfg.tools.server_mode,
+        transport=transport,
     )
-    app.run()
+    app.run(transport=transport.value)
 
 
 tc = Typer(

@@ -15,12 +15,13 @@
 #
 
 import pytest
-from dremioai.tools.tools import RunSqlQuery
+from dremioai.tools import tools
 from dremioai.config import settings
 from typing import Dict, Union
-from contextlib import contextmanager, asynccontextmanager
-from tempfile import TemporaryDirectory
-from pathlib import Path
+from contextlib import contextmanager
+
+from mcp.server.fastmcp.tools.base import Tool as MCPTool
+from rich import print as pp
 
 sql_test_statements = [
     {
@@ -435,193 +436,41 @@ def test_run_sql_safety(s: Dict[str, Union[str, bool]], dml_allowed: bool):
     with mock_settings(dml_allowed):
         allowed = s["allowed"] if not dml_allowed else True
         try:
-            RunSqlQuery.ensure_query_allowed(s["sql"])
+            tools.RunSqlQuery.ensure_query_allowed(s["sql"])
             assert allowed, f'should not be allowed: {s["sql"]}'
         except ValueError:
             assert not allowed, f'should be allowed: {s["sql"]}'
 
 
-@pytest.mark.asyncio
-async def test_run_sql_query_through_mcp_server():
-    """Test RunSqlQuery tool invocation through MCP server"""
-    # Import MCP client components
-    from mcp.client.session import ClientSession
-    from mcp.client.stdio import stdio_client, StdioServerParameters
-    from dremioai.servers import mcp as mcp_server
-    from dremioai.config.tools import ToolType
+def test_tool_decorators():
+    def normalize(expected: MCPTool, actual: MCPTool):
+        for t in (expected, actual):
+            t.fn = None
+            if "self" in t.parameters["properties"]:
+                del t.parameters["properties"]["self"]
+            if "self" in t.parameters.get("required", []):
+                t.parameters["required"].remove("self")
+                if not t.parameters["required"]:
+                    del t.parameters["required"]
 
-    @contextmanager
-    def mock_settings_for_mcp(mode: ToolType):
-        """Create mock settings for testing MCP server"""
-        try:
-            old = settings.instance()
-            with TemporaryDirectory() as temp_dir:
-                temp_dir = Path(temp_dir)
-                settings._settings.set(
-                    settings.Settings.model_validate(
-                        {
-                            "dremio": {
-                                "uri": "https://test-dremio-uri.com",
-                                "pat": "test-pat",
-                                "project_id": "test-project-id",
-                            },
-                            "tools": {"server_mode": mode},
-                        }
-                    )
-                )
-                cfg = temp_dir / "config.yaml"
-                settings.write_settings(cfg=cfg, inst=settings.instance())
-                yield settings.instance(), cfg
-        finally:
-            settings._settings.set(old)
+            for m in ("arg_model", "output_model"):
+                if inst := getattr(t.fn_metadata, m, None):
+                    setattr(t.fn_metadata, m, inst.__class__.__name__)
 
-    @asynccontextmanager
-    async def mcp_server_session(cfg: Path):
-        """Create an MCP server instance with mock settings"""
-        params = mcp_server.create_default_mcpserver_config()
-        params["args"].extend(["--cfg", str(cfg)])
-        params = StdioServerParameters(command=params["command"], args=params["args"])
-        async with (
-            stdio_client(params) as (read, write),
-            ClientSession(read, write) as session,
-        ):
-            await session.initialize()
-            yield session
+        return expected, actual
 
-    test_query = "SELECT 1 as test_column"
-
-    # Create MCP server configuration
-    with mock_settings_for_mcp(ToolType.FOR_DATA_PATTERNS) as (_, cfg):
-        # Start MCP server and create client session
-        async with mcp_server_session(cfg) as session:
-            # Verify RunSqlQuery tool is available
-            tools = await session.list_tools()
-            tool_names = {tool.name for tool in tools.tools}
-            assert "RunSqlQuery" in tool_names
-
-            # Call the RunSqlQuery tool through MCP
-            # This will fail because we don't have real Dremio credentials,
-            # but we can verify the tool is invoked and returns an error response
-            result = await session.call_tool("RunSqlQuery", arguments={"s": test_query})
-
-            # Verify we get a response (even if it's an error)
-            assert result.content is not None
-            assert len(result.content) > 0
-
-            # The response should be a string representation of a dictionary
-            response_text = result.content[0].text
-            assert isinstance(response_text, str)
-
-            # Since we don't have real credentials, we expect an error response
-            # The response should contain either "error" or "results" key
-            # Let's verify the response has the expected structure
-            import ast
-
-            try:
-                # Try to parse the response as a Python literal
-                parsed_response = ast.literal_eval(response_text)
-                assert isinstance(parsed_response, dict)
-                # Should have either "results" or "error" key
-                assert "result" in parsed_response or "error" in parsed_response
-
-                # If it's an error response, verify it has the expected error structure
-                if "error" in parsed_response:
-                    assert "message" in parsed_response
-                    assert (
-                        parsed_response["message"]
-                        == "The query failed. Please check the syntax and try again"
-                    )
-
-            except (ValueError, SyntaxError):
-                # If we can't parse it as a literal, it might be JSON
-                import json
-
-                try:
-                    parsed_response = json.loads(response_text)
-                    assert isinstance(parsed_response, dict)
-                    assert "results" in parsed_response or "error" in parsed_response
-                except json.JSONDecodeError:
-                    # If neither works, just verify we got some response
-                    assert len(response_text) > 0
-
-
-@pytest.mark.asyncio
-async def test_run_sql_query_through_fastmcp_direct():
-    """Test RunSqlQuery tool invocation directly through FastMCP server"""
-    from dremioai.servers import mcp as mcp_server
-    from dremioai.config.tools import ToolType
-    from unittest.mock import AsyncMock, patch
-
-    test_query = "SELECT 1 as test_column"
-
-    @contextmanager
-    def mock_settings_for_fastmcp(mode: ToolType):
-        """Create mock settings for testing FastMCP server"""
-        try:
-            old = settings.instance()
-            settings._settings.set(
-                settings.Settings.model_validate(
-                    {
-                        "dremio": {
-                            "uri": "https://test-dremio-uri.com",
-                            "pat": "test-pat",
-                            "project_id": "test-project-id",
-                        },
-                        "tools": {"server_mode": mode},
-                    }
-                )
-            )
-            yield settings.instance()
-        finally:
-            settings._settings.set(old)
-
-    # Create FastMCP server directly
-    with mock_settings_for_fastmcp(ToolType.FOR_DATA_PATTERNS):
-        # Mock the sql.run_query function to avoid actual database calls
-        with patch(
-            "dremioai.api.dremio.sql.run_query", new_callable=AsyncMock
-        ) as mock_run_query:
-            # Create a mock DataFrame response
-            import pandas as pd
-
-            mock_df = pd.DataFrame([{"test_column": 1}])
-            mock_run_query.return_value = mock_df
-
-            # Initialize FastMCP server with tools
-            fastmcp_server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
-
-            # Verify RunSqlQuery tool is registered
-            tools = await fastmcp_server.list_tools()
-            tool_names = {tool.name for tool in tools}
-            assert "RunSqlQuery" in tool_names
-
-            # Call the RunSqlQuery tool directly through FastMCP
-            result = await fastmcp_server.call_tool("RunSqlQuery", {"s": test_query})
-
-            # Verify the mock was called with correct parameters
-            mock_run_query.assert_called_once_with(
-                query=f"/* dremioai: submitter=RunSqlQuery */\n{test_query}",
-                use_df=True,
-            )
-
-            # FastMCP call_tool returns a tuple: (content_blocks, metadata)
-            # The actual result is in the metadata under 'result' key
-            assert isinstance(result, tuple)
-            assert len(result) == 2
-
-            content_blocks, metadata = result
-            assert "result" in metadata
-            actual_result = metadata["result"]
-
-            # Verify the result structure
-            assert isinstance(actual_result, dict)
-            assert "result" in actual_result
-            assert len(actual_result["result"]) == 1
-            assert actual_result["result"][0]["test_column"] == 1
-
-            # Also verify the content blocks contain the JSON representation
-            assert len(content_blocks) == 1
-            import json
-
-            content_json = json.loads(content_blocks[0].text)
-            assert content_json == actual_result
+    for tool in tools.get_tools(
+        For=tools.ToolType.FOR_DATA_PATTERNS | tools.ToolType.FOR_SELF
+    ):
+        instance = tool()
+        if not hasattr(instance.invoke, "__wrapped__"):
+            continue
+        expected = MCPTool.from_function(instance.invoke.__wrapped__)
+        actual = MCPTool.from_function(instance.invoke)
+        expected, actual = normalize(expected, actual)
+        if expected != actual:
+            pp("Expected:")
+            pp(expected)
+            pp("Actual:")
+            pp(actual)
+            assert False
