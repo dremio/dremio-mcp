@@ -268,7 +268,7 @@ class RunSqlQuery(Tools):
         )
 
     @secured
-    async def invoke(self, s: str) -> Dict[str, List[Dict[Any, Any]]]:
+    async def invoke(self, s: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
         """Run a SELECT sql query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes
         You are premitted to run only SELECT queries. No DML statements are allowed.
