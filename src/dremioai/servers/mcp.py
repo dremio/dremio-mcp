@@ -17,6 +17,13 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
+from mcp.server.fastmcp.server import Settings as MCPSettings
+from mcp.server.auth.settings import (
+    AuthSettings,
+    ClientRegistrationOptions,
+    RevocationOptions,
+)
+from mcp.server.auth.provider import OAuthAuthorizationServerProvider
 from mcp.cli.claude import get_claude_config_path
 from pydantic.networks import AnyUrl
 from dremioai.tools import tools
@@ -46,6 +53,14 @@ from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.middleware import Middleware
 from starlette.middleware.authentication import AuthenticationMiddleware
+
+from dremioai.api.oauth2 import (
+    get_dremio_cloud_issuer_url,
+    get_required_scope,
+    get_oauth_urls,
+)
+from starlette.requests import Request
+from starlette.responses import Response, JSONResponse
 
 
 class Transports(StrEnum):
@@ -88,7 +103,28 @@ def init(
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
     )
-    mcp = mcp_cls("Dremio", level="DEBUG")
+    opts = {"level": "DEBUG"}
+    if transport == Transports.streamable_http:
+        scopes = get_required_scope().split()
+        opts["auth"] = AuthSettings.model_validate(
+            {
+                "issuer_url": get_dremio_cloud_issuer_url() + "/oauth",
+                "required_scopes": scopes,
+                "client_registration_options": ClientRegistrationOptions.model_validate(
+                    {"enabled": False, "default_scopes": scopes, "valid_scopes": scopes}
+                ),
+                "revocation_options": RevocationOptions.model_validate(
+                    {"enabled": False}
+                ),
+                "resource_server_url": None,
+            }
+        )
+
+    mcp = mcp_cls(
+        "Dremio",
+        token_verifier=FastMCPServerWithAuthToken.DelegatingTokenVerifier(),
+        **opts,
+    )
     mode = reduce(ior, mode) if mode is not None else None
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
@@ -113,6 +149,39 @@ def init(
     mcp.add_prompt(
         Prompt.from_function(tools.system_prompt, "System Prompt", "System Prompt")
     )
+
+    if transport == Transports.streamable_http:
+
+        @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+        async def protected_resource_metadata(request: Request) -> Response:
+            url = get_dremio_cloud_issuer_url()
+            return JSONResponse(
+                {
+                    "resource": "http://127.0.0.1:8000/mcp",
+                    "authorization_servers": [f"{url}/oauth/authorize"],
+                    "bearer_methods_supported": ["header", "body"],
+                    "scopes_supported": ["dremio.all", "offline"],
+                }
+            )
+
+        @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+        async def authorization_server_metadata(request: Request) -> Response:
+            url = get_dremio_cloud_issuer_url()
+            auth, tok = get_oauth_urls()
+
+            return JSONResponse(
+                {
+                    "issuer": url,
+                    "authorization_endpoint": auth,
+                    "token_endpoint": tok,
+                    "scopes_supported": ["dremio.all", "offline_access"],
+                    "response_types_supported": ["code"],
+                    "grant_types_supported": ["authorization_code", "refresh_token"],
+                    "token_endpoint_auth_methods_supported": ["client_secret_post"],
+                    "code_challenge_methods_supported": ["S256"],
+                }
+            )
+
     return mcp
 
 
@@ -136,13 +205,11 @@ def main(
     enable_json_logging: Annotated[
         Optional[bool], Option(help="Enable JSON logs")
     ] = False,
-    enable_streaming_http: Annotated[
-        Optional[bool], Option(help="Run MCP as streaming HTTP")
-    ] = False,
+    streamable_http: Annotated[Optional[bool], Option(help="Streamable HTTP")] = False,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level("DEBUG")
-    if enable_streaming_http:
+    if streamable_http:
         transport = Transports.streamable_http
     else:
         transport = Transports.stdio
