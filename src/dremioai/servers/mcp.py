@@ -89,9 +89,6 @@ class FastMCPServerWithAuthToken(FastMCP):
         app.add_middleware(
             AuthenticationMiddleware, backend=BearerAuthBackend(token_verifier)
         )
-        log.logger("streamable_http_app").info(
-            f"Adding auth middleware {app.user_middleware}"
-        )
         return app
 
 
@@ -120,11 +117,18 @@ def init(
             }
         )
 
-    mcp = mcp_cls(
-        "Dremio",
-        token_verifier=FastMCPServerWithAuthToken.DelegatingTokenVerifier(),
-        **opts,
-    )
+    # Only pass token_verifier for streamable_http transport
+    if transport == Transports.streamable_http:
+        mcp = mcp_cls(
+            "Dremio",
+            token_verifier=FastMCPServerWithAuthToken.DelegatingTokenVerifier(),
+            **opts,
+        )
+    else:
+        mcp = mcp_cls(
+            "Dremio",
+            **opts,
+        )
     mode = reduce(ior, mode) if mode is not None else None
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
@@ -166,6 +170,42 @@ def init(
 
         @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
         async def authorization_server_metadata(request: Request) -> Response:
+            url = get_dremio_cloud_issuer_url()
+            auth, tok = get_oauth_urls()
+
+            return JSONResponse(
+                {
+                    "issuer": url,
+                    "authorization_endpoint": auth,
+                    "token_endpoint": tok,
+                    "scopes_supported": ["dremio.all", "offline_access"],
+                    "response_types_supported": ["code"],
+                    "grant_types_supported": ["authorization_code", "refresh_token"],
+                    "token_endpoint_auth_methods_supported": ["client_secret_post"],
+                    "code_challenge_methods_supported": ["S256"],
+                }
+            )
+
+        # Add project-specific OAuth metadata endpoints
+        @mcp.custom_route(
+            "/{project_id}/.well-known/oauth-protected-resource", methods=["GET"]
+        )
+        async def project_protected_resource_metadata(request: Request) -> Response:
+            project_id = request.path_params.get("project_id")
+            url = get_dremio_cloud_issuer_url()
+            return JSONResponse(
+                {
+                    "resource": f"http://127.0.0.1:8000/{project_id}/mcp",
+                    "authorization_servers": [f"{url}/oauth/authorize"],
+                    "bearer_methods_supported": ["header", "body"],
+                    "scopes_supported": ["dremio.all", "offline"],
+                }
+            )
+
+        @mcp.custom_route(
+            "/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
+        )
+        async def project_authorization_server_metadata(request: Request) -> Response:
             url = get_dremio_cloud_issuer_url()
             auth, tok = get_oauth_urls()
 
