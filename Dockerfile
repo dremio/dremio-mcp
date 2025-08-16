@@ -19,7 +19,7 @@ RUN pip install --upgrade pip build && \
 FROM python:3.13-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Create non-root user
 RUN useradd -m -u 1001 appuser
