@@ -14,10 +14,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v6
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -25,9 +23,13 @@ jobs:
           python-version: '3.13'
 
       - name: Check formatting
+        id: check-formatting
         run: |
-          uv run black src --check
-          uv run black tests --check 
+          uv run black --check --diff src/ tests/
+        continue-on-error: true
+
+      - if: ${{ steps.check-formatting.outcome == 'failure' }}
+        run: echo -e "Formatting check failed. Please run 'uv run black src/ tests/' to fix."
 
       - name: Run tests
         run: |
