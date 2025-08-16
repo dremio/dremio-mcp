@@ -45,7 +45,7 @@ jobs:
             --network host \
           dremio-mcp-server:${{ github.sha }} \
           dremio-mcp-server run --enable-streaming-http --port 6789 --no-log-to-file \
-            --enable-json-logging
+            --enable-json-logging &
 
       - name: Test container
         run: |
