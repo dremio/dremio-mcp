@@ -89,12 +89,15 @@ def configure(enable_json_logging=None, to_file=False):
         log_file_path = get_log_file()
 
         # Configure rotating file handler
-        file_handler = RotatingFileHandler(
+        handler = RotatingFileHandler(
             log_file_path, maxBytes=10 * 1024 * 1024, backupCount=5  # 10MB
         )
-        file_handler.setLevel(level())
-        logging.getLogger().handlers.clear()
-        logging.getLogger().addHandler(file_handler)
+    else:
+        handler = logging.StreamHandler(sys.stderr)
+
+    handler.setLevel(level())
+    logging.getLogger().handlers.clear()
+    logging.getLogger().addHandler(handler)
 
     renderer = (
         structlog.processors.JSONRenderer()

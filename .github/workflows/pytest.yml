@@ -24,6 +24,11 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Check formatting
+        run: |
+          uv run black src --check
+          uv run black tests --check 
+
       - name: Run tests
         run: |
           uv run pytest tests

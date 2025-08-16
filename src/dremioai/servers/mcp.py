@@ -29,6 +29,7 @@ from dremioai import log
 from typer import Typer, Option, Argument, BadParameter
 from rich import console, table, print as pp
 from click import Choice
+import logging
 from dremioai.config import settings
 from dremioai.api.oauth2 import get_oauth2_tokens
 from enum import StrEnum, auto
@@ -88,7 +89,7 @@ def init(
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
     )
-    mcp = mcp_cls("Dremio", level="DEBUG")
+    mcp = mcp_cls("Dremio", log_level="DEBUG")
     mode = reduce(ior, mode) if mode is not None else None
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
@@ -139,9 +140,15 @@ def main(
     enable_streaming_http: Annotated[
         Optional[bool], Option(help="Run MCP as streaming HTTP")
     ] = False,
+    log_level: Annotated[
+        Optional[str],
+        Option(
+            help="The log level", click_type=Choice(list(logging._nameToLevel.keys()))
+        ),
+    ] = "INFO",
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
-    log.set_level("DEBUG")
+    log.set_level(log_level)
     if enable_streaming_http:
         transport = Transports.streamable_http
     else:
