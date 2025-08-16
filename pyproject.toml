@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11.12",
     "beeai-framework>=0.1.8",
+    "black>=25.1.0",
     "click>=8.1.8",
     "fastapi>=0.115.11",
     "langchain>=0.3.20",
@@ -20,8 +21,10 @@ dependencies = [
     "langchain-openai>=0.3.7",
     "langgraph>=0.3.12",
     "mcp>=1.9.4",
+    "multidict>=6.4.0",
     "openai>=1.65.3",
     "pandas>=2.2.3",
+    "pandas-stubs==2.3.0.250703",
     "prompt-toolkit>=3.0.50",
     "pydantic>=2.10.6",
     "pydantic-settings>=2.8.1",

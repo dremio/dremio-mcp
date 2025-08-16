@@ -30,7 +30,6 @@ async def cli(url, token):
             await session.initialize()
             for t in await session.list_tools():
                 pp(t)
-            pp(await session.call_tool("RunSqlQuery", {"s": "SELECT 1"}))
 
 
 @app.command()

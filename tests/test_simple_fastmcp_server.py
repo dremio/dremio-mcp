@@ -53,26 +53,28 @@ class TestSimpleFastMCPServer:
     @pytest.mark.asyncio
     async def test_fastmcp_server_creation_and_tool_registration(self):
         """Test creating FastMCP server and registering all FOR_DATA_PATTERNS tools"""
-        
+
         with self.mock_settings_for_fastmcp(ToolType.FOR_DATA_PATTERNS):
             # Initialize FastMCP server with FOR_DATA_PATTERNS tools
             fastmcp_server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
-            
+
             # Verify server was created
             assert fastmcp_server is not None
             assert fastmcp_server.name == "Dremio"
-            
+
             # Get list of registered tools
             tools_list = await fastmcp_server.list_tools()
             tool_names = {tool.name for tool in tools_list}
-            
+
             # Verify expected tools are registered
-            expected_tools = {t.__name__ for t in get_tools(For=ToolType.FOR_DATA_PATTERNS)}
+            expected_tools = {
+                t.__name__ for t in get_tools(For=ToolType.FOR_DATA_PATTERNS)
+            }
             assert tool_names == expected_tools
-            
+
             # Verify we have the expected number of tools
             assert len(tools_list) > 0
-            
+
             # Print registered tools for verification
             print(f"Registered {len(tools_list)} tools for FOR_DATA_PATTERNS mode:")
             for tool in tools_list:
@@ -81,51 +83,57 @@ class TestSimpleFastMCPServer:
     @pytest.mark.asyncio
     async def test_simple_tool_invocation(self):
         """Test simple invocation of one tool with proper mocking"""
-        
+
         with self.mock_settings_for_fastmcp(ToolType.FOR_DATA_PATTERNS):
             # Initialize FastMCP server
             fastmcp_server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
-            
+
             # Test RunSqlQuery tool with proper mocking
-            with patch("dremioai.api.dremio.sql.run_query", new_callable=AsyncMock) as mock_run_query:
+            with patch(
+                "dremioai.api.dremio.sql.run_query", new_callable=AsyncMock
+            ) as mock_run_query:
                 mock_df = pd.DataFrame([{"test_column": 1}])
                 mock_run_query.return_value = mock_df
-                
+
                 # Call the tool
                 result = await fastmcp_server.call_tool(
                     "RunSqlQuery", {"s": "SELECT 1 as test_column"}
                 )
-                
+
                 # Verify result is not None
                 assert result is not None
                 print(f"✓ Successfully invoked RunSqlQuery tool")
-                
+
                 # Verify the mock was called
                 mock_run_query.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_tool_invocation_with_basic_tools(self):
         """Test invocation of tools that don't require complex external dependencies"""
-        
+
         with self.mock_settings_for_fastmcp(ToolType.FOR_DATA_PATTERNS):
             # Initialize FastMCP server
             fastmcp_server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
-            
+
             # Test GetUsefulSystemTableNames - this tool has a simple implementation
             try:
                 result = await fastmcp_server.call_tool("GetUsefulSystemTableNames", {})
                 assert result is not None
                 print("✓ Successfully invoked GetUsefulSystemTableNames tool")
             except Exception as e:
-                print(f"Note: GetUsefulSystemTableNames failed as expected due to return type: {e}")
+                print(
+                    f"Note: GetUsefulSystemTableNames failed as expected due to return type: {e}"
+                )
                 # This is expected due to the tool returning a dict instead of list
-                
+
             # Test with mocked dependencies for other tools
-            with patch("dremioai.api.dremio.catalog.get_schema", new_callable=AsyncMock) as mock_get_schema:
+            with patch(
+                "dremioai.api.dremio.catalog.get_schema", new_callable=AsyncMock
+            ) as mock_get_schema:
                 mock_get_schema.return_value = {
                     "fields": [{"name": "test_col", "type": "VARCHAR"}]
                 }
-                
+
                 try:
                     result = await fastmcp_server.call_tool(
                         "GetSchemaOfTable", {"table_name": "test_table"}
@@ -134,5 +142,5 @@ class TestSimpleFastMCPServer:
                     print("✓ Successfully invoked GetSchemaOfTable tool")
                 except Exception as e:
                     print(f"GetSchemaOfTable failed: {e}")
-                    
+
             print("Completed basic tool invocation tests")
