@@ -36,4 +36,4 @@ RUN pip install --no-cache-dir /tmp/*.whl && \
 USER 1001
 
 # Console script is now properly installed
-CMD ["/usr/local/bin/dremio-mcp-server", "run"]
+CMD ["dremio-mcp-server", "run"]

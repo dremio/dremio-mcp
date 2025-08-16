@@ -1,0 +1,27 @@
+name: Docker Image builder
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: dremio-mcp-server:${{ github.sha }}
+      - name: Validate docker
+        run: |
+          docker run -e TOOLS_MODE=FOR_DATA_PATTERNS \
+              -e DREMIO_URI=https://fake \
+              -e DREMIO_OAUTH_SUPPORTED=false \
+          dremio-mcp-server:${{ github.sha }} \
+            dremio-mcp-server tools list

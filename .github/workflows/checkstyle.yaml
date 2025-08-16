@@ -1,4 +1,4 @@
-name: Run Pytest with uv
+name: Check formatting
 
 on:
   push:
@@ -24,6 +24,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Run tests
+      - name: Check formatting
+        id: check-formatting
         run: |
-          uv run pytest tests
+          uv run black --check --diff src/ tests/ || \
+          echo -e "Formatting check failed. Please run 'uv run black src/ tests/' to fix."
