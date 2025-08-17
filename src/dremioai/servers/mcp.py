@@ -29,22 +29,21 @@ from dremioai import log
 from typer import Typer, Option, Argument, BadParameter
 from rich import console, table, print as pp
 from click import Choice
+import logging
 from dremioai.config import settings
 from dremioai.api.oauth2 import get_oauth2_tokens
 from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
 import asyncio
-from yaml import dump, add_representer
+from yaml import dump
 import sys
 
 from mcp.server.auth.middleware.auth_context import (
     AuthContextMiddleware,
-    get_access_token,
 )
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
-from starlette.middleware import Middleware
 from starlette.middleware.authentication import AuthenticationMiddleware
 
 
@@ -83,12 +82,16 @@ class FastMCPServerWithAuthToken(FastMCP):
 def init(
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
     transport: Transports = Transports.stdio,
+    port: int = None,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
     )
-    mcp = mcp_cls("Dremio", level="DEBUG")
+    opts = {"log_level": "DEBUG"}
+    if port is not None:
+        opts["port"] = port
+    mcp = mcp_cls("Dremio", **opts)
     mode = reduce(ior, mode) if mode is not None else None
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
@@ -139,9 +142,16 @@ def main(
     enable_streaming_http: Annotated[
         Optional[bool], Option(help="Run MCP as streaming HTTP")
     ] = False,
+    log_level: Annotated[
+        Optional[str],
+        Option(
+            help="The log level", click_type=Choice(list(logging._nameToLevel.keys()))
+        ),
+    ] = "INFO",
+    port: Annotated[Optional[int], Option(help="The port to listen on")] = None,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
-    log.set_level("DEBUG")
+    log.set_level(log_level)
     if enable_streaming_http:
         transport = Transports.streamable_http
     else:
@@ -160,6 +170,7 @@ def main(
     app = init(
         mode=cfg.tools.server_mode,
         transport=transport,
+        port=port,
     )
     app.run(transport=transport.value)
 
