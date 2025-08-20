@@ -109,6 +109,7 @@ def logging_server():
 @pytest.fixture
 def http_streamable_mcp_server(logging_server):
     old = settings.instance()
+    sf = None
     try:
         settings._settings.set(
             settings.Settings.model_validate(
@@ -132,8 +133,9 @@ def http_streamable_mcp_server(logging_server):
         server, stop_event = start_server(
             mcp_server.run_streamable_http_async(), should_exit
         )
-        yield ServerFixture(
-            f"http://127.0.0.1:{port}/mcp", stop_event, server
-        ), logging_server
+        sf = ServerFixture(f"http://127.0.0.1:{port}/mcp", stop_event, server)
+        yield sf, logging_server
     finally:
+        if sf is not None:
+            sf.close()
         settings._settings.set(old)
