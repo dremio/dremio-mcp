@@ -312,10 +312,11 @@ def start_logging_server(
     log_file: Union[str, TextIO, Path] = "api_logs.json",
     host: str = "127.0.0.1",
     port: int = 8000,
+    log_level="warning",
 ):
     app = create_logging_app(mock_data=mock_data, log_file=log_file)
     config = uvicorn.Config(
-        app=app, host=host, port=port, log_level="info", access_log=False
+        app=app, host=host, port=port, log_level=log_level, access_log=False
     )
     server = uvicorn.Server(config)
 
@@ -323,31 +324,6 @@ def start_logging_server(
         server.should_exit = v
 
     return start_server(server.serve(), should_exit)
-    # stop_event = threading.Event()
-
-    def run_server():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        # server_task = loop.create_task(server.serve())
-
-        # Monitor stop event
-        async def monitor_stop():
-            await asyncio.to_thread(stop_event.wait)
-            server.should_exit = True
-
-        # monitor_task = loop.create_task(monitor_stop())
-        loop.run_until_complete(asyncio.gather(server.serve(), monitor_stop()))
-        loop.close()
-
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
-
-    # Give server time to start
-    import time
-
-    time.sleep(0.5)
-
-    return server_thread, stop_event
 
 
 class ServerFixture:
@@ -384,6 +360,7 @@ class LoggingServerFixture(ServerFixture):
 def create_pytest_logging_server_fixture(
     mock_data: Optional[OrderedDict[str, str]] = None,
     port: int = 8000,
+    log_level="warning",
 ) -> LoggingServerFixture:
 
     log_file = io.StringIO()
