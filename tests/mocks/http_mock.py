@@ -13,14 +13,25 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-
+import io
 import json
 import re
+import asyncio
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, TextIO, List, Coroutine, Callable
 from unittest.mock import MagicMock
 from aiohttp import ClientSession
 from collections import OrderedDict
+
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel, ConfigDict
+import uvicorn
+import threading
 
 
 class MockResponse:
@@ -122,7 +133,6 @@ class HttpMockFramework:
 
     def _get_mock_response(self, url: str, method: str = "GET") -> MockResponse:
         """Get mock response for a URL"""
-        # Extract endpoint from full URL
         for endpoint, data in self.mock_responses.items():
             if re.search(endpoint, url):
                 return MockResponse(data)
@@ -177,3 +187,190 @@ def mock_http_client(mock_data: OrderedDict[str, str]) -> HttpMockFramework:
     for endpoint, filename in mock_data.items():
         framework.load_mock_data(endpoint, filename)
     return framework
+
+
+# Starlette Logging App Components
+
+
+class LogEntry(BaseModel):
+    method: str
+    url: str
+    path: str
+    query_params: Dict[str, Any]
+    headers: Dict[str, Any]
+    response_status: Optional[int] = None
+    model_config = ConfigDict(validate_assignment=True)
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to log all incoming requests to a JSON file or file object."""
+
+    def __init__(self, app, log_file: Union[str, io.TextIOWrapper, Path]):
+        super().__init__(app)
+        self.log_file = (
+            open(log_file, "a")
+            if isinstance(log_file, Path) or isinstance(log_file, str)
+            else log_file
+        )
+        self.lock = asyncio.Lock()
+
+    async def dispatch(self, request: Request, call_next):
+        # Capture request details
+        log_entry = LogEntry.model_validate(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "path": request.url.path,
+                "query_params": dict(request.query_params),
+                "headers": dict(request.headers),
+            }
+        )
+
+        response = await call_next(request)
+        log_entry.response_status = response.status_code
+        async with self.lock:
+            self.log_file.write(f"{log_entry.model_dump_json()}\n")
+
+        return response
+
+
+def create_catch_all_handler(mock_data: Optional[OrderedDict[str, str]] = None):
+    """Create a catch-all handler that uses HttpMockFramework for responses."""
+
+    # Create HTTP framework if mock data is provided
+    http_framework = HttpMockFramework()
+    if mock_data:
+        for endpoint, filename in mock_data.items():
+            http_framework.load_mock_data(endpoint, filename)
+
+    async def handler(request: Request):
+        """Handle the request using mock framework or default response."""
+        if http_framework:
+            # Use the HTTP framework to get a mock response
+            mock_response = http_framework._get_mock_response(
+                request.url.path, request.method
+            )
+
+            response_data = await mock_response.json()
+            return JSONResponse(response_data, status_code=mock_response.status)
+        else:
+            raise NotImplementedError(f"Mock data not provided for {request.url}")
+
+    return handler
+
+
+def create_logging_app(
+    mock_data: Optional[OrderedDict[str, str]] = None,
+    log_file: Union[str, TextIO, Path] = "api_logs.json",
+) -> Starlette:
+    handler = create_catch_all_handler(mock_data)
+    middleware = [Middleware(LoggingMiddleware, log_file=log_file)]
+
+    # Define routes - catch all paths and methods
+    routes = [
+        Route(
+            "/{path:path}",
+            handler,
+            methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        )
+    ]
+    return Starlette(debug=True, routes=routes, middleware=middleware)
+
+
+def start_server(
+    runner: Coroutine,
+    should_exit: Callable[[bool], None],
+):
+    stop_event = threading.Event()
+
+    def run_server():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Monitor stop event
+        async def monitor_stop():
+            await asyncio.to_thread(stop_event.wait)
+            should_exit(True)
+
+        # monitor_task = loop.create_task(monitor_stop())
+        loop.run_until_complete(asyncio.gather(runner, monitor_stop()))
+        loop.close()
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    # Give server time to start
+    import time
+
+    time.sleep(0.5)
+
+    return server_thread, stop_event
+
+
+def start_logging_server(
+    mock_data: Optional[OrderedDict[str, str]] = None,
+    log_file: Union[str, TextIO, Path] = "api_logs.json",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    log_level="warning",
+):
+    app = create_logging_app(mock_data=mock_data, log_file=log_file)
+    config = uvicorn.Config(
+        app=app, host=host, port=port, log_level=log_level, access_log=False
+    )
+    server = uvicorn.Server(config)
+
+    def should_exit(v: bool):
+        server.should_exit = v
+
+    return start_server(server.serve(), should_exit)
+
+
+class ServerFixture:
+    def __init__(
+        self, url: str, stop_event: threading.Event, server_thread: threading.Thread
+    ):
+        self.url = url
+        self.stop_event = stop_event
+        self.server_thread = server_thread
+
+    def close(self):
+        self.stop_event.set()
+        self.server_thread.join(timeout=5)
+
+
+class LoggingServerFixture(ServerFixture):
+    def __init__(
+        self,
+        url: str,
+        log: io.StringIO,
+        stop_event: threading.Event,
+        server_thread: threading.Thread,
+    ):
+        super().__init__(url, stop_event, server_thread)
+        self.log = log
+
+    def logs(self) -> List[LogEntry]:
+        return [
+            LogEntry.model_validate_json(line)
+            for line in self.log.getvalue().splitlines()
+        ]
+
+
+def create_pytest_logging_server_fixture(
+    mock_data: Optional[OrderedDict[str, str]] = None,
+    port: int = 8000,
+    log_level="warning",
+) -> LoggingServerFixture:
+
+    log_file = io.StringIO()
+    thread, stop_event = start_logging_server(
+        mock_data=mock_data, log_file=log_file, port=port
+    )
+
+    # Return server URL
+    server_url = f"http://127.0.0.1:{port}"
+
+    return LoggingServerFixture(
+        url=server_url, log=log_file, stop_event=stop_event, server_thread=thread
+    )
