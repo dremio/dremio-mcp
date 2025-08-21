@@ -40,15 +40,18 @@ jobs:
 
       - name: Start container
         run: |
-          docker run -e TOOLS_MODE=FOR_DATA_PATTERNS \
+          docker run \
+            --detach \
+            -e TOOLS_MODE=FOR_DATA_PATTERNS \
             -e DREMIO_URI=https://fake \
             -e DREMIO_OAUTH_SUPPORTED=false \
             -p 6789:6789 \
-            --name mcp --rm \
+            --name mcp \
+            --rm \
             --network host \
           dremio-mcp-server:${{ github.sha }} \
           dremio-mcp-server run --enable-streaming-http --port 6789 --no-log-to-file \
-            --enable-json-logging &
+            --enable-json-logging
 
       - name: Test container
         run: |
