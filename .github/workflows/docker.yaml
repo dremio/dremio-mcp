@@ -16,16 +16,12 @@ jobs:
       DOCKER_HOST: tcp://localhost:2376
     runs-on: [x-small-k8s-mode]
     steps:
-      - name: test dind
-        run: |
-          docker run hello-world || sleep 3600
-          echo "7"
       - name: Checkout code
         uses: actions/checkout@v3
-      - name: Setup Docker Buildx
-        run: |
-          docker buildx create --name mybuilder --driver remote tcp://localhost:1234 --use
-          docker buildx inspect --bootstrap
+      # - name: Setup Docker Buildx
+      #   run: |
+      #     docker buildx create --name mybuilder --driver remote tcp://localhost:1234 --use
+      #     docker buildx inspect --bootstrap
       - name: Build container
         uses: docker/build-push-action@v5
         with:
