@@ -75,7 +75,7 @@ jobs:
         run: |
           curl -H "Metadata-Flavor: Google" "${GCP_METADATA_URL}" | jq -r '.access_token' > ${ACCESS_TOKEN_FILE}
           cat ${ACCESS_TOKEN_FILE} | docker login -u oauth2accesstoken --password-stdin us-west1-docker.pkg.dev
-      - name: Build container
+      - name: Push container
         uses: docker/build-push-action@v5
         with:
           context: .
