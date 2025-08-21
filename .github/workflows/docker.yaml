@@ -9,9 +9,10 @@ on:
 jobs:
   build:
     container:
-      image: docker:28.3.2-cli
+      image: docker:28.3.2-dind
     env:
-      DOCKER_HOST: tcp://localhost:1234
+      BUILDKIT_HOST: tcp://localhost:1234
+      DOCKER_BUILDKIT: "1"
     runs-on: [x-small-k8s-mode]
     steps:
       - name: Checkout code
