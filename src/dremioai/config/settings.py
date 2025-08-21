@@ -235,7 +235,7 @@ class Settings(BaseSettings):
     beeai: Optional[BeeAI] = Field(default=None)
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_nested_delimiter="_",
+        env_nested_delimiter="__",
         env_prefix="DREMIOAI_",
         env_extra="allow",
         use_enum_values=True,
