@@ -2,13 +2,13 @@ name: Docker Image builder
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  #   branches: [ main ]
+  # pull_request:
+  #   branches: [ main ]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [xx-small-k8s-mode]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
