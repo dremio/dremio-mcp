@@ -18,10 +18,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      # - name: Setup Docker Buildx
-      #   run: |
-      #     docker buildx create --name mybuilder --driver remote tcp://localhost:1234 --use
-      #     docker buildx inspect --bootstrap
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build container
         uses: docker/build-push-action@v5
         with:
@@ -35,15 +33,14 @@ jobs:
               -e DREMIO_OAUTH_SUPPORTED=false \
           dremio-mcp-server:${{ github.sha }} \
             dremio-mcp-server tools list
-      - name: Install uv
-        run: |
-           curl -LsSf https://astral.sh/uv/install.sh | sh
-           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
+      - name: Install a specific version of uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.12"
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.13'
+          python-version: "3.13.0"
 
       - name: Start container
         run: |
