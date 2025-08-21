@@ -13,7 +13,7 @@ jobs:
     env:
       BUILDKIT_HOST: tcp://localhost:1234
       DOCKER_BUILDKIT: "1"
-      DOCKER_HOST: tcp://localhost:2375
+      DOCKER_HOST: tcp://localhost:2376
     runs-on: [x-small-k8s-mode]
     steps:
       - name: test dind
