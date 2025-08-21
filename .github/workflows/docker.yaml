@@ -37,10 +37,6 @@ jobs:
               -e DREMIO_OAUTH_SUPPORTED=false \
           dremio-mcp-server:${{ github.sha }} \
             dremio-mcp-server tools list
-      - name: Install a specific version of uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.8.12"
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
