@@ -33,7 +33,7 @@ from dremioai.servers.mcp import Transports, init
 
 from mocks.http_mock import (
     create_pytest_logging_server_fixture,
-    start_server,
+    start_server_with_app,
     ServerFixture,
     LoggingServerFixture,
 )
@@ -41,6 +41,35 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 import contextlib
 from dremioai.log import set_level
+
+
+@pytest.fixture(autouse=True)
+def reset_sse_starlette_app_status():
+    """
+    Reset the global AppStatus.should_exit_event from sse_starlette between tests.
+
+    This fixes the asyncio event loop binding issue where the global event gets
+    bound to the first event loop and causes "bound to a different event loop"
+    errors in subsequent tests.
+    """
+    try:
+        # Import and reset the global state
+        from sse_starlette.sse import AppStatus
+
+        AppStatus.should_exit_event = None
+    except ImportError:
+        # sse_starlette might not be available in all test environments
+        pass
+
+    yield
+
+    # Clean up after test
+    try:
+        from sse_starlette.sse import AppStatus
+
+        AppStatus.should_exit_event = None
+    except ImportError:
+        pass
 
 
 @pytest.fixture
@@ -129,9 +158,8 @@ def _create_logging_server(log_level="warning"):
     )
 
 
-@pytest.fixture(scope="module")
-def logging_level(request):
-    return "info"
+@pytest.fixture
+def logging_level(request: pytest.FixtureRequest):
     if request.config.get_verbosity() > 2:
         return "debug"
     if request.config.get_verbosity() > 1:
@@ -139,18 +167,13 @@ def logging_level(request):
     return "warning"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def logging_server(logging_level):
     server = _create_logging_server(logging_level)
     try:
         yield server
     finally:
-        try:
-            server.close()
-        except:
-            from rich import traceback
-
-            traceback.print_exc()
+        server.close()
 
 
 class StreamableMcpServerFixture(NamedTuple):
@@ -158,8 +181,10 @@ class StreamableMcpServerFixture(NamedTuple):
     logging_server: LoggingServerFixture
 
 
-@pytest.fixture
-def http_streamable_mcp_server(logging_server, mock_config_dir, logging_level):
+@contextlib.asynccontextmanager
+async def http_streamable_mcp_server(
+    logging_server: LoggingServerFixture, logging_level: str, project_id: str = None
+) -> AsyncGenerator[StreamableMcpServerFixture]:
     old = settings.instance()
     sf = None
     try:
@@ -184,24 +209,22 @@ def http_streamable_mcp_server(logging_server, mock_config_dir, logging_level):
             transport=Transports.streamable_http,
             port=port,
             mode=settings.instance().tools.server_mode,
+            support_project_id_endpoints=project_id is not None,
         )
 
-        def should_exit(v: bool):
-            mcp_server.should_exit = v
-
-        server, stop_event = start_server(
-            mcp_server.run_streamable_http_async(), should_exit
+        app = mcp_server.streamable_http_app()
+        server, stop_event = start_server_with_app(
+            app, host="127.0.0.1", port=port, log_level=logging_level
         )
-        sf = ServerFixture(f"http://127.0.0.1:{port}/mcp/", stop_event, server)
+        sf = ServerFixture(
+            f"http://127.0.0.1:{port}/mcp/{(project_id + '/') if project_id else ''}",
+            stop_event,
+            server,
+        )
         yield StreamableMcpServerFixture(sf, logging_server)
     finally:
         if sf is not None:
-            try:
-                sf.close()
-            except:
-                from rich import traceback
-
-                traceback.print_exc()
+            sf.close()
         print(f"{sf} closed")
         settings._settings.set(old)
 

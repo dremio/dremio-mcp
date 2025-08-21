@@ -17,6 +17,7 @@ import io
 import json
 import re
 import asyncio
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, TextIO, List, Coroutine, Callable
 from unittest.mock import MagicMock
@@ -32,6 +33,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, ConfigDict
 import uvicorn
 import threading
+from dremioai import log
 
 
 class MockResponse:
@@ -280,6 +282,7 @@ def create_logging_app(
 def start_server(
     runner: Coroutine,
     should_exit: Callable[[bool], None],
+    name: str,
 ):
     stop_event = threading.Event()
 
@@ -290,21 +293,37 @@ def start_server(
         # Monitor stop event
         async def monitor_stop():
             await asyncio.to_thread(stop_event.wait)
+            log.logger(f"start_server {name}").info("Stop event set")
             should_exit(True)
 
         # monitor_task = loop.create_task(monitor_stop())
         loop.run_until_complete(asyncio.gather(runner, monitor_stop()))
         loop.close()
 
-    server_thread = threading.Thread(target=run_server, daemon=True)
+    log.logger(f"start_server {name}").info(f"Starting server {name}")
+    server_thread = threading.Thread(target=run_server, name=name, daemon=True)
     server_thread.start()
-
-    # Give server time to start
-    import time
-
     time.sleep(0.5)
 
     return server_thread, stop_event
+
+
+def start_server_with_app(
+    app: Starlette,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    log_level="warning",
+    name="mcp-server",
+):
+    config = uvicorn.Config(
+        app=app, host=host, port=port, log_level=log_level, access_log=False
+    )
+    server = uvicorn.Server(config)
+
+    def should_exit(v: bool):
+        server.should_exit = v
+
+    return start_server(server.serve(), should_exit, name)
 
 
 def start_logging_server(
@@ -315,15 +334,13 @@ def start_logging_server(
     log_level="warning",
 ):
     app = create_logging_app(mock_data=mock_data, log_file=log_file)
-    config = uvicorn.Config(
-        app=app, host=host, port=port, log_level=log_level, access_log=False
+    return start_server_with_app(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level,
+        name="logging-server",
     )
-    server = uvicorn.Server(config)
-
-    def should_exit(v: bool):
-        server.should_exit = v
-
-    return start_server(server.serve(), should_exit)
 
 
 class ServerFixture:
@@ -337,6 +354,9 @@ class ServerFixture:
     def close(self):
         self.stop_event.set()
         self.server_thread.join(timeout=5)
+        log.logger("ServerFixture").info(
+            f"Server stopped, thread {self.server_thread.is_alive()}"
+        )
 
 
 class LoggingServerFixture(ServerFixture):
