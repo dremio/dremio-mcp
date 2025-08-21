@@ -19,7 +19,7 @@ jobs:
       - name: test dind
         run: |
           docker run hello-world || sleep 3600
-          echo "6"
+          echo "7"
       - name: Checkout code
         uses: actions/checkout@v3
       - name: Setup Docker Buildx
