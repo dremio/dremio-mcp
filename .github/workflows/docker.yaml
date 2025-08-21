@@ -10,7 +10,7 @@ jobs:
   build:
     container:
       image: docker:28.3.2-cli
-    runs-on: [xx-small-k8s-mode]
+    runs-on: [x-small-k8s-mode]
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
