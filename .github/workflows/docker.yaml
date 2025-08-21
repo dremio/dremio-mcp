@@ -14,6 +14,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+      - name: Setup Docker Buildx
+        run: |
+          docker buildx create --name mybuilder --driver remote tcp://localhost:1234 --use
+          docker buildx inspect --bootstrap
       - name: Build container
         uses: docker/build-push-action@v5
         with:
