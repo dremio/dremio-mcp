@@ -14,7 +14,8 @@ jobs:
       BUILDKIT_HOST: tcp://localhost:1234
       DOCKER_BUILDKIT: "1"
       DOCKER_HOST: tcp://localhost:2376
-    runs-on: [x-small-k8s-mode]
+    runs-on:
+      - x-small-k8s-mode
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -37,7 +38,6 @@ jobs:
               -e DREMIO_OAUTH_SUPPORTED=false \
           dremio-mcp-server:${{ github.sha }} \
             dremio-mcp-server tools list
-
       - name: Start container
         run: |
           docker run \
@@ -56,8 +56,28 @@ jobs:
       - name: Test container
         run: |
           uv run python tests/stremable_http_cli.py --url http://127.0.0.1:6789/mcp --token fake
-
-      - name: Stop container
+      - env:
+          ACCESS_TOKEN_FILE: /tmp/access_token.txt
+          GCP_METADATA_URL: http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+        name: Login to pkg.dev
         run: |
-          docker stop mcp
+          curl -H "Metadata-Flavor: Google" "${GCP_METADATA_URL}" | jq -r '.access_token' > ${ACCESS_TOKEN_FILE}
+          cat ${ACCESS_TOKEN_FILE} | docker login -u oauth2accesstoken --password-stdin us-west1-docker.pkg.dev
+      - id: tag
+        name: Create tag
+        run: |
+          head_sha=$(git rev-parse --short HEAD)
+          timestamp=$(date -u +"%Y%m%d%H%M%S")
+
+          tag="${timestamp}-${head_sha}"
+          
+          echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
+      - name: Build container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            us-west1-docker.pkg.dev/dremio-1093/dremio/dremio-mcp-server:${{ steps.tag.outputs.tag }}
+
           
