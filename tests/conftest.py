@@ -19,6 +19,7 @@ Global pytest fixtures for dremio-mcp tests.
 """
 import os
 import random
+import uuid
 from typing import AsyncGenerator, NamedTuple
 
 import pytest
@@ -105,7 +106,7 @@ def mock_settings_instance():
                     "dremio": {
                         "uri": "https://test-dremio-uri.com",
                         "pat": "test-pat",
-                        "project_id": "test-project-id",
+                        "project_id": uuid.uuid4(),
                     },
                     "tools": {"server_mode": ToolType.FOR_SELF.name},
                 }
@@ -194,7 +195,7 @@ async def http_streamable_mcp_server(
                 {
                     "dremio": {
                         "uri": logging_server.url,
-                        "project_id": "test-project-id",
+                        "project_id": uuid.uuid4(),
                         "pat": "test-pat",
                         "enable_search": True,
                     },
@@ -217,7 +218,7 @@ async def http_streamable_mcp_server(
             app, host="127.0.0.1", port=port, log_level=logging_level
         )
         sf = ServerFixture(
-            f"http://127.0.0.1:{port}/mcp/{(project_id + '/') if project_id else ''}",
+            f"http://127.0.0.1:{port}/mcp/{(str(project_id) + '/') if project_id else ''}",
             stop_event,
             server,
         )

@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import uuid
 
 import pytest
 from mcp.types import CallToolResult
@@ -24,7 +25,7 @@ from conftest import http_streamable_client_server, http_streamable_mcp_server
     "project_id",
     [
         pytest.param(None, id="no_project_id"),
-        pytest.param("my-project-id", id="project_id"),
+        pytest.param(uuid.uuid4(), id="project_id"),
     ],
 )
 async def test_tool_pat(mock_config_dir, logging_server, logging_level, project_id):
@@ -51,5 +52,5 @@ async def test_tool_pat(mock_config_dir, logging_server, logging_level, project_
 
                 if project_id:
                     assert (
-                        project_id in le.path
+                        str(project_id) in le.path
                     ), f"{le} does not have the right project id"
