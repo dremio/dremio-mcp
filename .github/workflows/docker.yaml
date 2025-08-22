@@ -33,18 +33,19 @@ jobs:
           tags: dremio-mcp-server:${{ github.sha }}
       - name: Validate docker
         run: |
-          docker run -e TOOLS_MODE=FOR_DATA_PATTERNS \
-              -e DREMIO_URI=https://fake \
-              -e DREMIO_OAUTH_SUPPORTED=false \
+          docker run \
+              -e DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS \
+              -e DREMIOAI_DREMIO__URI=https://fake \
+              -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
           dremio-mcp-server:${{ github.sha }} \
             dremio-mcp-server tools list
       - name: Start container
         run: |
           docker run \
             --detach \
-            -e TOOLS_MODE=FOR_DATA_PATTERNS \
-            -e DREMIO_URI=https://fake \
-            -e DREMIO_OAUTH_SUPPORTED=false \
+            -e DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS \
+            -e DREMIOAI_DREMIO__URI=https://fake \
+            -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
             -p 6789:6789 \
             --name mcp \
             --rm \

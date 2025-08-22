@@ -13,6 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import uuid
+from uuid import UUID
 
 from pydantic import (
     Field,
@@ -24,7 +26,7 @@ from pydantic import (
     AliasChoices,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional, Union, Annotated, Self, List, Dict, Any, Callable
+from typing import Optional, Union, Annotated, Self, List, Dict, Any, Callable, Literal
 from dremioai.config.tools import ToolType
 from enum import auto, StrEnum
 from pathlib import Path
@@ -36,6 +38,8 @@ from contextvars import ContextVar, copy_context
 from os import environ
 from importlib.util import find_spec
 from datetime import datetime
+
+ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
 
 def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
@@ -120,7 +124,7 @@ class Dremio(BaseModel):
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
     ]
     raw_pat: Optional[str] = Field(default=None, alias="pat")
-    project_id: Optional[str] = None
+    raw_project_id: Optional[ProjectId] = Field(default=None, alias="project_id")
     enable_search: Optional[bool] = Field(
         default=False,
         alias=AliasChoices("enable_search", "enable_experimental"),
@@ -142,11 +146,13 @@ class Dremio(BaseModel):
     def oauth_supported(self) -> bool:
         return self.project_id is not None
 
-    # @field_validator("_pat", mode="wrap")
-    # @classmethod
-    # def validate_pat(cls, v: str, handler: ValidatorFunctionWrapHandler) -> str:
-    #    v = _resolve_token_file(v)
-    #    return handler(v)
+    @property
+    def project_id(self) -> Optional[str]:
+        return str(self.raw_project_id) if self.raw_project_id else None
+
+    @project_id.setter
+    def project_id(self, v: str):
+        self.raw_project_id = uuid.UUID(v)
 
     @property
     def pat(self) -> str:
@@ -229,7 +235,8 @@ class Settings(BaseSettings):
     beeai: Optional[BeeAI] = Field(default=None)
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_nested_delimiter="_",
+        env_nested_delimiter="__",
+        env_prefix="DREMIOAI_",
         env_extra="allow",
         use_enum_values=True,
     )

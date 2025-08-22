@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import uuid
 
 import pytest
 from contextlib import contextmanager
@@ -39,7 +40,7 @@ class TestSimpleFastMCPServer:
                         "dremio": {
                             "uri": "https://test-dremio-uri.com",
                             "pat": "test-pat",
-                            "project_id": "test-project-id",
+                            "project_id": uuid.uuid4(),
                             "enable_search": True,  # Enable search for SearchTableAndViews tool
                         },
                         "tools": {"server_mode": mode},
