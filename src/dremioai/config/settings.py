@@ -15,6 +15,7 @@
 #
 import uuid
 from uuid import UUID
+from urllib.parse import urlparse
 
 from pydantic import (
     Field,
@@ -26,7 +27,18 @@ from pydantic import (
     AliasChoices,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional, Union, Annotated, Self, List, Dict, Any, Callable, Literal
+from typing import (
+    Optional,
+    Union,
+    Annotated,
+    Self,
+    List,
+    Dict,
+    Any,
+    Callable,
+    Literal,
+    Tuple,
+)
 from dremioai.config.tools import ToolType
 from enum import auto, StrEnum
 from pathlib import Path
@@ -167,6 +179,28 @@ class Dremio(BaseModel):
     def pat(self, v: str):
         self.raw_pat = v
         self._pat_resolved = None
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.project_id is not None
+
+    @property
+    def auth_issuer_uri(self) -> Optional[str]:
+        if self.is_cloud:
+            uri = urlparse(self.uri)
+            if uri.netloc.startswith("api."):
+                uri = uri._replace(netloc=f"login.{uri.netloc[4:]}")
+            return uri.geturl()
+        return None
+
+    @property
+    def auth_endpoints(self) -> Optional[Tuple[str, str]]:
+        if issuer_uri := self.auth_issuer_uri:
+            return (
+                f"{issuer_uri}/oauth/authorize",
+                f"{issuer_uri}/oauth/token",
+            )
+        return None
 
 
 class OpenAi(BaseModel):

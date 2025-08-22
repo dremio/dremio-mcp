@@ -97,16 +97,16 @@ def test_experimental_rename(name: str, value: bool):
 
 
 @pytest.mark.parametrize(
-    "name,project_id,error",
+    "project_id,error",
     [
-        ["valid project id", str(uuid.uuid4()), False],
-        ["no project id", None, False],
-        ["invalid project id", "asdfsa safsa", True],
-        ["invalid project id", str(uuid.uuid4())[:-1] + "a", True],
-        ["dynamic project id", "DREMIO_DYNAMIC", False],
+        pytest.param(str(uuid.uuid4()), False, id="valid project id"),
+        pytest.param(None, False, id="no project id"),
+        pytest.param("asdfsa safsa", True, id="invalid project id"),
+        pytest.param(str(uuid.uuid4())[:-1] + "a", True, id="invalid project id"),
+        pytest.param("DREMIO_DYNAMIC", False, id="dynamic project id"),
     ],
 )
-def test_projects(name: str, project_id: str | None, error: bool):
+def test_projects(project_id: str | None, error: bool):
     val = {"uri": "https://foo", "project_id": project_id}
     if error:
         try:
@@ -125,12 +125,44 @@ def test_env_file(mock_config_dir):
         os.environ["DREMIOAI_DREMIO__PAT"] = "bar"
         os.environ["DREMIOAI_TOOLS__SERVER_MODE"] = "FOR_DATA_PATTERNS"
         settings.configure(force=True)
-        from rich import print as pp
-
-        pp(settings.instance().model_dump())
         assert settings.instance().dremio.uri == "https://foo"
         assert settings.instance().dremio.pat == "bar"
         assert settings.instance().tools.server_mode == ToolType.FOR_DATA_PATTERNS
     finally:
         os.environ.pop("DREMIOAI_DREMIO_URI", None)
         os.environ.pop("DREMIOAI_DREMIO_PAT", None)
+
+
+@pytest.mark.parametrize(
+    "uri,project_id,issuer,error",
+    [
+        pytest.param(
+            uri,
+            project_id,
+            iss,
+            project_id is None,
+            id=f"{label} with {plabel}",
+        )
+        for uri, iss, label in (
+            ("https://foo", "https://foo", "custom-uri"),
+            ("https://api.dremio.cloud", "https://login.dremio.cloud", "prod"),
+            (
+                "https://api.eu.dremio.cloud",
+                "https://login.eu.dremio.cloud",
+                "prodemea",
+            ),
+            ("https://api.dev.dremio.site", "https://login.dev.dremio.site", "dev"),
+        )
+        for project_id, plabel in (
+            (None, "no-project-id"),
+            ("DREMIO_DYNAMIC", "dynamic-project-id"),
+            (str(uuid.uuid4()), "project-id"),
+        )
+    ],
+)
+def test_auth_urls(uri: str, project_id: str | None, issuer: str, error: bool):
+    d = settings.Dremio.model_validate({"uri": uri, "project_id": project_id})
+    auth = (f"{issuer}/oauth/authorize", f"{issuer}/oauth/token") if not error else None
+    issuer = issuer if not error else None
+    assert d.auth_issuer_uri == issuer
+    assert d.auth_endpoints == auth
