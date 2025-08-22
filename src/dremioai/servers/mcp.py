@@ -13,12 +13,17 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-
+from mcp.server.auth.json_response import PydanticJSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
 from mcp.cli.claude import get_claude_config_path
+from mcp.shared.auth import OAuthMetadata
+from pydantic import AnyHttpUrl
 from pydantic.networks import AnyUrl
+from starlette.requests import Request
+from starlette.responses import Response
+
 from dremioai.tools import tools
 import os
 from typing import List, Union, Annotated, Optional, Tuple, Dict, Any
@@ -127,6 +132,24 @@ def init(
     mcp.add_prompt(
         Prompt.from_function(tools.system_prompt, "System Prompt", "System Prompt")
     )
+
+    @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+    async def authorization_server_metadata(request: Request) -> Response:
+        if issuer := settings.instance().dremio.auth_issuer_uri:
+            auth, tok = settings.instance().dremio.auth_endpoints
+            md = OAuthMetadata(
+                issuer=AnyHttpUrl(issuer),
+                authorization_endpoint=auth,
+                token_endpoint=tok,
+                scopes_supported=["dremio.all", "offline_access"],
+                response_types_supported=["code"],
+                grant_types_supported=["authorization_code", "refresh_token"],
+                code_challenge_methods_supported=["S256"],
+                token_endpoint_auth_methods_supported=["client_secret_post"],
+            )
+            return PydanticJSONResponse(md)
+        return Response(status_code=404)
+
     return mcp
 
 
