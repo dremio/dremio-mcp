@@ -26,4 +26,4 @@ jobs:
 
       - name: Run tests
         run: |
-          make test
+          uv run pytest tests

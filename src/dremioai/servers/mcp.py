@@ -46,6 +46,8 @@ from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.middleware.authentication import AuthenticationMiddleware
 
+from dremioai.tools.tools import ProjectIdMiddleware
+
 
 class Transports(StrEnum):
     stdio = auto()
@@ -73,16 +75,23 @@ class FastMCPServerWithAuthToken(FastMCP):
         app.add_middleware(
             AuthenticationMiddleware, backend=BearerAuthBackend(token_verifier)
         )
-        log.logger("streamable_http_app").info(
-            f"Adding auth middleware {app.user_middleware}"
-        )
+        if self.support_project_id_endpoints:
+            # this means, dynamically allow endpoints
+            # like ../mcp/{project_id}/..  and extract that project id as
+            # context var
+            app.add_middleware(ProjectIdMiddleware)
         return app
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.support_project_id_endpoints = False
 
 
 def init(
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
     transport: Transports = Transports.stdio,
     port: int = None,
+    support_project_id_endpoints: bool = False,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
@@ -92,6 +101,8 @@ def init(
     if port is not None:
         opts["port"] = port
     mcp = mcp_cls("Dremio", **opts)
+    if transport == Transports.streamable_http and support_project_id_endpoints:
+        mcp.support_project_id_endpoints = support_project_id_endpoints
     mode = reduce(ior, mode) if mode is not None else None
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()

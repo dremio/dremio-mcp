@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import uuid
 
 import pytest
 from contextlib import contextmanager
@@ -47,7 +48,7 @@ def mock_settings_for_test(mode: ToolType):
                     "dremio": {
                         "uri": "https://test-dremio-uri.com",
                         "pat": "test-pat",
-                        "project_id": "test-project-id",
+                        "project_id": uuid.uuid4(),
                         "enable_search": True,
                     },
                     "tools": {"server_mode": mode},

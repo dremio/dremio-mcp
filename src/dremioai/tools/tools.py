@@ -13,14 +13,14 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-
+import json
+from contextvars import ContextVar
 from typing import (
     List,
     Dict,
     Any,
     Optional,
     Literal,
-    TypeAlias,
     Union,
     Annotated,
     ClassVar,
@@ -32,18 +32,18 @@ from typing import (
     Awaitable,
 )
 
-from pathlib import Path
 from dataclasses import dataclass, asdict, field
-from enum import auto, IntFlag
+
+from starlette.datastructures import URL
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+
 from dremioai import log
 import re
 import functools
 
 import pandas as pd
-
-from pathlib import Path
-
-from dremioai.api.dremio import sql, projects, usage, engines, search
+from dremioai.api.dremio import sql, usage, search
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.api.prometheus import vm
@@ -53,7 +53,6 @@ from csv import reader
 from io import StringIO
 from sqlglot import parse_one
 from sqlglot import expressions
-from mcp.server.fastmcp.server import Context
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 
@@ -106,6 +105,31 @@ class Tools:
         raise NotImplementedError("Subclasses should implement this method")
 
 
+class ProjectIdMiddleware(BaseHTTPMiddleware):
+    pat = re.compile(r"/mcp/([\da-z-]+)(/?.*)")
+    logger = log.logger("ProjectIdMiddleware")
+
+    # Context variable to store the current project ID
+    project_id_context: ContextVar[str | None] = ContextVar("project_id", default=None)
+
+    @classmethod
+    def get_project_id(cls) -> Optional[str]:
+        return cls.project_id_context.get()
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        ProjectIdMiddleware.logger.info(
+            f"Request {request.url.path} body = {await request.body()!s}"
+        )
+        if m := ProjectIdMiddleware.pat.search(request.url.path):
+            ProjectIdMiddleware.project_id_context.set(m.group(1))
+        else:
+            ProjectIdMiddleware.logger.debug(
+                f"Path {request.url.path} ({request.url!r}) doesn't match"
+            )
+
+        return await call_next(request)
+
+
 # A decorator to ensure a tool that needs to access Dremio runs with the correct token
 # if invoked through streamable HTTP transport _with_ a valid Dremio bearer token
 # It is a no-op if the tool is invoked through stdio transport, as MCP server ensures
@@ -114,11 +138,22 @@ def secured(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
 
     @functools.wraps(fn)
     async def _impl(self, *args: P.args, **kw: P.kwargs) -> T:
+        overrides = {}
         if isinstance((token := get_access_token()), AccessToken):
-            return await settings.run_with(
-                fn, {"dremio.pat": token.token}, (self,) + args, kw
+            overrides["dremio.pat"] = token.token
+            logger.debug(
+                f"Overriding PAT with token from request: {token.token[:4]}..."
             )
-        return await fn(self, *args, **kw)
+
+        if project_id := ProjectIdMiddleware.get_project_id():
+            overrides["dremio.project_id"] = project_id
+            logger.debug(f"Overriding project_id with {project_id}")
+
+        return (
+            await settings.run_with(fn, overrides, (self,) + args, kw)
+            if overrides
+            else await fn(self, *args, **kw)
+        )
 
     return _impl
 
