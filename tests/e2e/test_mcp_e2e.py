@@ -24,7 +24,9 @@ from dremioai.config import settings
 @pytest.mark.asyncio
 async def test_basic(mock_config_dir, logging_server, logging_level):
     async with http_streamable_mcp_server(logging_server, logging_level) as sf:
-        async with http_streamable_client_server(sf.mcp_server) as session:
+        async with http_streamable_client_server(
+            sf.mcp_server, token="my-token"
+        ) as session:
             lts = await session.list_tools()
             tr = {t.name for t in lts.tools}
             assert tr == {
