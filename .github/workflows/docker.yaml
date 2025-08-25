@@ -1,17 +1,33 @@
 name: Docker Image builder
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      repository:
+        default: us-west1-docker.pkg.dev/dremio-1093/dremio
+        description: Repository to push the image to. Image name is fixed to 'dremio-mcp-server' and tag is calculated at runtime
+        required: true
+        type: string
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    container:
+      image: docker:28.3.2-cli
+    env:
+      BUILDKIT_HOST: tcp://localhost:1234
+      DOCKER_BUILDKIT: "1"
+      DOCKER_HOST: tcp://localhost:2376
+    runs-on:
+      - x-small-k8s-mode
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+      - name: Install dependencies
+        run: |
+          apk add curl jq
+          curl -LsSf https://astral.sh/uv/0.8.12/install.sh | sh
+      - name: Set up Python
+        run: uv python install 3.13
       - name: Build container
         uses: docker/build-push-action@v5
         with:
@@ -26,34 +42,48 @@ jobs:
               -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
           dremio-mcp-server:${{ github.sha }} \
             dremio-mcp-server tools list
-      - name: Install uv
-        run: |
-           curl -LsSf https://astral.sh/uv/install.sh | sh
-           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.13'
-
       - name: Start container
         run: |
           docker run \
+            --detach \
             -e DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS \
             -e DREMIOAI_DREMIO__URI=https://fake \
             -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
             -p 6789:6789 \
-            --name mcp --rm \
+            --name mcp \
+            --rm \
             --network host \
           dremio-mcp-server:${{ github.sha }} \
           dremio-mcp-server run --enable-streaming-http --port 6789 --no-log-to-file \
-            --enable-json-logging &
+            --enable-json-logging
 
       - name: Test container
         run: |
           uv run python tests/stremable_http_cli.py --url http://127.0.0.1:6789/mcp --token fake
-
-      - name: Stop container
+      - id: tag
+        name: Create tag
         run: |
-          docker stop mcp
+          git config --global --add safe.directory /__w/dremio-mcp/dremio-mcp
+
+          head_sha=$(git rev-parse --short HEAD)
+          timestamp=$(date -u +"%Y%m%d%H%M%S")
+
+          tag="${timestamp}-${head_sha}"
+          
+          echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
+      - env:
+          ACCESS_TOKEN_FILE: /tmp/access_token.txt
+          GCP_METADATA_URL: http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+        name: Login to pkg.dev
+        run: |
+          curl -H "Metadata-Flavor: Google" "${GCP_METADATA_URL}" | jq -r '.access_token' > ${ACCESS_TOKEN_FILE}
+          cat ${ACCESS_TOKEN_FILE} | docker login -u oauth2accesstoken --password-stdin us-west1-docker.pkg.dev
+      - name: Push container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ inputs.repository }}/dremio-mcp-server:${{ steps.tag.outputs.tag }}
+
           
