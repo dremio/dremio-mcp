@@ -13,12 +13,17 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-
+from mcp.server.auth.json_response import PydanticJSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
 from mcp.cli.claude import get_claude_config_path
+from mcp.shared.auth import OAuthMetadata
+from pydantic import AnyHttpUrl
 from pydantic.networks import AnyUrl
+from starlette.requests import Request
+from starlette.responses import Response
+
 from dremioai.tools import tools
 import os
 from typing import List, Union, Annotated, Optional, Tuple, Dict, Any
@@ -42,11 +47,41 @@ import sys
 from mcp.server.auth.middleware.auth_context import (
     AuthContextMiddleware,
 )
-from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
+from mcp.server.auth.middleware.bearer_auth import (
+    BearerAuthBackend,
+    RequireAuthMiddleware,
+)
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.middleware.authentication import AuthenticationMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response as StarletteResponse
 
 from dremioai.tools.tools import ProjectIdMiddleware
+
+
+class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
+    """
+    Custom middleware that requires authentication and returns WWW-Authenticate header
+    for unauthorized requests. This middleware should be placed AFTER AuthenticationMiddleware
+    so that request.user is available.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        # Check if user is authenticated (request.user is available after AuthenticationMiddleware)
+        if (
+            not hasattr(request, "user")
+            or not request.user.is_authenticated
+            and request.url.path.startswith("/mcp")
+        ):
+            # Return 401 with WWW-Authenticate header
+            return StarletteResponse(
+                content="Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # User is authenticated, proceed with the request
+        return await call_next(request)
 
 
 class Transports(StrEnum):
@@ -57,24 +92,26 @@ class Transports(StrEnum):
 class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
         async def verify_token(self, token: str) -> AccessToken | None:
-            log.logger("verify_token").info(f"Verifying token: {token}")
-            return (
-                AccessToken(
+            if token:
+                log.logger("verify_token").info(f"Token verified: {token}")
+                return AccessToken(
                     token=token,  # Include the token itself
                     client_id="unused-client",
                     scopes=["read"],
                 )
-                if token
-                else None
-            )
+            else:
+                log.logger("verify_token").info(f"Token not provided: {token}")
+                return None
 
     def streamable_http_app(self):
         token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
         app = super().streamable_http_app()
+        app.add_middleware(RequireAuthWithWWWAuthenticateMiddleware)
         app.add_middleware(AuthContextMiddleware)
         app.add_middleware(
             AuthenticationMiddleware, backend=BearerAuthBackend(token_verifier)
         )
+        # Add middleware in reverse order (last added = first executed)
         if self.support_project_id_endpoints:
             # this means, dynamically allow endpoints
             # like ../mcp/{project_id}/..  and extract that project id as
@@ -97,7 +134,7 @@ def init(
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
     )
-    opts = {"log_level": "DEBUG"}
+    opts = {"log_level": "DEBUG", "debug": True}
     if port is not None:
         opts["port"] = port
     mcp = mcp_cls("Dremio", **opts)
@@ -127,6 +164,24 @@ def init(
     mcp.add_prompt(
         Prompt.from_function(tools.system_prompt, "System Prompt", "System Prompt")
     )
+
+    @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+    async def authorization_server_metadata(request: Request) -> Response:
+        if issuer := settings.instance().dremio.auth_issuer_uri:
+            auth, tok = settings.instance().dremio.auth_endpoints
+            md = OAuthMetadata(
+                issuer=AnyHttpUrl(issuer),
+                authorization_endpoint=auth,
+                token_endpoint=tok,
+                scopes_supported=["dremio.all", "offline_access"],
+                response_types_supported=["code"],
+                grant_types_supported=["authorization_code", "refresh_token"],
+                code_challenge_methods_supported=["S256"],
+                token_endpoint_auth_methods_supported=["client_secret_post"],
+            )
+            return PydanticJSONResponse(md)
+        return Response(status_code=404)
+
     return mcp
 
 
@@ -182,6 +237,7 @@ def main(
         mode=cfg.tools.server_mode,
         transport=transport,
         port=port,
+        support_project_id_endpoints=True,
     )
     app.run(transport=transport.value)
 
