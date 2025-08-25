@@ -175,7 +175,7 @@ The rest of the documentation below provides details of the config files
 
 ### MCP server config file
 
-This file is located by default at `$HOME/.config/dremioai/config.yaml` but can be overriden using the `--config-file` option at runtime for `dremio-mcp-server`
+This file is located by default at `$HOME/.config/dremioai/config.yaml` but can be overriden using the `--cfg` option at runtime for `dremio-mcp-server`
 
 #### Format
 
