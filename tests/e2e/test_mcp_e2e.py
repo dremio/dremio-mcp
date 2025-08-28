@@ -19,6 +19,8 @@ from conftest import http_streamable_client_server, http_streamable_mcp_server
 
 from dremioai.tools.tools import get_tools
 from dremioai.config import settings
+from urllib.parse import urlparse
+from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
@@ -32,3 +34,14 @@ async def test_basic(mock_config_dir, logging_server, logging_level):
             assert tr == {
                 t.__name__ for t in get_tools(For=settings.instance().tools.server_mode)
             }
+
+@pytest.mark.asyncio
+async def test_healthz(mock_config_dir, logging_server, logging_level):
+    async with http_streamable_mcp_server(logging_server, logging_level) as sf:
+        async with AsyncClient() as client:
+            r = await client.get(
+                urlparse(sf.mcp_server.url)._replace(path="/healthz").geturl()
+            )
+            assert (
+                r.status_code == 200
+            ), f"/healthz failed with {r.text}, {r.status_code}"

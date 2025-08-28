@@ -186,6 +186,11 @@ def init(
             return PydanticJSONResponse(md)
         return Response(status_code=404)
 
+    @mcp.custom_route("/healthz", methods=["GET"])
+    async def health_check(_request: Request) -> Response:
+        """Kubernetes-style health check endpoint"""
+        return Response(content="OK", status_code=200, media_type="text/plain")
+
     return mcp
 
 
