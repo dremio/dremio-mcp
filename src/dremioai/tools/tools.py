@@ -13,7 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import json
 from contextvars import ContextVar
 from typing import (
     List,
@@ -34,7 +33,6 @@ from typing import (
 
 from dataclasses import dataclass, asdict, field
 
-from starlette.datastructures import URL
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 
@@ -55,6 +53,7 @@ from sqlglot import parse_one
 from sqlglot import expressions
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
+from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
 
 logger = log.logger(__name__)
 
@@ -158,6 +157,23 @@ def secured(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
     return _impl
 
 
+def with_metrics(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+    @functools.wraps(fn)
+    async def _impl(self, *args: P.args, **kw: P.kwargs) -> T:
+        project_id = None
+        if dremio := settings.instance().dremio:
+            project_id = dremio.project_id
+        invocation_counter.labels(
+            project_id=project_id, tool=self.__class__.__name__
+        ).inc()
+        with invocation_duration.labels(
+            project_id=project_id, tool=self.__class__.__name__
+        ).time():
+            return await fn(self, *args, **kw)
+
+    return _impl
+
+
 def _get_class_var_hints(tool: Tools, name: str) -> bool:
     if class_var := get_type_hints(tool, include_extras=True).get(name):
         if cls_args := get_args(class_var):
@@ -193,6 +209,7 @@ class GetFailedJobDetails(Tools):
         return df.groupby(by).size().reset_index(name="count").to_dict(orient="records")
 
     @secured
+    @with_metrics
     async def invoke(self) -> Dict[str, Any]:
         """Get the stats and details of failed or canceled jobs executed in the Dremio cluster in the past 7 days
         along with a split by job type
@@ -303,6 +320,7 @@ class RunSqlQuery(Tools):
         )
 
     @secured
+    @with_metrics
     async def invoke(self, s: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
         """Run a SELECT sql query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes
@@ -328,6 +346,7 @@ class BuildUsageReport(Tools):
     project_id_required: ClassVar[Annotated[bool, True]]
 
     @secured
+    @with_metrics
     async def invoke(
         self, by: Optional[Literal["PROJECT", "ENGINE"]] = "ENGINE"
     ) -> Dict[str, Any]:
@@ -391,6 +410,7 @@ class GetSchemaOfTable(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
 
     @secured
+    @with_metrics
     async def invoke(self, table_name: Union[str | List[str]]) -> Dict[str, Any]:
         """Gets the schema of the given table.
 
@@ -416,6 +436,7 @@ class GetTableOrViewLineage(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
 
     @secured
+    @with_metrics
     async def invoke(self, table_name: Union[str, List[str]]) -> Dict[str, Any]:
         """Finds the lineage of a table or view in the Dremio cluster
 
@@ -437,6 +458,7 @@ class SearchTableAndViews(Tools):
     ]
 
     @secured
+    @with_metrics
     async def invoke(self, query: str) -> Dict[str, Any]:
         """Runs a semantic search on the Dremio cluster to find tables and views that match the query.
 
