@@ -1,0 +1,20 @@
+name: Clean up unreleased Docker images
+
+on:
+  schedule:
+    - cron: "0 22 * * *"
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      CLEANER_TOKEN: ${{ secrets.CLEANER_TOKEN }}
+    steps:
+      - uses: actions/delete-package-versions@v5
+        if: env.CLEANER_TOKEN != ''
+        with:
+          package-name: ${{ github.event.repository.name }}
+          package-type: "container"
+          min-versions-to-keep: 5
+          delete-only-untagged-versions: "true"
+          token: ${{ env.CLEANER_TOKEN }}

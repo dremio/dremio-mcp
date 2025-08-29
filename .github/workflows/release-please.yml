@@ -1,0 +1,22 @@
+name: Release Cumulocity Microservice
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    env:
+      PR_TOKEN: ${{ secrets.PR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: googleapis/release-please-action@v4
+        if: env.PR_TOKEN != ''
+        with:
+          token: ${{ env.PR_TOKEN }}

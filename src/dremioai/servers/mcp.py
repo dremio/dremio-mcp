@@ -132,13 +132,14 @@ def init(
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
     transport: Transports = Transports.stdio,
     port: int = None,
+    host: str = "0.0.0.0",
     support_project_id_endpoints: bool = False,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
     )
-    opts = {"log_level": "DEBUG", "debug": True}
+    opts = {"log_level": "DEBUG", "debug": True, "host": host}
     if port is not None:
         opts["port"] = port
     mcp = mcp_cls("Dremio", **opts)
@@ -224,6 +225,7 @@ def main(
         ),
     ] = "INFO",
     port: Annotated[Optional[int], Option(help="The port to listen on")] = None,
+    host: Annotated[Optional[str], Option(help="The host to bind to")] = "0.0.0.0",
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -246,6 +248,7 @@ def main(
         mode=cfg.tools.server_mode,
         transport=transport,
         port=port,
+        host=host,
         support_project_id_endpoints=True,
     )
     app.run(transport=transport.value)

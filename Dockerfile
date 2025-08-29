@@ -33,7 +33,16 @@ COPY --from=builder /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && \
     rm /tmp/*.whl
 
-USER 1001
+ARG DREMIOAI_DREMIO__URI
+ARG DREMIOAI_DREMIO__PAT
+
+ENV DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS
+ENV DREMIOAI_DREMIO__URI=$DREMIOAI_DREMIO__URI
+ENV DREMIOAI_DREMIO__PAT=$DREMIOAI_DREMIO__PAT
+ENV DREMIOAI_DREMIO__OAUTH_SUPPORTED=false
+
+# Expose port 80
+EXPOSE 80
 
 # Console script is now properly installed
-CMD ["dremio-mcp-server", "run"]
+CMD ["dremio-mcp-server", "run", "--port", "80", "--enable-streaming-http", "--no-log-to-file", "--enable-json-logging"]
