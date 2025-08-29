@@ -89,6 +89,7 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
 class Transports(StrEnum):
     stdio = auto()
     streamable_http = "streamable-http"
+    sse = "sse"
 
 
 class FastMCPServerWithAuthToken(FastMCP):
@@ -221,6 +222,9 @@ def main(
     enable_streaming_http: Annotated[
         Optional[bool], Option(help="Run MCP as streaming HTTP")
     ] = False,
+    enable_sse: Annotated[
+        Optional[bool], Option(help="Run MCP as SSE")
+    ] = False,
     log_level: Annotated[
         Optional[str],
         Option(
@@ -235,6 +239,8 @@ def main(
     log.set_level(log_level)
     if enable_streaming_http:
         transport = Transports.streamable_http
+    elif enable_sse:
+        transport = Transports.sse
     else:
         transport = Transports.stdio
 

@@ -1,0 +1,15 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "cumulocity.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  },
+  "changelog-type": "github"
+}
