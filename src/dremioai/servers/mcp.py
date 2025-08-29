@@ -108,11 +108,12 @@ class FastMCPServerWithAuthToken(FastMCP):
     def streamable_http_app(self):
         token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
         app = super().streamable_http_app()
-        app.add_middleware(RequireAuthWithWWWAuthenticateMiddleware)
-        app.add_middleware(AuthContextMiddleware)
-        app.add_middleware(
-            AuthenticationMiddleware, backend=BearerAuthBackend(token_verifier)
-        )
+        if getattr(self, "require_auth", True):
+            app.add_middleware(RequireAuthWithWWWAuthenticateMiddleware)
+            app.add_middleware(AuthContextMiddleware)
+            app.add_middleware(
+                AuthenticationMiddleware, backend=BearerAuthBackend(token_verifier)
+            )
         # Add middleware in reverse order (last added = first executed)
         if self.support_project_id_endpoints:
             # this means, dynamically allow endpoints
@@ -134,6 +135,7 @@ def init(
     port: int = None,
     host: str = "0.0.0.0",
     support_project_id_endpoints: bool = False,
+    require_auth: bool = True
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
@@ -143,6 +145,7 @@ def init(
     if port is not None:
         opts["port"] = port
     mcp = mcp_cls("Dremio", **opts)
+    setattr(mcp, "require_auth", require_auth)
     if transport == Transports.streamable_http and support_project_id_endpoints:
         mcp.support_project_id_endpoints = support_project_id_endpoints
     mode = reduce(ior, mode) if mode is not None else None
@@ -226,6 +229,7 @@ def main(
     ] = "INFO",
     port: Annotated[Optional[int], Option(help="The port to listen on")] = None,
     host: Annotated[Optional[str], Option(help="The host to bind to")] = "0.0.0.0",
+    disable_auth: Annotated[Optional[bool], Option(help="Disable authentication")] = False,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -250,6 +254,7 @@ def main(
         port=port,
         host=host,
         support_project_id_endpoints=True,
+        require_auth=not bool(disable_auth),
     )
     app.run(transport=transport.value)
 
