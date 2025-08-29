@@ -1,0 +1,16 @@
+{
+  "apiVersion": "v2",
+  "version": "0.1.0",
+  "name": "dremio-mcp-server",
+  "provider": {
+    "name": "Dremio"
+  },
+  "isolation": "PER_TENANT",
+  "scale": "NONE",
+  "resources": {
+    "cpu": "1",
+    "memory": "512M"
+  },
+  "requiredRoles": [],
+  "roles": []
+}
