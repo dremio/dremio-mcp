@@ -21,6 +21,8 @@ from mcp.cli.claude import get_claude_config_path
 from mcp.shared.auth import OAuthMetadata
 from pydantic import AnyHttpUrl
 from pydantic.networks import AnyUrl
+
+from dremioai.metrics.registry import get_metrics_app
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -117,6 +119,8 @@ class FastMCPServerWithAuthToken(FastMCP):
             # like ../mcp/{project_id}/..  and extract that project id as
             # context var
             app.add_middleware(ProjectIdMiddleware)
+
+        app.mount("/metrics", get_metrics_app(), name="metrics")
         return app
 
     def __init__(self, *args, **kwargs):
@@ -181,6 +185,11 @@ def init(
             )
             return PydanticJSONResponse(md)
         return Response(status_code=404)
+
+    @mcp.custom_route("/healthz", methods=["GET"])
+    async def health_check(_request: Request) -> Response:
+        """Kubernetes-style health check endpoint"""
+        return Response(content="OK", status_code=200, media_type="text/plain")
 
     return mcp
 
