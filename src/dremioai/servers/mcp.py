@@ -132,6 +132,7 @@ def init(
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
     transport: Transports = Transports.stdio,
     port: int = None,
+    host: str = "127.0.0.1",
     support_project_id_endpoints: bool = False,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
@@ -141,6 +142,8 @@ def init(
     opts = {"log_level": "DEBUG", "debug": True}
     if port is not None:
         opts["port"] = port
+    if host is not None:
+        opts["host"] = host
     mcp = mcp_cls("Dremio", **opts)
     if transport == Transports.streamable_http and support_project_id_endpoints:
         mcp.support_project_id_endpoints = support_project_id_endpoints
@@ -224,6 +227,12 @@ def main(
         ),
     ] = "INFO",
     port: Annotated[Optional[int], Option(help="The port to listen on")] = None,
+    host: Annotated[
+        Optional[str],
+        Option(
+            help="Where uvicorn listens for requests"
+        ),
+    ] = "127.0.0.1",
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -246,6 +255,7 @@ def main(
         mode=cfg.tools.server_mode,
         transport=transport,
         port=port,
+        host=host,
         support_project_id_endpoints=True,
     )
     app.run(transport=transport.value)
