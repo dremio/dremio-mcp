@@ -59,7 +59,7 @@ jobs:
 
       - name: Test container
         run: |
-          uv run python tests/stremable_http_cli.py --url http://127.0.0.1:6789/mcp --token fake
+          uv run python tests/stremable_http_cli.py cli list-tools --url http://127.0.0.1:6789/mcp --token fake
       - id: tag
         name: Create tag
         run: |
