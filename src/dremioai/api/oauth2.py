@@ -1,3 +1,5 @@
+from typing import Optional
+
 from aiohttp import ClientSession, web
 from threading import Thread
 from secrets import token_urlsafe
@@ -7,6 +9,7 @@ from urllib.parse import urlencode, urlparse
 from dremioai.config import settings
 from datetime import datetime, timedelta
 from importlib.resources import files
+from dremioai.log import logger
 import webbrowser
 import asyncio
 
@@ -98,18 +101,30 @@ def get_pkce_pair(length=96):
 
 
 class OAuth2:
-    def __init__(self):
-        if settings.instance().dremio.oauth2.client_id is None:
-            raise RuntimeError("oauth_client_id is not set in the config file")
+    def __init__(
+        self,
+        client_id: Optional[str] = None,
+        auth_url: Optional[str] = None,
+        token_url: Optional[str] = None,
+    ):
+        if not auth_url:
+            if settings.instance().dremio.oauth2.client_id is None:
+                raise RuntimeError("oauth_client_id is not set in the config file")
 
-        base = urlparse(settings.instance().dremio.uri)
-        if base.netloc.startswith("api."):
-            base = base._replace(netloc=f"login.{base.netloc[4:]}")
-        url = base.geturl()
+            base = urlparse(settings.instance().dremio.uri)
+            if base.netloc.startswith("api."):
+                base = base._replace(netloc=f"login.{base.netloc[4:]}")
+            url = base.geturl()
 
-        self.client_id = settings.instance().dremio.oauth2.client_id
-        self.authorize_url = f"{url}/oauth/authorize"
-        self.access_token_url = f"{url}/oauth/token"
+            self.client_id = settings.instance().dremio.oauth2.client_id
+            self.authorize_url = f"{url}/oauth/authorize"
+            self.access_token_url = f"{url}/oauth/token"
+        else:
+            self.authorize_url = auth_url
+            self.access_token_url = token_url
+            self.client_id = client_id
+            if self.client_id is None:
+                raise RuntimeError("client_id is required")
         self.redirect_port = 8976
         self.scope = "dremio.all offline_access"
         self.code_verifier, self.code_challenge = get_pkce_pair()
@@ -121,7 +136,6 @@ class OAuth2:
             "code_challenge": self.code_challenge,
             "code_challenge_method": "S256",
         }
-        print(self.init_params)
         self.oauth_redirect = OAuth2Redirect(
             self.client_id,
             self.code_verifier,
@@ -131,10 +145,14 @@ class OAuth2:
         )
 
 
-def get_oauth2_tokens() -> OAuth2Redirect:
+def get_oauth2_tokens(
+    client_id: Optional[str] = None,
+    auth_url: Optional[str] = None,
+    token_url: Optional[str] = None,
+) -> OAuth2Redirect:
     # client_id = "311658a1-19ae-4851-b6a6-911c794312e2",
     # client_id = "a3743893-d849-4c8a-893b-533dd457aac4"
-    oauth = OAuth2()
+    oauth = OAuth2(client_id, auth_url, token_url)
     server_thread = Thread(
         target=run_server,
         daemon=True,
@@ -146,7 +164,7 @@ def get_oauth2_tokens() -> OAuth2Redirect:
     print(f"Opening browser to {url}")
     webbrowser.open(url)
     server_thread.join()
-    print(
+    logger("oauth2").debug(
         f"Access token: {oauth.oauth_redirect.access_token}\n"
         f"Refresh token: {oauth.oauth_redirect.refresh_token}\n"
         f"Expiry: {oauth.oauth_redirect.expiry}\n"
