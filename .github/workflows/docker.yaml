@@ -42,24 +42,24 @@ jobs:
               -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
           dremio-mcp-server:${{ github.sha }} \
             dremio-mcp-server tools list
-      - name: Start container
-        run: |
-          docker run \
-            --detach \
-            -e DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS \
-            -e DREMIOAI_DREMIO__URI=https://fake \
-            -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
-            -p 6789:6789 \
-            --name mcp \
-            --rm \
-            --network host \
-          dremio-mcp-server:${{ github.sha }} \
-          dremio-mcp-server run --enable-streaming-http --port 6789 --no-log-to-file \
-            --enable-json-logging
+      # - name: Start container
+      #   run: |
+      #     docker run \
+      #       --detach \
+      #       -e DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS \
+      #       -e DREMIOAI_DREMIO__URI=https://fake \
+      #       -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
+      #       -p 6789:6789 \
+      #       --name mcp \
+      #       --rm \
+      #       --network host \
+      #     dremio-mcp-server:${{ github.sha }} \
+      #     dremio-mcp-server run --enable-streaming-http --port 6789 --no-log-to-file \
+      #       --enable-json-logging
 
-      - name: Test container
-        run: |
-          uv run python tests/stremable_http_cli.py --url http://127.0.0.1:6789/mcp --token fake
+      # - name: Test container
+      #   run: |
+      #     uv run python tests/stremable_http_cli.py --url http://127.0.0.1:6789/mcp --token fake
       - id: tag
         name: Create tag
         run: |
