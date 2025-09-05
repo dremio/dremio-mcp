@@ -50,6 +50,7 @@ from contextvars import ContextVar, copy_context
 from os import environ
 from importlib.util import find_spec
 from datetime import datetime
+from dremioai import log
 
 ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
@@ -144,6 +145,7 @@ class Dremio(BaseModel):
     )
     oauth2: Optional[OAuth2] = None
     allow_dml: Optional[bool] = False
+    auth_issuer_uri_override: Optional[str] = None
     model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")
@@ -186,11 +188,14 @@ class Dremio(BaseModel):
 
     @property
     def auth_issuer_uri(self) -> Optional[str]:
+        if self.auth_issuer_uri_override is not None:
+            return self.auth_issuer_uri_override
         if self.is_cloud:
             uri = urlparse(self.uri)
             if uri.netloc.startswith("api."):
                 uri = uri._replace(netloc=f"login.{uri.netloc[4:]}")
             return uri.geturl()
+        log.logger("settings").error("Oauth not supported for non-cloud instances")
         return None
 
     @property

@@ -134,13 +134,14 @@ def test_env_file(mock_config_dir):
 
 
 @pytest.mark.parametrize(
-    "uri,project_id,issuer,error",
+    "uri,project_id,issuer,error,iss_override",
     [
         pytest.param(
             uri,
             project_id,
             iss,
             project_id is None,
+            iss_override,
             id=f"{label} with {plabel}",
         )
         for uri, iss, label in (
@@ -158,10 +159,23 @@ def test_env_file(mock_config_dir):
             ("DREMIO_DYNAMIC", "dynamic-project-id"),
             (str(uuid.uuid4()), "project-id"),
         )
+        for iss_override in (None, "https://my-override")
     ],
 )
-def test_auth_urls(uri: str, project_id: str | None, issuer: str, error: bool):
-    d = settings.Dremio.model_validate({"uri": uri, "project_id": project_id})
+def test_auth_urls(
+    uri: str, project_id: str | None, issuer: str, error: bool, iss_override: str | None
+):
+    d = settings.Dremio.model_validate(
+        {
+            "uri": uri,
+            "project_id": project_id,
+            "auth_issuer_uri_override": (
+                iss_override if iss_override and not error else None
+            ),
+        }
+    )
+    if iss_override:
+        issuer = iss_override
     auth = (f"{issuer}/oauth/authorize", f"{issuer}/oauth/token") if not error else None
     issuer = issuer if not error else None
     assert d.auth_issuer_uri == issuer

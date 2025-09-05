@@ -27,7 +27,6 @@ def login(
                 {"client_id": client_id}
             )
     oauth = get_oauth2_tokens()
-    oauth.update_settings()
     pp(
         settings.instance().dremio.model_dump(
             exclude_none=True, mode="json", by_alias=True, exclude_unset=True
