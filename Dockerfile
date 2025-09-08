@@ -45,5 +45,4 @@ ENV DREMIOAI_DREMIO__OAUTH_SUPPORTED=false
 EXPOSE 80
 
 # Console script is now properly installed
-#CMD ["dremio-mcp-server", "run", "--port", "80", "--enable-sse", "--no-log-to-file", "--enable-json-logging"]
-CMD ["dremio-mcp-server", "run", "--port", "80", "--disable-auth", "--enable-streaming-http", "--no-log-to-file", "--enable-json-logging"]
+CMD ["dremio-mcp-server", "run", "--port", "80", "--disable-auth", "--enable-sse", "--no-log-to-file", "--enable-json-logging"]
