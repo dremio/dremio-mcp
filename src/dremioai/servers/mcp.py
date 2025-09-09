@@ -144,13 +144,6 @@ def init(
     )
     opts = {"log_level": "DEBUG", "debug": True, "host": host}
 
-    # Configure custom paths for SSE transport
-    if transport == Transports.sse:
-        opts.update({
-            "sse_path": "/services/dremio-mcp/sse/",
-            "message_path": "/services/dremio-mcp/messages/"
-        })
-
     if port is not None:
         opts["port"] = port
     mcp = mcp_cls("Dremio", **opts)
