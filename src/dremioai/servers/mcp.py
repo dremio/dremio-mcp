@@ -266,6 +266,98 @@ def main(
     app.run(transport=transport.value)
 
 
+@ty.command(name="serve", help="Run the DremioAI MCP server with custom uvicorn settings")
+def serve(
+    config_file: Annotated[
+        Optional[Path],
+        Option("-c", "--cfg", help="The config yaml for various options"),
+    ] = None,
+    log_to_file: Annotated[Optional[bool], Option(help="Log to file")] = True,
+    enable_json_logging: Annotated[
+        Optional[bool], Option(help="Enable JSON logs")
+    ] = False,
+    enable_streaming_http: Annotated[
+        Optional[bool], Option(help="Run MCP as streaming HTTP")
+    ] = False,
+    enable_sse: Annotated[
+        Optional[bool], Option(help="Run MCP as SSE")
+    ] = False,
+    log_level: Annotated[
+        Optional[str],
+        Option(
+            help="The log level", click_type=Choice(list(logging._nameToLevel.keys()))
+        ),
+    ] = "INFO",
+    port: Annotated[Optional[int], Option(help="The port to listen on")] = None,
+    host: Annotated[Optional[str], Option(help="The host to bind to")] = "0.0.0.0",
+    disable_auth: Annotated[Optional[bool], Option(help="Disable authentication")] = False,
+    root_path: Annotated[Optional[str], Option(help="Root path for the application (e.g., /api/v1)")] = "",
+):
+    """
+    Run the server with custom uvicorn settings, allowing you to specify root_path
+    and other uvicorn-specific parameters.
+    """
+    import uvicorn
+
+    log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
+    log.set_level(log_level)
+
+    if enable_streaming_http:
+        transport = Transports.streamable_http
+    elif enable_sse:
+        transport = Transports.sse
+    else:
+        transport = Transports.stdio
+
+    cfg = settings.configure(config_file).get()
+    dremio = settings.instance().dremio
+    if (
+        dremio.oauth_supported
+        and dremio.oauth_configured
+        and (dremio.oauth2.has_expired or dremio.pat is None)
+    ):
+        oauth = get_oauth2_tokens()
+        oauth.update_settings()
+
+    # Initialize the MCP app
+    mcp_app = init(
+        mode=cfg.tools.server_mode,
+        transport=transport,
+        port=port,
+        host=host,
+        support_project_id_endpoints=True,
+        require_auth=not bool(disable_auth),
+    )
+
+    # Get the appropriate ASGI app based on transport
+    if transport == Transports.sse:
+        starlette_app = mcp_app.sse_app()
+    elif transport == Transports.streamable_http:
+        starlette_app = mcp_app.streamable_http_app()
+    else:
+        # For stdio, we can't use uvicorn, fall back to the normal run method
+        log.logger("serve").warning("STDIO transport cannot be used with uvicorn, falling back to normal run method")
+        mcp_app.run(transport=transport.value)
+        return
+
+    # Configure uvicorn
+    config = uvicorn.Config(
+        starlette_app,
+        host=host,
+        port=port or 8000,
+        log_level=log_level.lower(),
+        root_path=root_path,
+        # Add any other uvicorn settings you want to customize here
+        access_log=True,
+        server_header=False,  # Hide uvicorn server header
+    )
+
+    # Start the server
+    server = uvicorn.Server(config)
+    import asyncio
+    asyncio.run(server.serve())
+
+
 tc = Typer(
     context_settings=dict(help_option_names=["-h", "--help"]),
     name="config",
