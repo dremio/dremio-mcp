@@ -16,6 +16,8 @@
 
 import pytest
 from conftest import http_streamable_client_server, http_streamable_mcp_server
+from mcp.types import CallToolResult
+from rich import print as pp
 
 from dremioai.tools.tools import get_tools
 from dremioai.config import settings
@@ -35,6 +37,7 @@ async def test_basic(mock_config_dir, logging_server, logging_level):
                 t.__name__ for t in get_tools(For=settings.instance().tools.server_mode)
             }
 
+
 @pytest.mark.asyncio
 async def test_healthz(mock_config_dir, logging_server, logging_level):
     async with http_streamable_mcp_server(logging_server, logging_level) as sf:
@@ -45,3 +48,42 @@ async def test_healthz(mock_config_dir, logging_server, logging_level):
             assert (
                 r.status_code == 200
             ), f"/healthz failed with {r.text}, {r.status_code}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "engine_name",
+    [
+        pytest.param(None, id="no_engine_name"),
+        pytest.param("test-engine"),
+        pytest.param("test-engine-2"),
+    ],
+)
+async def test_wlm_engine_name(
+    mock_config_dir, logging_server, logging_level, engine_name
+):
+    async with http_streamable_mcp_server(
+        logging_server, logging_level, wlm_engine=engine_name
+    ) as sf:
+        async with http_streamable_client_server(
+            sf.mcp_server, token="my-token"
+        ) as session:
+            result: CallToolResult = await session.call_tool(
+                "RunSqlQuery", {"s": "SELECT 1"}
+            )
+            assert (
+                result is not None
+                and result.structuredContent is not None
+                and result.structuredContent["result"]["result"][0]["test_column"] == 1
+            ), f"Error running tool {result}"
+
+            for le in logging_server.logs():
+                if le.path.endswith("/sql") and le.method == "POST":
+                    if engine_name is None:
+                        assert (
+                            le.json.get("engineName") is None
+                        ), f"{le.json} has engineName"
+                    else:
+                        assert (
+                            le.json.get("engineName") == engine_name
+                        ), f"{le.json} does not have the right engineName"
