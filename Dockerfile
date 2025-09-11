@@ -1,25 +1,25 @@
 # Build stage
 FROM python:3.13-slim AS builder
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
 WORKDIR /build
 
 # Copy project files
-COPY pyproject.toml README.md ./
-COPY src/ ./src/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN chmod +x /bin/uv /bin/uvx
 
-# Build wheel
-RUN pip install --upgrade pip build && \
-    python -m build --wheel --outdir /dist
+COPY pyproject.toml uv.lock README.md src/ ./
+
+RUN uv sync --no-dev --frozen
+RUN mkdir /dist
+RUN uv export --frozen --no-editable --format requirements.txt | grep -v -e '^[[:space:]]*\.[[:space:]]*$' > /dist/requirements.txt
+RUN uv build --wheel -o /dist
+
 
 # Runtime stage
 FROM python:3.13-slim
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
 
 # Create non-root user
 RUN useradd -m -u 1001 appuser
@@ -27,11 +27,12 @@ RUN useradd -m -u 1001 appuser
 WORKDIR /app
 
 # Copy wheel from builder
-COPY --from=builder /dist/*.whl /tmp/
+COPY --from=builder /dist/*.whl /dist/requirements.txt /tmp/
 
 # Install the wheel and dependencies
-RUN pip install --no-cache-dir /tmp/*.whl && \
-    rm /tmp/*.whl
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir /tmp/dremioai*.whl
+RUN rm /tmp/*.whl /tmp/requirements.txt
 
 USER 1001
 
