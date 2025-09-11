@@ -7,10 +7,11 @@ using the Streamable HTTP transport protocol.
 
 import asyncio
 import functools
+import json
 import random
 import time
 from contextlib import asynccontextmanager
-from typing import Annotated, Optional, AsyncGenerator, Callable, Any
+from typing import Annotated, Optional, AsyncGenerator, Callable, Any, Dict
 from urllib.parse import urlparse
 
 from mcp import ClientSession
@@ -123,6 +124,29 @@ async def list_tools(
             pp(tool)
 
 
+@cli.command("call-tool")
+@async_command
+async def call_tool(
+    tool: Annotated[str, Option(help="The tool to call")],
+    url: Annotated[
+        Optional[str], Option(help="The URL of the MCP server")
+    ] = "http://127.0.0.1:8000/mcp",
+    token: Annotated[
+        Optional[str], Option(help="The authorization token to use")
+    ] = None,
+    args: Annotated[
+        Optional[str], Option(help="The arguments to pass to the tool as a JSON")
+    ] = None,
+):
+    async with mcp_client_session(url, token) as session:
+        result = await session.call_tool(tool, json.loads(args) if args else None)
+        if result.isError:
+            pp("[red]Error[/red]")
+            pp(result.content)
+            return
+        pp(result.structuredContent["result"])
+
+
 @app.command("test", help="Run a quick smoketest for a deployed MCP server")
 @async_command
 async def run_test(
@@ -142,8 +166,11 @@ async def run_test(
         n = int(time.time())
         query = f"SELECT {n} as n"
         result = await session.call_tool("RunSqlQuery", {"s": query})
-        result = result.structuredContent["result"]["result"]
-        pp(result)
+        if result.isError:
+            pp("[red]FAIL[/red]")
+            pp(result.content)
+            return
+        pp(result.structuredContent["result"]["result"])
 
         query2 = f"""
         SELECT query
@@ -152,10 +179,12 @@ async def run_test(
         and query like '/* dremioai: submitter=RunS%' and query like '%SELECT {n} as n';
         """
         result = await session.call_tool("RunSqlQuery", {"s": query2})
-        result = result.structuredContent["result"]["result"]
-        pp(result)
-
-        if len(result) != 1:
+        if result.isError:
+            pp("[red]FAIL[/red]")
+            pp(result.content)
+            return
+        pp(result.structuredContent["result"]["result"])
+        if len(result.structuredContent["result"]["result"]) != 1:
             pp("[red]FAIL[/red]")
     pp("[green]OK[/green]")
 

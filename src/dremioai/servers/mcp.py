@@ -95,14 +95,13 @@ class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
         async def verify_token(self, token: str) -> AccessToken | None:
             if token:
-                log.logger("verify_token").info(f"Token verified: {token}")
                 return AccessToken(
                     token=token,  # Include the token itself
                     client_id="unused-client",
                     scopes=["read"],
                 )
             else:
-                log.logger("verify_token").info(f"Token not provided: {token}")
+                log.logger("verify_token").info(f"Token not provided")
                 return None
 
     def streamable_http_app(self):
@@ -144,6 +143,7 @@ def init(
         opts["port"] = port
     if host is not None:
         opts["host"] = host
+
     mcp = mcp_cls("Dremio", **opts)
     if transport == Transports.streamable_http and support_project_id_endpoints:
         mcp.support_project_id_endpoints = support_project_id_endpoints
@@ -229,9 +229,7 @@ def main(
     port: Annotated[Optional[int], Option(help="The port to listen on")] = None,
     host: Annotated[
         Optional[str],
-        Option(
-            help="Where uvicorn listens for requests"
-        ),
+        Option(help="Where uvicorn listens for requests"),
     ] = "127.0.0.1",
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
