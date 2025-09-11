@@ -56,6 +56,8 @@ dremio:
   project_id: <string> # Optional: Project ID for Dremio Cloud
   enable_search: <bool> # Optional: Enable semantic search
   allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
+  wlm:  # Optional: WLM settings, for running MCP server in stdio mode
+    engine_name: <string> # Optional: Direct all SQL to this engine if set
 ```
 
 URI can be specified as:
@@ -157,9 +159,9 @@ tools:
 Settings can be configured using environment variables with nested delimiter '\_':
 
 ```bash
-DREMIO_URI="https://api.dremio.cloud"
-DREMIO_PAT="your-pat-here"
-TOOLS_SERVER_MODE="FOR_SELF"
+DREMIOAI_DREMIO__URI="https://api.dremio.cloud"
+DREMIOAI_DREMIO__PAT="your-pat-here"
+DREMIOAI_TOOLS__SERVER_MODE="FOR_SELF"
 ```
 
 ### Programmatic Configuration
