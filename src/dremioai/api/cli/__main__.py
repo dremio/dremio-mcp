@@ -71,11 +71,6 @@ def run_catalog(
 # _qg = "Query / Job ID "
 @sql_app.command("run")
 def run_sql(
-    uri: Annotated[str, Option(envvar="DREMIO_URI", show_envvar=True, default=...)],
-    project_id: Annotated[
-        str, Option(envvar="DREMIO_PROJECT_ID", show_envvar=True, default=...)
-    ],
-    pat: Annotated[str, Option(envvar="DREMIO_PAT", show_envvar=True, default=...)],
     query: Annotated[
         Optional[str],
         Option(
@@ -88,17 +83,24 @@ def run_sql(
     use_df: Annotated[
         Optional[bool], Option(help="Convert results to pandas dataframe")
     ] = False,
+    engine_name: Annotated[
+        Optional[str], Option(help="The engine name to run the query on")
+    ] = None,
 ):
     if query is None and job_id is None:
         raise BadParameter("Either query or job_id must be provided")
 
     if query is not None:
         query = Path(query[1:]).read_text().strip() if query.startswith("@") else query
-        query = f"/* dremioai: submitter=cli */\n{query}"
-        result = asyncio.run(sql.run_query(uri, pat, project_id, query, as_df=use_df))
+        query = f"/* dremioai: submitter=cli {'engine=' + engine_name if engine_name is not None else ''} */\n{query}"
+        if engine_name is not None:
+            query = sql.Query(sql=query, engineName=engine_name)
+        result = asyncio.run(sql.run_query(query, use_df=use_df))
     else:
         result = asyncio.run(
-            sql.get_results(project_id, job_id, as_df=use_df, uri=uri, pat=pat)
+            sql.get_results(
+                settings.instance().dremio.project_id, job_id, use_df=use_df
+            )
         )
 
     pp(result if use_df else [r for jr in result for r in jr.rows])

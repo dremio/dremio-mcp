@@ -49,7 +49,6 @@ async def test_tool_pat(mock_config_dir, logging_server, logging_level, project_
             assert result.structuredContent["result"]["result"][0]["test_column"] == 1
             from rich import print as pp
 
-            pp(logging_server.logs())
             for le in logging_server.logs():
                 assert (
                     le.headers.get("authorization") == "Bearer my-token"
