@@ -3,9 +3,14 @@ name: Docker Image builder
 on:
   workflow_dispatch:
     inputs:
+      image-name:
+        default: dremio-daas-mcp-server
+        description: Image name
+        required: true
+        type: string
       repository:
         default: us-west1-docker.pkg.dev/dremio-1093/dremio
-        description: Repository to push the image to. Image name is fixed to 'dremio-mcp-server' and tag is calculated at runtime
+        description: Repository to push the image to. Image name can be set by an input and tag is calculated at runtime
         required: true
         type: string
 
@@ -33,15 +38,15 @@ jobs:
         with:
           context: .
           push: false
-          tags: dremio-mcp-server:${{ github.sha }}
+          tags: ${{ inputs.image-name }}:${{ github.sha }}
       - name: Validate docker
         run: |
           docker run \
               -e DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS \
               -e DREMIOAI_DREMIO__URI=https://fake \
               -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
-          dremio-mcp-server:${{ github.sha }} \
-            dremio-mcp-server tools list
+          ${{ inputs.image-name }}:${{ github.sha }} \
+            ${{ inputs.image-name }} tools list
       - name: Start container
         run: |
           docker run \
@@ -53,8 +58,8 @@ jobs:
             --name mcp \
             --rm \
             --network host \
-          dremio-mcp-server:${{ github.sha }} \
-          dremio-mcp-server run --enable-streaming-http --port 6789 --no-log-to-file \
+          ${{ inputs.image-name }}:${{ github.sha }} \
+          ${{ inputs.image-name }} run --enable-streaming-http --port 6789 --no-log-to-file \
             --enable-json-logging
 
       - name: Test container
@@ -84,6 +89,6 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ inputs.repository }}/dremio-mcp-server:${{ steps.tag.outputs.tag }}
+            ${{ inputs.repository }}/${{ inputs.image-name }}:${{ steps.tag.outputs.tag }}
 
           
