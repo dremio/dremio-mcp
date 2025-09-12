@@ -46,7 +46,7 @@ jobs:
               -e DREMIOAI_DREMIO__URI=https://fake \
               -e DREMIOAI_DREMIO__OAUTH_SUPPORTED=false \
           ${{ inputs.image-name }}:${{ github.sha }} \
-            ${{ inputs.image-name }} tools list
+            dremio-mcp-server tools list
       - name: Start container
         run: |
           docker run \
@@ -59,7 +59,7 @@ jobs:
             --rm \
             --network host \
           ${{ inputs.image-name }}:${{ github.sha }} \
-          ${{ inputs.image-name }} run --enable-streaming-http --port 6789 --no-log-to-file \
+          dremio-mcp-server run --enable-streaming-http --port 6789 --no-log-to-file \
             --enable-json-logging
 
       - name: Test container
