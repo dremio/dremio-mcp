@@ -184,25 +184,27 @@ class StreamableMcpServerFixture(NamedTuple):
 
 @contextlib.asynccontextmanager
 async def http_streamable_mcp_server(
-    logging_server: LoggingServerFixture, logging_level: str, project_id: str = None
+    logging_server: LoggingServerFixture,
+    logging_level: str,
+    project_id: str = None,
+    wlm_engine: str = None,
 ) -> AsyncGenerator[StreamableMcpServerFixture]:
     old = settings.instance()
     sf = None
     try:
         settings.configure(force=True)
-        settings._settings.set(
-            settings.Settings.model_validate(
-                {
-                    "dremio": {
-                        "uri": logging_server.url,
-                        "project_id": uuid.uuid4(),
-                        "pat": "test-pat",
-                        "enable_search": True,
-                    },
-                    "tools": {"server_mode": ToolType.FOR_DATA_PATTERNS.name},
-                }
-            )
-        )
+        config = {
+            "dremio": {
+                "uri": logging_server.url,
+                "project_id": uuid.uuid4(),
+                "pat": "test-pat",
+                "enable_search": True,
+            },
+            "tools": {"server_mode": ToolType.FOR_DATA_PATTERNS.name},
+        }
+        if wlm_engine:
+            config["dremio"]["wlm"] = {"engine_name": wlm_engine}
+        settings._settings.set(settings.Settings.model_validate(config))
         settings.write_settings()
         port = random.randrange(9000, 12000)
         set_level(logging_level.upper())

@@ -201,6 +201,7 @@ class LogEntry(BaseModel):
     query_params: Dict[str, Any]
     headers: Dict[str, Any]
     response_status: Optional[int] = None
+    json: Optional[Dict[str, Any]] = None
     model_config = ConfigDict(validate_assignment=True)
 
 
@@ -218,6 +219,10 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         # Capture request details
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
         log_entry = LogEntry.model_validate(
             {
                 "method": request.method,
@@ -225,6 +230,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 "path": request.url.path,
                 "query_params": dict(request.query_params),
                 "headers": dict(request.headers),
+                "json": body,
             }
         )
 

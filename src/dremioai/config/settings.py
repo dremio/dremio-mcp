@@ -132,6 +132,11 @@ class OAuth2(BaseModel):
         return self.expiry is not None and self.expiry < datetime.now()
 
 
+class Wlm(BaseModel):
+    engine_name: Optional[str] = None
+    model_config = ConfigDict(validate_assignment=True)
+
+
 class Dremio(BaseModel):
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
@@ -146,6 +151,7 @@ class Dremio(BaseModel):
     oauth2: Optional[OAuth2] = None
     allow_dml: Optional[bool] = False
     auth_issuer_uri_override: Optional[str] = None
+    wlm: Optional[Wlm] = None
     model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")
