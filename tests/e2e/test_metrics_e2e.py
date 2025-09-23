@@ -48,7 +48,7 @@ async def test_separate_metrics_server(mock_config_dir, logging_server, logging_
 
 @pytest.mark.asyncio
 async def test_metrics_format(mock_config_dir, logging_server, logging_level):
-    """Test that metrics are in text format."""
+    """Test that metrics are in text format and initially contain no metric values."""
     async with http_streamable_mcp_server(logging_server, logging_level) as sf:
         # Give server time to start
         import asyncio
@@ -65,9 +65,17 @@ async def test_metrics_format(mock_config_dir, logging_server, logging_level):
             content = metrics_response.text
             assert isinstance(content, str)
 
-            # Should NOT contain tool invocation metrics
+            # Should contain metric definitions (HELP and TYPE lines) but no actual metric values
             if content.strip():
-                assert "mcp_tool_invocations" not in content and  "mcp_tool_invocation_duration" not in content
+                assert "# HELP mcp_tool_invocations_total" in content
+                assert "# TYPE mcp_tool_invocations_total counter" in content
+                assert "# HELP mcp_tool_invocation_duration" in content
+                assert "# TYPE mcp_tool_invocation_duration histogram" in content
+
+                # But should NOT contain any actual metric values (lines with numbers)
+                lines = content.strip().split('\n')
+                metric_value_lines = [line for line in lines if not line.startswith('#') and line.strip()]
+                assert len(metric_value_lines) == 0, f"Expected no metric values, but found: {metric_value_lines}"
 
 @pytest.mark.asyncio
 async def test_metrics_with_tool_invocation(mock_config_dir, logging_server, logging_level):

@@ -42,7 +42,8 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 import contextlib
 from dremioai.log import set_level
-
+from dremioai.metrics import registry
+from prometheus_client import CollectorRegistry
 
 @pytest.fixture(autouse=True)
 def reset_sse_starlette_app_status():
@@ -71,6 +72,17 @@ def reset_sse_starlette_app_status():
         AppStatus.should_exit_event = None
     except ImportError:
         pass
+
+@pytest.fixture(autouse=True)
+def reset_metrics_registry():
+    """
+    Reset the global metrics registry between tests.
+
+    This ensures that metrics from previous tests don't persist and affect subsequent test assertions.
+    """
+    registry._registry = CollectorRegistry()
+
+    yield
 
 
 @pytest.fixture
