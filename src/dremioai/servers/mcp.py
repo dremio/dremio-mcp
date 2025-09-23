@@ -45,14 +45,13 @@ from shutil import which
 import asyncio
 from yaml import dump
 import sys
+import threading
+import uvicorn
 
 from mcp.server.auth.middleware.auth_context import (
     AuthContextMiddleware,
 )
-from mcp.server.auth.middleware.bearer_auth import (
-    BearerAuthBackend,
-    RequireAuthMiddleware,
-)
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -119,7 +118,6 @@ class FastMCPServerWithAuthToken(FastMCP):
             # context var
             app.add_middleware(ProjectIdMiddleware)
 
-        app.mount("/metrics", get_metrics_app(), name="metrics")
         return app
 
     def __init__(self, *args, **kwargs):
@@ -200,6 +198,40 @@ def init(
 app = None
 
 
+def start_metrics_server(
+    host: str | None = None,
+    log_level: str | None = None,
+    port: int | None = None
+) -> threading.Thread:
+    """
+    Start a separate uvicorn server for Prometheus metrics.
+
+    Args:
+        host: Host to bind the metrics server to
+        port: Port to bind the metrics server to
+    """
+    metrics_app = get_metrics_app()
+
+    host = host or "127.0.0.1"
+    log_level = log_level.lower() if log_level else "info"
+    port = port or 8080
+
+    def run_server():
+        config = uvicorn.Config(
+            app=metrics_app,
+            host=host,
+            port=port,
+            log_level=log_level,
+            access_log=False
+        )
+        server = uvicorn.Server(config)
+        asyncio.run(server.serve())
+
+    threading.Thread(target=run_server, daemon=True).start()
+
+    log.logger("metrics_server").info(f"Started metrics server on {host}:{port}")
+
+
 def _mode() -> List[str]:
     return [tt.name for tt in tools.ToolType]
 
@@ -231,6 +263,10 @@ def main(
         Optional[str],
         Option(help="Where uvicorn listens for requests"),
     ] = "127.0.0.1",
+    metrics_port: Annotated[
+        Optional[int],
+        Option(help="Port for the separate metrics server")
+    ] = None,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -240,6 +276,7 @@ def main(
         transport = Transports.stdio
 
     cfg = settings.configure(config_file).get()
+
     dremio = settings.instance().dremio
     if (
         dremio.oauth_supported
@@ -256,6 +293,9 @@ def main(
         host=host,
         support_project_id_endpoints=True,
     )
+
+    start_metrics_server(host, log_level, metrics_port)
+    
     app.run(transport=transport.value)
 
 
