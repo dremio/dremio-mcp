@@ -30,7 +30,7 @@ from collections import OrderedDict
 
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
-from dremioai.servers.mcp import Transports, init
+from dremioai.servers.mcp import Transports, init, start_metrics_server
 
 from mocks.http_mock import (
     create_pytest_logging_server_fixture,
@@ -180,6 +180,7 @@ def logging_server(logging_level):
 class StreamableMcpServerFixture(NamedTuple):
     mcp_server: ServerFixture
     logging_server: LoggingServerFixture
+    metrics_port: int
 
 
 @contextlib.asynccontextmanager
@@ -206,9 +207,21 @@ async def http_streamable_mcp_server(
             config["dremio"]["wlm"] = {"engine_name": wlm_engine}
         settings._settings.set(settings.Settings.model_validate(config))
         settings.write_settings()
+        host = "127.0.0.1"
         port = random.randrange(9000, 12000)
+        metrics_port = random.randrange(9000, 12000)
+
+        # Ensure metrics port is different from main port
+        while metrics_port == port:
+            metrics_port = random.randrange(9000, 12000)
+
         set_level(logging_level.upper())
+
+        # Start metrics server
+        start_metrics_server(host=host, port=metrics_port, log_level=logging_level)
+
         mcp_server = init(
+            host=host,
             transport=Transports.streamable_http,
             port=port,
             mode=settings.instance().tools.server_mode,
@@ -217,14 +230,15 @@ async def http_streamable_mcp_server(
 
         app = mcp_server.streamable_http_app()
         server, stop_event = start_server_with_app(
-            app, host="127.0.0.1", port=port, log_level=logging_level
+            app, host=host, port=port, log_level=logging_level
         )
         sf = ServerFixture(
-            f"http://127.0.0.1:{port}/mcp/{(str(project_id) + '/') if project_id else ''}",
+            f"http://{host}:{port}/mcp/{(str(project_id) + '/') if project_id else ''}",
             stop_event,
             server,
         )
-        yield StreamableMcpServerFixture(sf, logging_server)
+
+        yield StreamableMcpServerFixture(sf, logging_server, metrics_port)
     finally:
         if sf is not None:
             sf.close()
