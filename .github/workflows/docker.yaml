@@ -10,7 +10,7 @@ on:
         type: string
       repository:
         description: |
-          Repository to push the image to. Image name can be set by an input and tag is calculated at runtime. \
+          Repository to push the image to. Image name can be set by an input and tag is calculated at runtime.
           Defaults to private Dremio repository.
         required: false
         type: string
