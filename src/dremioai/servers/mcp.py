@@ -45,12 +45,9 @@ from shutil import which
 import asyncio
 from yaml import dump
 import sys
-import threading
 import uvicorn
 
-from mcp.server.auth.middleware.auth_context import (
-    AuthContextMiddleware,
-)
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.middleware.authentication import AuthenticationMiddleware
@@ -118,6 +115,7 @@ class FastMCPServerWithAuthToken(FastMCP):
             # context var
             app.add_middleware(ProjectIdMiddleware)
 
+        # Metrics are now served on a separate port, not mounted here
         return app
 
     def __init__(self, *args, **kwargs):
@@ -198,38 +196,50 @@ def init(
 app = None
 
 
-def start_metrics_server(
-    host: str | None = None,
-    log_level: str | None = None,
-    port: int | None = None
-) -> threading.Thread:
+def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Server:
+    # Create a separate uvicorn server for Prometheus metrics.
+    metrics_app = get_metrics_app()
+    config = uvicorn.Config(
+        app=metrics_app, host=host, port=port, log_level=log_level, access_log=False
+    )
+    server = uvicorn.Server(config)
+
+    log.logger("metrics_server").info(
+        f"Created metrics server config for {host}:{port}"
+    )
+    return server
+
+
+def run_with_metrics_server(
+    app: FastMCP, transport: Transports, metrics_server: uvicorn.Server | None = None
+):
     """
-    Start a separate uvicorn server for Prometheus metrics.
+    Run the main MCP server alongside the metrics server using asyncio.
 
     Args:
-        host: Host to bind the metrics server to
-        port: Port to bind the metrics server to
+        app: The FastMCP server instance
+        transport: Transport type
+        metrics_server: Optional metrics server to run concurrently
     """
-    metrics_app = get_metrics_app()
+    metrics_task = None
+    if metrics_server:
+        # Start metrics server as background task for all transports
+        log.logger("server_startup").info("Starting metrics server as background task")
+        metrics_task = asyncio.create_task(metrics_server.serve())
 
-    host = host or "127.0.0.1"
-    log_level = log_level.lower() if log_level else "info"
-    port = port or 8080
+    async def cleanup_metrics_server():
+        if metrics_task is not None:
+            metrics_task.cancel()
+            try:
+                await metrics_task
+            except asyncio.CancelledError as e:
+                log.logger("metrics_server").warning(f"Metrics server stopped: {e}")
 
-    def run_server():
-        config = uvicorn.Config(
-            app=metrics_app,
-            host=host,
-            port=port,
-            log_level=log_level,
-            access_log=False
-        )
-        server = uvicorn.Server(config)
-        asyncio.run(server.serve())
-
-    threading.Thread(target=run_server, daemon=True).start()
-
-    log.logger("metrics_server").info(f"Started metrics server on {host}:{port}")
+    try:
+        # Let app.run() handle its own transport logic
+        app.run(transport=transport.value)
+    finally:
+        asyncio.run(cleanup_metrics_server())
 
 
 def _mode() -> List[str]:
@@ -263,10 +273,6 @@ def main(
         Optional[str],
         Option(help="Where uvicorn listens for requests"),
     ] = "127.0.0.1",
-    metrics_port: Annotated[
-        Optional[int],
-        Option(help="Port for the separate metrics server")
-    ] = None,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -276,7 +282,6 @@ def main(
         transport = Transports.stdio
 
     cfg = settings.configure(config_file).get()
-
     dremio = settings.instance().dremio
     if (
         dremio.oauth_supported
@@ -294,9 +299,20 @@ def main(
         support_project_id_endpoints=True,
     )
 
-    start_metrics_server(host, log_level, metrics_port)
-    
-    app.run(transport=transport.value)
+    # Create metrics server based on configuration
+    metrics_server = None
+    if (
+        settings.instance().dremio.prometheus_metrics_enabled
+        and settings.instance().dremio.prometheus_metrics_port is not None
+    ):
+        metrics_server = create_metrics_server(
+            host=host,
+            port=dremio.prometheus_metrics_port,
+            log_level=log_level,
+        )
+
+    # Run the servers
+    run_with_metrics_server(app, transport, metrics_server)
 
 
 tc = Typer(

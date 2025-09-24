@@ -33,18 +33,23 @@ async def test_metrics_endpoint_default(mock_config_dir, logging_server, logging
             response = await client.get(metrics_url)
             assert response.status_code == 404
 
+
 @pytest.mark.asyncio
 async def test_separate_metrics_server(mock_config_dir, logging_server, logging_level):
     """Test that metrics can be served on a separate port."""
     async with http_streamable_mcp_server(logging_server, logging_level) as sf:
         # Give server time to start
         import asyncio
+
         await asyncio.sleep(1)
 
         async with httpx.AsyncClient() as client:
             # Test that metrics are available on separate port (from fixture)
-            metrics_response = await client.get(f"http://127.0.0.1:{sf.metrics_port}/", timeout=1.0)
+            metrics_response = await client.get(
+                f"http://127.0.0.1:{sf.metrics_port}/", timeout=1.0
+            )
             assert metrics_response.status_code == 200
+
 
 @pytest.mark.asyncio
 async def test_metrics_format(mock_config_dir, logging_server, logging_level):
@@ -52,11 +57,14 @@ async def test_metrics_format(mock_config_dir, logging_server, logging_level):
     async with http_streamable_mcp_server(logging_server, logging_level) as sf:
         # Give server time to start
         import asyncio
+
         await asyncio.sleep(1)
 
         async with httpx.AsyncClient() as client:
             # Test that metrics are available on separate port (from fixture)
-            metrics_response = await client.get(f"http://127.0.0.1:{sf.metrics_port}/", timeout=1.0)
+            metrics_response = await client.get(
+                f"http://127.0.0.1:{sf.metrics_port}/metrics", timeout=1.0
+            )
 
             # Verify Prometheus format
             content_type = metrics_response.headers.get("content-type", "")
@@ -73,21 +81,31 @@ async def test_metrics_format(mock_config_dir, logging_server, logging_level):
                 assert "# TYPE mcp_tool_invocation_duration histogram" in content
 
                 # But should NOT contain any actual metric values (lines with numbers)
-                lines = content.strip().split('\n')
-                metric_value_lines = [line for line in lines if not line.startswith('#') and line.strip()]
-                assert len(metric_value_lines) == 0, f"Expected no metric values, but found: {metric_value_lines}"
+                lines = content.strip().split("\n")
+                metric_value_lines = [
+                    line for line in lines if not line.startswith("#") and line.strip()
+                ]
+                assert (
+                    len(metric_value_lines) == 0
+                ), f"Expected no metric values, but found: {metric_value_lines}"
+
 
 @pytest.mark.asyncio
-async def test_metrics_with_tool_invocation(mock_config_dir, logging_server, logging_level):
+async def test_metrics_with_tool_invocation(
+    mock_config_dir, logging_server, logging_level
+):
     """Test that metrics are recorded when tools are invoked."""
     # Use the existing MCP server fixture to invoke tools
     async with http_streamable_mcp_server(logging_server, logging_level) as sf:
         # Give server time to start
         import asyncio
+
         await asyncio.sleep(1)
 
         # Invoke a tool to generate metrics
-        async with http_streamable_client_server(sf.mcp_server, token="test-token") as session:
+        async with http_streamable_client_server(
+            sf.mcp_server, token="test-token"
+        ) as session:
             result: CallToolResult = await session.call_tool(
                 "RunSqlQuery", {"s": "SELECT 1"}
             )
@@ -95,10 +113,15 @@ async def test_metrics_with_tool_invocation(mock_config_dir, logging_server, log
 
         # Check metrics after tool invocation
         async with httpx.AsyncClient() as client:
-            metrics_response = await client.get(f"http://127.0.0.1:{sf.metrics_port}/", timeout=5.0)
+            metrics_response = await client.get(
+                f"http://127.0.0.1:{sf.metrics_port}/", timeout=5.0
+            )
 
             content = metrics_response.text
 
             # Should contain tool invocation metrics
             if content.strip():
-                assert "mcp_tool_invocations" in content and "mcp_tool_invocation_duration" in content
+                assert (
+                    "mcp_tool_invocations" in content
+                    and "mcp_tool_invocation_duration" in content
+                )
