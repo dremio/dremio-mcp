@@ -94,7 +94,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: |
-            ${{ inputs.repository }}/${{ inputs.image-name }}:${{ steps.tag.outputs.tag }}
-
-          
+          tags: ${{ steps.tag.outputs.tag }}
