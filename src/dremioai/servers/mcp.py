@@ -200,7 +200,7 @@ def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Serve
     # Create a separate uvicorn server for Prometheus metrics.
     metrics_app = get_metrics_app()
     config = uvicorn.Config(
-        app=metrics_app, host=host, port=port, log_level=log_level, access_log=False
+        app=metrics_app, host=host, port=port, log_level=log_level.lower(), access_log=False
     )
     server = uvicorn.Server(config)
 
