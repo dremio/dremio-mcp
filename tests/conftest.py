@@ -30,7 +30,11 @@ from collections import OrderedDict
 
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
-from dremioai.servers.mcp import Transports, init, start_metrics_server
+from dremioai.servers.mcp import (
+    Transports,
+    init,
+    create_metrics_server,
+)
 
 from mocks.http_mock import (
     create_pytest_logging_server_fixture,
@@ -44,6 +48,7 @@ import contextlib
 from dremioai.log import set_level
 from dremioai.metrics import registry
 from prometheus_client import CollectorRegistry
+
 
 @pytest.fixture(autouse=True)
 def reset_sse_starlette_app_status():
@@ -73,12 +78,14 @@ def reset_sse_starlette_app_status():
     except ImportError:
         pass
 
+
 @pytest.fixture(autouse=True)
 def reset_metrics_registry():
     """
     Reset the global metrics registry between tests.
 
-    This ensures that metrics from previous tests don't persist and affect subsequent test assertions.
+    This ensures that metrics from previous tests don't persist and affect subsequent
+    test assertions.
     """
     registry._registry = CollectorRegistry()
 
@@ -206,19 +213,6 @@ async def http_streamable_mcp_server(
     sf = None
     try:
         settings.configure(force=True)
-        config = {
-            "dremio": {
-                "uri": logging_server.url,
-                "project_id": uuid.uuid4(),
-                "pat": "test-pat",
-                "enable_search": True,
-            },
-            "tools": {"server_mode": ToolType.FOR_DATA_PATTERNS.name},
-        }
-        if wlm_engine:
-            config["dremio"]["wlm"] = {"engine_name": wlm_engine}
-        settings._settings.set(settings.Settings.model_validate(config))
-        settings.write_settings()
         host = "127.0.0.1"
         port = random.randrange(9000, 12000)
         metrics_port = random.randrange(9000, 12000)
@@ -227,13 +221,33 @@ async def http_streamable_mcp_server(
         while metrics_port == port:
             metrics_port = random.randrange(9000, 12000)
 
+        config = {
+            "dremio": {
+                "uri": logging_server.url,
+                "project_id": uuid.uuid4(),
+                "pat": "test-pat",
+                "enable_search": True,
+                "metrics_enabled": True,
+                "metrics": {
+                    "enabled": True,
+                    "port": metrics_port,
+                },
+            },
+            "tools": {"server_mode": ToolType.FOR_DATA_PATTERNS.name},
+        }
+        if wlm_engine:
+            config["dremio"]["wlm"] = {"engine_name": wlm_engine}
+        settings._settings.set(settings.Settings.model_validate(config))
+        settings.write_settings()
+
         set_level(logging_level.upper())
 
-        # Start metrics server
-        start_metrics_server(host=host, port=metrics_port, log_level=logging_level)
+        # Start metrics server using asyncio
+        metrics_server = create_metrics_server(
+            host=host, port=metrics_port, log_level=logging_level
+        )
 
         mcp_server = init(
-            host=host,
             transport=Transports.streamable_http,
             port=port,
             mode=settings.instance().tools.server_mode,
@@ -242,7 +256,11 @@ async def http_streamable_mcp_server(
 
         app = mcp_server.streamable_http_app()
         server, stop_event = start_server_with_app(
-            app, host=host, port=port, log_level=logging_level
+            app,
+            host=host,
+            port=port,
+            log_level=logging_level,
+            additional_runners=[metrics_server.serve()],
         )
         sf = ServerFixture(
             f"http://{host}:{port}/mcp/{(str(project_id) + '/') if project_id else ''}",
