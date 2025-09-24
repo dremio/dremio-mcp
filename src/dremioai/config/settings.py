@@ -137,6 +137,12 @@ class Wlm(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
+class Metrics(BaseModel):
+    enabled: Optional[bool] = True
+    port: Optional[int] = 9091
+    model_config = ConfigDict(validate_assignment=True)
+
+
 class Dremio(BaseModel):
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
@@ -152,6 +158,8 @@ class Dremio(BaseModel):
     allow_dml: Optional[bool] = False
     auth_issuer_uri_override: Optional[str] = None
     wlm: Optional[Wlm] = None
+    # Metrics server configuration
+    metrics: Optional[Metrics] = None
     model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")
@@ -212,6 +220,14 @@ class Dremio(BaseModel):
                 f"{issuer_uri}/oauth/token",
             )
         return None
+
+    @property
+    def prometheus_metrics_enabled(self) -> bool:
+        return self.metrics is not None and self.metrics.enabled
+
+    @property
+    def prometheus_metrics_port(self) -> int | None:
+        return self.metrics.port if self.metrics is not None else None
 
 
 class OpenAi(BaseModel):
