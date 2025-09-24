@@ -221,25 +221,14 @@ def run_with_metrics_server(
         transport: Transport type
         metrics_server: Optional metrics server to run concurrently
     """
-    metrics_task = None
     if metrics_server:
         # Start metrics server as background task for all transports
         log.logger("server_startup").info("Starting metrics server as background task")
-        metrics_task = asyncio.create_task(metrics_server.serve())
 
-    async def cleanup_metrics_server():
-        if metrics_task is not None:
-            metrics_task.cancel()
-            try:
-                await metrics_task
-            except asyncio.CancelledError as e:
-                log.logger("metrics_server").warning(f"Metrics server stopped: {e}")
+        asyncio.run(metrics_server.serve())
 
-    try:
-        # Let app.run() handle its own transport logic
-        app.run(transport=transport.value)
-    finally:
-        asyncio.run(cleanup_metrics_server())
+
+    app.run(transport=transport.value)
 
 
 def _mode() -> List[str]:
