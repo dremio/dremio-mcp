@@ -1,0 +1,1 @@
+# Cumulocity integration scripts

@@ -50,3 +50,4 @@ include = ["dremioai*"]
 
 [project.scripts]
 dremio-mcp-server = "dremioai.servers.mcp:cli"
+cumulocity-mcp-server = "dremioai.scripts.cumulocity_startup:main"

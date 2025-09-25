@@ -33,16 +33,12 @@ COPY --from=builder /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && \
     rm /tmp/*.whl
 
-ARG DREMIOAI_DREMIO__URI
-ARG DREMIOAI_DREMIO__PAT
-
+# Set default environment variables for the MCP server
 ENV DREMIOAI_TOOLS__SERVER_MODE=FOR_DATA_PATTERNS
-ENV DREMIOAI_DREMIO__URI=$DREMIOAI_DREMIO__URI
-ENV DREMIOAI_DREMIO__PAT=$DREMIOAI_DREMIO__PAT
 ENV DREMIOAI_DREMIO__OAUTH_SUPPORTED=false
 
 # Expose port 80
 EXPOSE 80
 
-# Console script is now properly installed
-CMD ["dremio-mcp-server", "serve", "--port", "80", "--disable-auth", "--enable-sse", "--no-log-to-file", "--enable-json-logging", "--root-path", "/service/dremio-mcp"]
+# Use the Cumulocity startup script that will retrieve configuration from tenant options
+CMD ["cumulocity-mcp-server"]
