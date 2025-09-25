@@ -89,7 +89,7 @@ class CumulocityClient:
         """Retrieve Dremio configuration from datahub tenant options"""
         config = {
             'dremio_uri': self.get_tenant_option('dremio-mcp', 'url'),
-            'dremio_pat': self.get_tenant_option('dremio-mcp', 'pat')
+            'dremio_pat': self.get_tenant_option('dremio-mcp', 'credentials.pat')
         }
 
         return config

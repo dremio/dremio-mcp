@@ -33,9 +33,9 @@ def create_test_tenant_options():
     """Create test tenant options (run this once to set up your tenant)"""
     # You would run this separately to set up the tenant options
     tenant_options = {
-        'datahub': {
-            'dremio-url': 'https://your-dremio.example.com:9047',
-            'credentials.dremio-pat': 'your-dremio-personal-access-token'
+        'dremio-mcp': {
+            'url': 'https://your-dremio.example.com:9047',
+            'credentials.pat': 'your-dremio-personal-access-token'
         }
     }
 

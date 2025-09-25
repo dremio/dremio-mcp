@@ -36,7 +36,7 @@ python -m dremioai.scripts.setup_tenant_options \
 
 This creates two tenant options:
 - Category: `dremio-mcp`, Key: `url`
-- Category: `dremio-mcp`, Key: `pat`
+- Category: `dremio-mcp`, Key: `credentials.pat`
 
 ### 2. Deploy the Microservice
 
