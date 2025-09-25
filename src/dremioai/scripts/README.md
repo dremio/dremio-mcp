@@ -35,8 +35,8 @@ python -m dremioai.scripts.setup_tenant_options \
 ```
 
 This creates two tenant options:
-- Category: `datahub`, Key: `dremio-url`
-- Category: `datahub`, Key: `credentials.dremio-pat`
+- Category: `dremio-mcp`, Key: `url`
+- Category: `dremio-mcp`, Key: `pat`
 
 ### 2. Deploy the Microservice
 

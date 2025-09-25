@@ -11,10 +11,10 @@ Required Environment Variables (injected by Cumulocity):
 - C8Y_PASSWORD: Cumulocity password
 
 Tenant Options Retrieved:
-- Category: "datahub"
+- Category: "dremio-mcp"
 - Keys:
-  - dremio-url: The Dremio URI
-  - credentials.dremio-pat: The Dremio Personal Access Token
+  - url: The Dremio URI
+  - (credentials.)pat: The Dremio Personal Access Token
 """
 
 import os
@@ -88,8 +88,8 @@ class CumulocityClient:
     def get_datahub_config(self) -> Dict[str, Optional[str]]:
         """Retrieve Dremio configuration from datahub tenant options"""
         config = {
-            'dremio_uri': self.get_tenant_option('datahub', 'dremio-url'),
-            'dremio_pat': self.get_tenant_option('datahub', 'credentials.dremio-pat')
+            'dremio_uri': self.get_tenant_option('dremio-mcp', 'url'),
+            'dremio_pat': self.get_tenant_option('dremio-mcp', 'pat')
         }
 
         return config
@@ -122,11 +122,11 @@ def setup_dremio_environment(config: Dict[str, Optional[str]]) -> None:
     dremio_pat = config.get('dremio_pat')
 
     if not dremio_uri:
-        logger.error("Dremio URI not found in tenant options (datahub.dremio-url)")
+        logger.error("Dremio URI not found in tenant options (dremio-mcp.url)")
         sys.exit(1)
 
     if not dremio_pat:
-        logger.error("Dremio PAT not found in tenant options (datahub.credentials.dremio-pat)")
+        logger.error("Dremio PAT not found in tenant options (dremio-mcp.pat)")
         sys.exit(1)
 
     # Set environment variables for the MCP server
