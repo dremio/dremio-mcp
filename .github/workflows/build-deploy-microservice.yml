@@ -57,9 +57,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            DREMIOAI_DREMIO__URI=${{ vars.DREMIOAI_DREMIO__URI }}
-            DREMIOAI_DREMIO__PAT=${{ secrets.DREMIOAI_DREMIO__PAT }}
 
       - name: Sign the published Docker image
         if: ${{ github.event_name != 'pull_request' }}
