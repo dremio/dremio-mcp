@@ -46,6 +46,7 @@ import asyncio
 from yaml import dump
 import sys
 import uvicorn
+import threading
 
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
@@ -225,7 +226,10 @@ def run_with_metrics_server(
         # Start metrics server as background task for all transports
         log.logger("server_startup").info("Starting metrics server as background task")
 
-        asyncio.run(metrics_server.serve())
+        threading.Thread(
+            target=lambda: asyncio.run(metrics_server.serve()), 
+            daemon=True
+        ).start()
 
 
     app.run(transport=transport.value)
