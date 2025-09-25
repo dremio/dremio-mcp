@@ -9,9 +9,10 @@ on:
         required: true
         type: string
       repository:
-        default: us-west1-docker.pkg.dev/dremio-1093/dremio
-        description: Repository to push the image to. Image name can be set by an input and tag is calculated at runtime
-        required: true
+        description: |
+          Repository to push the image to. Image name can be set by an input and tag is calculated at runtime.
+          Defaults to private Dremio repository.
+        required: false
         type: string
 
 jobs:
@@ -73,7 +74,12 @@ jobs:
           head_sha=$(git rev-parse --short HEAD)
           timestamp=$(date -u +"%Y%m%d%H%M%S")
 
-          tag="${timestamp}-${head_sha}"
+          suffix="${timestamp}-${head_sha}"
+          tag="${{ secrets.DREMIO_1093_DOCKER_REPOSITORY }}/${{ inputs.image-name }}:${suffix}"
+
+          if [[ -n "${{ inputs.repository }}" ]]; then
+            tag="${{ inputs.repository }}/${{ inputs.image-name }}:${suffix}"
+          fi
           
           echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
       - env:
@@ -88,7 +94,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: |
-            ${{ inputs.repository }}/${{ inputs.image-name }}:${{ steps.tag.outputs.tag }}
-
-          
+          tags: ${{ steps.tag.outputs.tag }}

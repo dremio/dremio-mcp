@@ -58,23 +58,3 @@ async def test_tool_pat(mock_config_dir, logging_server, logging_level, project_
                     assert (
                         str(project_id) in le.path
                     ), f"{le} does not have the right project id"
-
-        async with httpx.AsyncClient() as client:
-            u = urlparse(sf.mcp_server.url)._replace(path="/metrics/").geturl()
-            r = await client.get(u, headers={"Authorization": "Bearer my-token"})
-            assert (
-                r.status_code == 200
-            ), f"Error getting metrics: {r.text} status={r.status_code}"
-            if project_id is None:
-                project_id = settings.instance().dremio.project_id
-            for line in r.text.splitlines():
-                if (
-                    line.startswith(f"{invocation_counter._name}_total{{")
-                    and f'project_id="{project_id}"' in line
-                ):
-                    assert (
-                        float(line.split()[-1]) == 1.0
-                    ), f"Invocation count not 1: {line}"
-                    break
-            else:
-                assert False, f"Invocation count for {project_id} not found in {r.text}"

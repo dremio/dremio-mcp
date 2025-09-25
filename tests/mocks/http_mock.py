@@ -289,6 +289,7 @@ def start_server(
     runner: Coroutine,
     should_exit: Callable[[bool], None],
     name: str,
+    addtional_runners: Optional[List[Coroutine]] = None,
 ):
     stop_event = threading.Event()
 
@@ -303,7 +304,13 @@ def start_server(
             should_exit(True)
 
         # monitor_task = loop.create_task(monitor_stop())
-        loop.run_until_complete(asyncio.gather(runner, monitor_stop()))
+        runners = [runner, monitor_stop()] + (
+            addtional_runners if addtional_runners else []
+        )
+        log.logger(f"start_server {name}").info(
+            f"Runners = {runners} ({addtional_runners})"
+        )
+        loop.run_until_complete(asyncio.gather(*runners))
         loop.close()
 
     log.logger(f"start_server {name}").info(f"Starting server {name}")
@@ -320,6 +327,7 @@ def start_server_with_app(
     port: int = 8000,
     log_level="warning",
     name="mcp-server",
+    additional_runners: Optional[List[Coroutine]] = None,
 ):
     config = uvicorn.Config(
         app=app, host=host, port=port, log_level=log_level, access_log=False
@@ -329,7 +337,7 @@ def start_server_with_app(
     def should_exit(v: bool):
         server.should_exit = v
 
-    return start_server(server.serve(), should_exit, name)
+    return start_server(server.serve(), should_exit, name, additional_runners)
 
 
 def start_logging_server(
@@ -351,11 +359,16 @@ def start_logging_server(
 
 class ServerFixture:
     def __init__(
-        self, url: str, stop_event: threading.Event, server_thread: threading.Thread
+        self,
+        url: str,
+        stop_event: threading.Event,
+        server_thread: threading.Thread,
+        metrics_port: int = None,
     ):
         self.url = url
         self.stop_event = stop_event
         self.server_thread = server_thread
+        self.metrics_port = metrics_port
 
     def close(self):
         self.stop_event.set()

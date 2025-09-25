@@ -45,14 +45,11 @@ from shutil import which
 import asyncio
 from yaml import dump
 import sys
+import uvicorn
+import threading
 
-from mcp.server.auth.middleware.auth_context import (
-    AuthContextMiddleware,
-)
-from mcp.server.auth.middleware.bearer_auth import (
-    BearerAuthBackend,
-    RequireAuthMiddleware,
-)
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -119,7 +116,7 @@ class FastMCPServerWithAuthToken(FastMCP):
             # context var
             app.add_middleware(ProjectIdMiddleware)
 
-        app.mount("/metrics", get_metrics_app(), name="metrics")
+        # Metrics are now served on a separate port, not mounted here
         return app
 
     def __init__(self, *args, **kwargs):
@@ -200,6 +197,44 @@ def init(
 app = None
 
 
+def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Server:
+    # Create a separate uvicorn server for Prometheus metrics.
+    metrics_app = get_metrics_app()
+    config = uvicorn.Config(
+        app=metrics_app, host=host, port=port, log_level=log_level.lower(), access_log=False
+    )
+    server = uvicorn.Server(config)
+
+    log.logger("metrics_server").info(
+        f"Created metrics server config for {host}:{port}"
+    )
+    return server
+
+
+def run_with_metrics_server(
+    app: FastMCP, transport: Transports, metrics_server: uvicorn.Server | None = None
+):
+    """
+    Run the main MCP server alongside the metrics server using asyncio.
+
+    Args:
+        app: The FastMCP server instance
+        transport: Transport type
+        metrics_server: Optional metrics server to run concurrently
+    """
+    if metrics_server:
+        # Start metrics server as background task for all transports
+        log.logger("server_startup").info("Starting metrics server as background task")
+
+        threading.Thread(
+            target=lambda: asyncio.run(metrics_server.serve()), 
+            daemon=True
+        ).start()
+
+
+    app.run(transport=transport.value)
+
+
 def _mode() -> List[str]:
     return [tt.name for tt in tools.ToolType]
 
@@ -256,7 +291,21 @@ def main(
         host=host,
         support_project_id_endpoints=True,
     )
-    app.run(transport=transport.value)
+
+    # Create metrics server based on configuration
+    metrics_server = None
+    if (
+        settings.instance().dremio.prometheus_metrics_enabled
+        and settings.instance().dremio.prometheus_metrics_port is not None
+    ):
+        metrics_server = create_metrics_server(
+            host=host,
+            port=dremio.prometheus_metrics_port,
+            log_level=log_level,
+        )
+
+    # Run the servers
+    run_with_metrics_server(app, transport, metrics_server)
 
 
 tc = Typer(
