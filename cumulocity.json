@@ -11,6 +11,6 @@
     "cpu": "1",
     "memory": "512M"
   },
-  "requiredRoles": [],
+  "requiredRoles": ["ROLE_OPTION_MANAGEMENT_READ"],
   "roles": []
 }
