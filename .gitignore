@@ -1,3 +1,4 @@
 *.pyc
 .venv
 .vscode/launch.json
+examples/.DS_Store
