@@ -24,7 +24,8 @@ jobs:
       DOCKER_BUILDKIT: "1"
       DOCKER_HOST: tcp://localhost:2376
     runs-on:
-      - x-small-k8s-mode
+      labels: [ x-small ]
+      group: dremio-rg
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
