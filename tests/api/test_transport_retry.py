@@ -300,7 +300,8 @@ def mock_settings_instance():
     )
 
     mock_dremio = MagicMock()
-    mock_dremio.http_retry = http_retry_config
+    mock_dremio.api = MagicMock()
+    mock_dremio.api.http_retry = http_retry_config
 
     # Create mock settings object
     mock_settings = MagicMock()

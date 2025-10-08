@@ -147,7 +147,7 @@ class HttpRetry(BaseModel):
     """Configuration for HTTP retry behavior with exponential backoff"""
 
     max_retries: Optional[int] = Field(
-        default=3,
+        default=20,
         description="Maximum number of retry attempts for rate-limited requests",
     )
     initial_delay: Optional[float] = Field(
@@ -158,6 +158,15 @@ class HttpRetry(BaseModel):
     )
     backoff_multiplier: Optional[float] = Field(
         default=2.0, description="Multiplier for exponential backoff"
+    )
+    model_config = ConfigDict(validate_assignment=True)
+
+
+class ApiSettings(BaseModel):
+    # HTTP retry configuration
+    http_retry: Optional[HttpRetry] = Field(default_factory=HttpRetry)
+    polling_interval: Optional[float] = Field(
+        default=1, description="Polling interval for REST api in seconds"
     )
     model_config = ConfigDict(validate_assignment=True)
 
@@ -177,10 +186,8 @@ class Dremio(BaseModel):
     allow_dml: Optional[bool] = False
     auth_issuer_uri_override: Optional[str] = None
     wlm: Optional[Wlm] = None
-    # Metrics server configuration
+    api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
-    # HTTP retry configuration
-    http_retry: Optional[HttpRetry] = Field(default_factory=HttpRetry)
     model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")

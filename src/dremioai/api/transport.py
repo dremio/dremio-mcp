@@ -43,7 +43,7 @@ DeserializationStrategy: TypeAlias = Union[Callable, BaseModel]
 class RetryConfig:
     def __init__(self):
         if settings.instance() and settings.instance().dremio:
-            self.config = settings.instance().dremio.http_retry
+            self.config = settings.instance().dremio.api.http_retry
         else:
             self.config = settings.HttpRetry()
 
