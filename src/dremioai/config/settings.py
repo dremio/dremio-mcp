@@ -143,6 +143,25 @@ class Metrics(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
+class HttpRetry(BaseModel):
+    """Configuration for HTTP retry behavior with exponential backoff"""
+
+    max_retries: Optional[int] = Field(
+        default=3,
+        description="Maximum number of retry attempts for rate-limited requests",
+    )
+    initial_delay: Optional[float] = Field(
+        default=1.0, description="Initial delay in seconds before first retry"
+    )
+    max_delay: Optional[float] = Field(
+        default=60.0, description="Maximum delay in seconds between retries"
+    )
+    backoff_multiplier: Optional[float] = Field(
+        default=2.0, description="Multiplier for exponential backoff"
+    )
+    model_config = ConfigDict(validate_assignment=True)
+
+
 class Dremio(BaseModel):
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
@@ -160,6 +179,8 @@ class Dremio(BaseModel):
     wlm: Optional[Wlm] = None
     # Metrics server configuration
     metrics: Optional[Metrics] = None
+    # HTTP retry configuration
+    http_retry: Optional[HttpRetry] = Field(default_factory=HttpRetry)
     model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")
