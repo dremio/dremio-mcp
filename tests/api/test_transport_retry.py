@@ -37,7 +37,7 @@ class TestRetryConfig:
             retry_config = RetryConfig()
 
             # Verify default values from HttpRetry model
-            assert retry_config.config.max_retries == 3
+            assert retry_config.config.max_retries == 20
             assert retry_config.config.initial_delay == 1.0
             assert retry_config.config.max_delay == 60.0
             assert retry_config.config.backoff_multiplier == 2.0
@@ -300,7 +300,8 @@ def mock_settings_instance():
     )
 
     mock_dremio = MagicMock()
-    mock_dremio.http_retry = http_retry_config
+    mock_dremio.api = MagicMock()
+    mock_dremio.api.http_retry = http_retry_config
 
     # Create mock settings object
     mock_settings = MagicMock()
