@@ -1,0 +1,182 @@
+# Default values for dremio-mcp.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: dremio-mcp
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Dremio configuration
+dremio:
+  # Required: Dremio Software instance URI
+  # Example: https://dremio.example.com:9047
+  uri: ""
+
+  # DEPRECATED: Personal Access Token for authentication
+  # WARNING: PAT-based authentication is NOT recommended for production use.
+  # Instead, use OAuth with External Token Provider for secure authentication.
+  # See: https://docs.dremio.com/current/security/authentication/application-authentication/external-token
+  #
+  # Recommended flow:
+  # 1. Chat frontend authenticates user with OAuth IdP
+  # 2. Frontend exchanges OAuth token with Dremio using External Token Provider
+  # 3. Frontend uses the exchanged token to communicate with MCP server
+  #
+  # This field is only provided for development/testing purposes.
+  pat: ""
+
+  # Optional: Allow DML operations (create views, etc.)
+  allowDml: false
+
+  # DEPRECATED: Use existing secret for PAT (not recommended for production)
+  # If set, the secret should contain a key 'pat' with the token value
+  # For production, implement OAuth + External Token Provider instead
+  existingSecret: ""
+
+# MCP Server configuration
+mcp:
+  # Enable streaming HTTP mode (required for HTTP-based deployments)
+  enableStreamingHttp: true
+  
+  # Port for the MCP server
+  port: 8000
+  
+  # Host binding
+  host: "0.0.0.0"
+  
+  # Log configuration
+  logging:
+    # Enable JSON logging
+    enableJson: false
+    # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    level: "INFO"
+    # Log to file (disabled in container by default - recommended to keep false)
+    toFile: false
+
+# Tools configuration
+tools:
+  # Server mode: comma-separated list of tool types
+  # Options: FOR_SELF, FOR_DATA_PATTERNS, FOR_SEARCH, FOR_ADMIN
+  serverMode: "FOR_SELF,FOR_DATA_PATTERNS"
+
+# Metrics configuration
+metrics:
+  enabled: false
+  port: 9091
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 8000
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: dremio-mcp.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: dremio-mcp-tls
+  #    hosts:
+  #      - dremio-mcp.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Additional volumes on the output Deployment definition.
+volumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Extra environment variables
+extraEnv: []
+# - name: CUSTOM_VAR
+#   value: "custom-value"
+

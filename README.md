@@ -51,7 +51,11 @@ architecture-beta
 
 # Installation
 
-The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple
+The Dremio MCP server can be deployed in two ways:
+
+## Local Installation (Desktop/Development)
+
+The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple:
 
 1. Clone or download this repository.
 2. Install the [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager (note that the MCP server requires python 3.11 or later)
@@ -83,6 +87,45 @@ $ uv run dremio-mcp-server --help
 ╰──────────────────────────────────────────────────────────────────────────────────╯
 ```
 
+## Kubernetes/Production Deployment
+
+For production deployments in Kubernetes environments, use the Helm chart:
+
+📦 **[Helm Chart Documentation](helm/dremio-mcp/README.md)**
+
+### Quick Start with Helm
+
+```bash
+# Build Docker image
+docker build -t dremio-mcp:0.1.0 .
+
+# Production deployment with OAuth (Recommended)
+helm install my-dremio-mcp ./helm/dremio-mcp \
+  --set dremio.uri=https://dremio.example.com:9047
+
+# Development/Testing with PAT (Not for production)
+helm install my-dremio-mcp ./helm/dremio-mcp \
+  --set dremio.uri=https://dremio.example.com:9047 \
+  --set dremio.pat=<your-pat>
+```
+
+### Key Features
+
+- ✅ **OAuth + External Token Provider** authentication (recommended for production)
+- ✅ **Streaming HTTP mode** for web-based deployments
+- ✅ **Horizontal Pod Autoscaling** for scalability
+- ✅ **Prometheus metrics** integration
+- ✅ **Ingress support** with TLS/SSL
+- ✅ **Security best practices** (non-root, read-only filesystem)
+
+### Documentation
+
+- **[Helm Chart README](helm/dremio-mcp/README.md)** - Complete installation and configuration guide
+- **[Authentication Guide](helm/dremio-mcp/AUTHENTICATION.md)** - OAuth + External Token Provider implementation
+- **[Example Configurations](helm/dremio-mcp/examples/)** - Production and development examples
+
+---
+
 # Initial setup
 
 There are two configurations necessary before the MCP server can be invoked.
@@ -100,17 +143,13 @@ The quickest way to do this setup is -
 $ uv run dremio-mcp-server config create dremioai \
     --uri <dremio uri> \
     # the endpoint portion of the URL for your environment
-    --pat <dremio pat> \
+    --pat <dremio pat>
     # https://docs.dremio.com/current/security/authentication/personal-access-tokens/#using-a-pat
-    # required for cloud: add your project ID if setting up for dremio cloud
-    # --project-id <dremio project id>
 ```
 
-Note: the uri is api endpoint associated with your environment:
+Note: the uri is the API endpoint for your Dremio Software instance:
 
-- For Dremio cloud based in the US region (https://app.dremio.cloud)	use `https://api.dremio.cloud` or use the short hand `prod`
-- For Dremio cloud based in the EMEA region (https://app.eu.dremio.cloud)	use `https://api.eu.dremio.cloud` or use the short hand `prodemea`
-- For SW/K8S deployments use https://<coordinator‑host>:<9047 or custom port>
+- For Dremio Software deployments use `https://<coordinator-host>:<9047 or custom port>`
 
 Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. 
 
@@ -180,13 +219,10 @@ This file is located by default at `$HOME/.config/dremioai/config.yaml` but can 
 #### Format
 
 ```yaml
-# The dremio section contains 3 main things - the URI to connect, PAT to use
-# and optionally the project_id if using with Dremio Cloud
+# The dremio section contains the URI to connect and PAT to use
 dremio:
-    uri: https://.... # the Dremio URI
+    uri: https://.... # the Dremio Software URI
     pat: "@~/ws/tokens/idl.token" # PAT can be put in a file and used here with @ prefix
-    project_id: <string> Project ID required for Dremio Cloud
-    enable_search: <bool> # Optional: Enable semantic search
     allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
 tools:
     server_mode: FOR_DATA_PATTERNS # the serverm

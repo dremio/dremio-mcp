@@ -1,0 +1,18 @@
+apiVersion: v2
+name: dremio-mcp
+description: A Helm chart for deploying Dremio MCP Server with streaming HTTP support
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - dremio
+  - mcp
+  - ai
+  - llm
+home: https://github.com/aniket-s-kulkarni/dremio-mcp
+sources:
+  - https://github.com/aniket-s-kulkarni/dremio-mcp
+maintainers:
+  - name: Aniket Kulkarni
+    email: aniket.kulkarni@dremio.com
+
