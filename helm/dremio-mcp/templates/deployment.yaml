@@ -39,6 +39,8 @@ spec:
         command:
           - dremio-mcp-server
           - run
+          - --cfg
+          - /app/config/config.yaml
           {{- if .Values.mcp.enableStreamingHttp }}
           - --enable-streaming-http
           {{- end }}
@@ -53,25 +55,8 @@ spec:
           - "{{ .Values.mcp.port }}"
           - --host
           - {{ .Values.mcp.host }}
-        env:
-        # Dremio configuration via environment variables
-        - name: DREMIOAI_DREMIO__URI
-          value: {{ .Values.dremio.uri | quote }}
-        {{- if .Values.dremio.allowDml }}
-        - name: DREMIOAI_DREMIO__ALLOW_DML
-          value: "true"
-        {{- end }}
-        # Tools configuration
-        - name: DREMIOAI_TOOLS__SERVER_MODE
-          value: {{ .Values.tools.serverMode | quote }}
-        # Metrics configuration
-        {{- if .Values.metrics.enabled }}
-        - name: DREMIOAI_DREMIO__METRICS__ENABLED
-          value: "true"
-        - name: DREMIOAI_DREMIO__METRICS__PORT
-          value: "{{ .Values.metrics.port }}"
-        {{- end }}
         {{- with .Values.extraEnv }}
+        env:
         {{- toYaml . | nindent 8 }}
         {{- end }}
         ports:
@@ -91,13 +76,29 @@ spec:
         {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 12 }}
-        {{- with .Values.volumeMounts }}
         volumeMounts:
-          {{- toYaml . | nindent 12 }}
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        {{- if or .Values.dremio.pat .Values.dremio.existingSecret }}
+        - name: secrets
+          mountPath: /app/secrets
+          readOnly: true
         {{- end }}
-      {{- with .Values.volumes }}
-      volumes:
+        {{- with .Values.volumeMounts }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "dremio-mcp.fullname" . }}-config
+      {{- if or .Values.dremio.pat .Values.dremio.existingSecret }}
+      - name: secrets
+        secret:
+          secretName: {{ if .Values.dremio.existingSecret }}{{ .Values.dremio.existingSecret }}{{ else }}{{ include "dremio-mcp.fullname" . }}-secret{{ end }}
+      {{- end }}
+      {{- with .Values.volumes }}
+      {{- toYaml . | nindent 6 }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

@@ -175,9 +175,16 @@ For complete examples, see the [examples/](examples/) directory.
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `dremio.uri` | Dremio Software instance URI (required) | `""` |
+| `dremio.pat` | Personal Access Token (NOT recommended for production) | `""` |
+| `dremio.existingSecret` | Name of existing Kubernetes secret containing PAT (key: `pat`) | `""` |
 | `dremio.allowDml` | Allow DML operations (create views, etc.) | `false` |
 
-**Note**: Authentication is handled by the chat frontend via OAuth + External Token Provider. See [AUTHENTICATION.md](AUTHENTICATION.md).
+**Configuration Method**: Settings are provided via a ConfigMap mounted at `/etc/dremio-mcp/config/config.yaml` and passed to the server using the `--cfg` argument. Sensitive data (PAT) is stored in a Kubernetes Secret and mounted separately.
+
+**Authentication Notes**:
+- **Production**: Use OAuth + External Token Provider (no PAT needed). See [AUTHENTICATION.md](AUTHENTICATION.md).
+- **Development/Testing**: Use `dremio.pat` or `dremio.existingSecret` for PAT-based authentication.
+- If both `dremio.pat` and `dremio.existingSecret` are set, `existingSecret` takes precedence.
 
 ### MCP Server Configuration
 
@@ -246,7 +253,9 @@ Available modes:
 All example configurations are available in the [examples/](examples/) directory:
 
 - **[values-oauth-production.yaml](examples/values-oauth-production.yaml)** - Production deployment with OAuth (recommended)
-- **[values-onprem.yaml](examples/values-onprem.yaml)** - Dremio Software deployment
+- **[values-onprem.yaml](examples/values-onprem.yaml)** - Dremio Software deployment with OAuth
+- **[values-with-pat.yaml](examples/values-with-pat.yaml)** - Development/testing with PAT (not for production)
+- **[values-with-existing-secret.yaml](examples/values-with-existing-secret.yaml)** - Using existing Kubernetes secret for PAT
 
 ### Production Deployment with OAuth (Recommended)
 
@@ -346,19 +355,43 @@ resources:
     memory: 512Mi
 ```
 
-## Environment Variables
+## Configuration Architecture
 
-The chart automatically configures the following environment variables based on the values:
+The Helm chart uses a **ConfigMap-based configuration** approach instead of environment variables:
 
-| Environment Variable | Source | Description |
-|---------------------|--------|-------------|
-| `DREMIOAI_DREMIO__URI` | `dremio.uri` | Dremio Software instance URI |
-| `DREMIOAI_DREMIO__ALLOW_DML` | `dremio.allowDml` | Allow DML operations |
-| `DREMIOAI_TOOLS__SERVER_MODE` | `tools.serverMode` | Server mode configuration |
-| `DREMIOAI_DREMIO__METRICS__ENABLED` | `metrics.enabled` | Enable Prometheus metrics |
-| `DREMIOAI_DREMIO__METRICS__PORT` | `metrics.port` | Metrics port |
+### ConfigMap and Secret Mounts
 
-**Note**: The environment variable prefix `DREMIOAI_` and nested delimiter `__` (double underscore) are defined in `src/dremioai/config/settings.py`.
+| Mount Path | Source | Content | Purpose |
+|-----------|--------|---------|---------|
+| `/etc/dremio-mcp/config/config.yaml` | ConfigMap | YAML configuration | Non-sensitive settings (URI, tools, metrics) |
+| `/etc/dremio-mcp/secrets/pat` | Secret | PAT token | Sensitive authentication credential |
+
+The configuration file is passed to the MCP server using the `--cfg /etc/dremio-mcp/config/config.yaml` argument.
+
+### Generated ConfigMap Structure
+
+The chart automatically generates a `config.yaml` file from your values:
+
+```yaml
+dremio:
+  uri: "https://dremio.example.com:9047"
+  pat: "@/etc/dremio-mcp/secrets/pat"  # File reference to mounted secret
+  allow_dml: false
+  metrics:
+    enabled: true
+    port: 9091
+tools:
+  server_mode: "FOR_SELF,FOR_DATA_PATTERNS"
+```
+
+**Benefits of ConfigMap approach:**
+- ✅ Clear separation of configuration and secrets
+- ✅ Easier to inspect and debug configuration
+- ✅ Supports file-based PAT references (`@/path/to/file`)
+- ✅ Consistent with dremio-mcp CLI usage
+- ✅ No environment variable pollution
+
+**Note**: You can still use `extraEnv` in values.yaml to add custom environment variables if needed.
 
 ## Troubleshooting
 
@@ -416,8 +449,17 @@ For OAuth authentication:
 - Verify the Authorization header is being sent correctly
 
 ```bash
-# Check environment variables in pod
-kubectl exec -it <pod-name> -- env | grep DREMIOAI
+# Check configuration in pod
+kubectl exec -it <pod-name> -- cat /etc/dremio-mcp/config/config.yaml
+
+# Verify secret is mounted (if using PAT)
+kubectl exec -it <pod-name> -- ls -la /etc/dremio-mcp/secrets/
+
+# Check ConfigMap
+kubectl get configmap <release-name>-dremio-mcp-config -o yaml
+
+# Check Secret (if using PAT)
+kubectl get secret <release-name>-dremio-mcp-secret -o yaml
 ```
 
 #### 3. Connection to Dremio Fails

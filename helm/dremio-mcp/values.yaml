@@ -20,6 +20,16 @@ dremio:
   # Example: https://dremio.example.com:9047
   uri: ""
 
+  # Optional: Personal Access Token for authentication
+  # Not recommended for production - use OAuth with External Token Provider instead
+  # See AUTHENTICATION.md for production setup
+  pat: ""
+
+  # Optional: Use an existing secret for PAT
+  # The secret should have a key named 'pat'
+  # If set, this takes precedence over dremio.pat
+  existingSecret: ""
+
   # Optional: Allow DML operations (create views, etc.)
   allowDml: false
 
@@ -47,7 +57,7 @@ mcp:
 tools:
   # Server mode: comma-separated list of tool types
   # Options: FOR_SELF, FOR_DATA_PATTERNS, FOR_SEARCH, FOR_ADMIN
-  serverMode: "FOR_SELF,FOR_DATA_PATTERNS"
+  serverMode: FOR_DATA_PATTERNS
 
 # Metrics configuration
 metrics:
@@ -115,20 +125,11 @@ resources: {}
 
 livenessProbe:
   httpGet:
-    path: /health
-    port: http
-  initialDelaySeconds: 30
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 3
-
-readinessProbe:
-  httpGet:
-    path: /health
+    path: /healthz
     port: http
   initialDelaySeconds: 10
-  periodSeconds: 5
-  timeoutSeconds: 3
+  periodSeconds: 30
+  timeoutSeconds: 5
   failureThreshold: 3
 
 autoscaling:
