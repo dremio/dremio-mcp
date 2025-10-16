@@ -25,13 +25,13 @@ dremio:
   # See AUTHENTICATION.md for production setup
   pat: ""
 
-  # Optional: Use an existing secret for PAT
-  # The secret should have a key named 'pat'
-  # If set, this takes precedence over dremio.pat
-  existingSecret: ""
-
   # Optional: Allow DML operations (create views, etc.)
   allowDml: false
+
+  # DEPRECATED: Use existing secret for PAT (not recommended for production)
+  # If set, the secret should contain a key 'pat' with the token value
+  # For production, implement OAuth + External Token Provider instead
+  existingSecret: ""
 
 # MCP Server configuration
 mcp:
