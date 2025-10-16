@@ -20,26 +20,8 @@ dremio:
   # Example: https://dremio.example.com:9047
   uri: ""
 
-  # DEPRECATED: Personal Access Token for authentication
-  # WARNING: PAT-based authentication is NOT recommended for production use.
-  # Instead, use OAuth with External Token Provider for secure authentication.
-  # See: https://docs.dremio.com/current/security/authentication/application-authentication/external-token
-  #
-  # Recommended flow:
-  # 1. Chat frontend authenticates user with OAuth IdP
-  # 2. Frontend exchanges OAuth token with Dremio using External Token Provider
-  # 3. Frontend uses the exchanged token to communicate with MCP server
-  #
-  # This field is only provided for development/testing purposes.
-  pat: ""
-
   # Optional: Allow DML operations (create views, etc.)
   allowDml: false
-
-  # DEPRECATED: Use existing secret for PAT (not recommended for production)
-  # If set, the secret should contain a key 'pat' with the token value
-  # For production, implement OAuth + External Token Provider instead
-  existingSecret: ""
 
 # MCP Server configuration
 mcp:

@@ -8,14 +8,9 @@ This Helm chart deploys the Dremio MCP (Model Context Protocol) Server on a Kube
 # 1. Build the Docker image
 docker build -t dremio-mcp:0.1.0 .
 
-# 2. For Production (OAuth - Recommended)
+# 2. Install with OAuth authentication (recommended)
 helm install my-dremio-mcp ./helm/dremio-mcp \
   --set dremio.uri=https://dremio.example.com:9047
-
-# 3. For Development/Testing (PAT - Not for Production)
-helm install my-dremio-mcp ./helm/dremio-mcp \
-  --set dremio.uri=https://dremio.example.com:9047 \
-  --set dremio.pat=<your-pat>
 ```
 
 📖 **For production deployments, see [AUTHENTICATION.md](AUTHENTICATION.md) for OAuth setup.**
@@ -43,9 +38,9 @@ helm install my-dremio-mcp ./helm/dremio-mcp \
 
 ## Authentication Architecture
 
-### ⚠️ Important: OAuth + External Token Provider (Recommended for Production)
+### OAuth + External Token Provider (Recommended)
 
-**PAT-based authentication is NOT recommended for production deployments.** Instead, use OAuth with Dremio's External Token Provider for secure, user-scoped authentication.
+Use OAuth with Dremio's External Token Provider for secure, user-scoped authentication.
 
 📖 **See [AUTHENTICATION.md](AUTHENTICATION.md) for complete implementation guide with code examples.**
 
@@ -84,25 +79,11 @@ For detailed implementation with code examples, see **[AUTHENTICATION.md](AUTHEN
 #### Benefits of OAuth + External Token Provider
 
 - ✅ **User-scoped access**: Each user's permissions are enforced
-- ✅ **No shared credentials**: Eliminates PAT sharing risks
+- ✅ **No shared credentials**: Secure token-based authentication
 - ✅ **Audit trail**: All operations tracked to individual users
 - ✅ **Token expiration**: Automatic session management
 - ✅ **Centralized auth**: Leverage existing IdP infrastructure
 - ✅ **Compliance**: Meets enterprise security requirements
-
-### PAT Authentication (Development/Testing Only)
-
-⚠️ Personal Access Tokens (PAT) should **only** be used for:
-- Local development and testing
-- CI/CD pipelines with service accounts
-- Non-production environments
-
-**Never use PAT in production chat applications** as it:
-- ❌ Shares a single identity across all users
-- ❌ Cannot track individual user actions
-- ❌ Requires credential rotation and distribution
-- ❌ Violates principle of least privilege
-- ❌ Creates security and compliance risks
 
 ---
 
@@ -125,12 +106,12 @@ docker push <your-registry>/dremio-mcp:0.1.0
 
 ### Production Installation (OAuth + External Token Provider) - Recommended
 
-For production deployments, configure your chat frontend to handle OAuth authentication and token exchange. The MCP server should be deployed **without PAT credentials**.
+For production deployments, configure your chat frontend to handle OAuth authentication and token exchange.
 
 See the complete example: [examples/values-oauth-production.yaml](examples/values-oauth-production.yaml)
 
 ```bash
-# Install with OAuth-based configuration (no PAT)
+# Install with OAuth-based configuration
 helm install my-dremio-mcp ./helm/dremio-mcp \
   --set dremio.uri=https://dremio.example.com:9047
 ```
@@ -140,7 +121,7 @@ Or create a `production-values.yaml` file:
 ```yaml
 dremio:
   uri: "https://dremio.example.com:9047"
-  # No PAT configured - tokens come from frontend via OAuth
+  # Authentication handled by chat frontend via OAuth
 
 mcp:
   enableStreamingHttp: true
@@ -173,33 +154,7 @@ Then install:
 helm install my-dremio-mcp ./helm/dremio-mcp -f production-values.yaml
 ```
 
-### Development/Testing Installation (PAT-based)
 
-⚠️ **For development and testing only - NOT for production**
-
-See examples:
-- [examples/values-onprem.yaml](examples/values-onprem.yaml) - Dremio Software with PAT (dev/test)
-- [examples/values-with-secret.yaml](examples/values-with-secret.yaml) - Using Kubernetes secrets (dev/test)
-
-```bash
-# Development installation with PAT
-helm install my-dremio-mcp ./helm/dremio-mcp \
-  --set dremio.uri=https://dremio.example.com:9047 \
-  --set dremio.pat=<your-pat-token>
-```
-
-Or use an existing secret:
-
-```bash
-# Create secret first
-kubectl create secret generic dremio-mcp-secret \
-  --from-literal=pat=your-personal-access-token
-
-# Install referencing the secret
-helm install my-dremio-mcp ./helm/dremio-mcp \
-  --set dremio.uri=https://dremio.example.com:9047 \
-  --set dremio.existingSecret=dremio-mcp-secret
-```
 
 ## Uninstalling the Chart
 
@@ -217,14 +172,12 @@ For complete examples, see the [examples/](examples/) directory.
 
 ### Dremio Configuration
 
-| Parameter | Description | Default | Production Use |
-|-----------|-------------|---------|----------------|
-| `dremio.uri` | Dremio Software instance URI (required) | `""` | ✅ Required |
-| `dremio.allowDml` | Allow DML operations (create views, etc.) | `false` | ✅ Optional |
-| `dremio.pat` | **DEPRECATED** - Personal Access Token | `""` | ❌ Dev/Test Only |
-| `dremio.existingSecret` | **DEPRECATED** - Use existing secret for PAT | `""` | ❌ Dev/Test Only |
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `dremio.uri` | Dremio Software instance URI (required) | `""` |
+| `dremio.allowDml` | Allow DML operations (create views, etc.) | `false` |
 
-**Production Note**: Do not configure `dremio.pat` or `dremio.existingSecret` in production. Implement OAuth + External Token Provider authentication in your chat frontend. See [AUTHENTICATION.md](AUTHENTICATION.md).
+**Note**: Authentication is handled by the chat frontend via OAuth + External Token Provider. See [AUTHENTICATION.md](AUTHENTICATION.md).
 
 ### MCP Server Configuration
 
@@ -293,8 +246,7 @@ Available modes:
 All example configurations are available in the [examples/](examples/) directory:
 
 - **[values-oauth-production.yaml](examples/values-oauth-production.yaml)** - Production deployment with OAuth (recommended)
-- **[values-onprem.yaml](examples/values-onprem.yaml)** - Dremio Software with PAT (dev/test)
-- **[values-with-secret.yaml](examples/values-with-secret.yaml)** - Using Kubernetes secrets (dev/test)
+- **[values-onprem.yaml](examples/values-onprem.yaml)** - Dremio Software deployment
 
 ### Production Deployment with OAuth (Recommended)
 
@@ -303,11 +255,10 @@ This example shows a production-ready deployment using OAuth + External Token Pr
 **Full example**: [examples/values-oauth-production.yaml](examples/values-oauth-production.yaml)
 
 ```yaml
-# Production deployment - NO PAT configured
+# Production deployment with OAuth authentication
 # Authentication handled by chat frontend via OAuth + External Token Provider
 dremio:
   uri: "https://dremio.example.com:9047"
-  # No PAT - tokens provided by frontend after OAuth exchange
 
 image:
   repository: myregistry.io/dremio-mcp
@@ -373,38 +324,13 @@ securityContext:
   readOnlyRootFilesystem: true
 ```
 
-### Dremio Software Deployment (Development/Testing with PAT)
-
-⚠️ **For development and testing only - NOT for production**
-
-```yaml
-dremio:
-  uri: "https://dremio.example.com:9047"
-  pat: "dremio_pat_xxxxxxxxxxxxx"  # Only for dev/test
-
-image:
-  repository: myregistry.io/dremio-mcp
-  tag: "0.1.0"
-
-resources:
-  limits:
-    cpu: 500m
-    memory: 512Mi
-  requests:
-    cpu: 250m
-    memory: 256Mi
-```
-
-### On-Premise Dremio Deployment (Development/Testing)
-
-⚠️ **For development and testing only**
+### On-Premise Dremio Deployment
 
 **Full example**: [examples/values-onprem.yaml](examples/values-onprem.yaml)
 
 ```yaml
 dremio:
   uri: "https://dremio.mycompany.com:9047"
-  pat: "dremio_pat_xxxxxxxxxxxxx"  # Dev/test only
 
 mcp:
   enableStreamingHttp: true
@@ -420,23 +346,6 @@ resources:
     memory: 512Mi
 ```
 
-### Using Existing Secret for PAT (Development/Testing)
-
-⚠️ **For development and testing only**
-
-**Full example**: [examples/values-with-secret.yaml](examples/values-with-secret.yaml)
-
-```bash
-# Create secret
-kubectl create secret generic dremio-mcp-secret \
-  --from-literal=pat=your-personal-access-token
-
-# Install with secret reference
-helm install my-dremio-mcp ./helm/dremio-mcp \
-  --set dremio.uri=https://dremio.example.com:9047 \
-  --set dremio.existingSecret=dremio-mcp-secret
-```
-
 ## Environment Variables
 
 The chart automatically configures the following environment variables based on the values:
@@ -444,7 +353,6 @@ The chart automatically configures the following environment variables based on 
 | Environment Variable | Source | Description |
 |---------------------|--------|-------------|
 | `DREMIOAI_DREMIO__URI` | `dremio.uri` | Dremio Software instance URI |
-| `DREMIOAI_DREMIO__PAT` | `dremio.pat` or secret | Personal Access Token (dev/test only) |
 | `DREMIOAI_DREMIO__ALLOW_DML` | `dremio.allowDml` | Allow DML operations |
 | `DREMIOAI_TOOLS__SERVER_MODE` | `tools.serverMode` | Server mode configuration |
 | `DREMIOAI_DREMIO__METRICS__ENABLED` | `metrics.enabled` | Enable Prometheus metrics |
@@ -479,7 +387,7 @@ kubectl port-forward svc/my-dremio-mcp 8000:8000
 # Test health endpoint
 curl http://localhost:8000/health
 
-# Test with authentication (if using PAT in dev/test)
+# Test with authentication
 curl -H "Authorization: Bearer <dremio-token>" \
   http://localhost:8000/mcp
 ```
@@ -499,21 +407,18 @@ Common causes:
 - Resource constraints (check node resources)
 - Security context issues
 
-#### 2. Authentication Errors (Development/Testing)
+#### 2. Authentication Errors
 
-For PAT-based authentication in dev/test:
-```bash
-# Verify PAT is correctly stored in secret
-kubectl get secret my-dremio-mcp -o jsonpath='{.data.pat}' | base64 -d
-
-# Check environment variables in pod
-kubectl exec -it <pod-name> -- env | grep DREMIOAI
-```
-
-For production OAuth authentication:
+For OAuth authentication:
 - Verify token exchange is working in chat frontend
 - Check Dremio External Token Provider configuration
 - Review MCP server logs for authentication errors
+- Verify the Authorization header is being sent correctly
+
+```bash
+# Check environment variables in pod
+kubectl exec -it <pod-name> -- env | grep DREMIOAI
+```
 
 #### 3. Connection to Dremio Fails
 

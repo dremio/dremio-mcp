@@ -61,14 +61,3 @@ Create the name of the service account to use
 {{- end }}
 {{- end }}
 
-{{/*
-Get the PAT secret name
-*/}}
-{{- define "dremio-mcp.secretName" -}}
-{{- if .Values.dremio.existingSecret }}
-{{- .Values.dremio.existingSecret }}
-{{- else }}
-{{- include "dremio-mcp.fullname" . }}
-{{- end }}
-{{- end }}
-

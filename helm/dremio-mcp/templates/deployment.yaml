@@ -13,11 +13,10 @@ spec:
       {{- include "dremio-mcp.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      {{- with .Values.podAnnotations }}
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
-        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-        {{- end }}
+      {{- end }}
       labels:
         {{- include "dremio-mcp.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
@@ -58,13 +57,6 @@ spec:
         # Dremio configuration via environment variables
         - name: DREMIOAI_DREMIO__URI
           value: {{ .Values.dremio.uri | quote }}
-        {{- if or .Values.dremio.pat .Values.dremio.existingSecret }}
-        - name: DREMIOAI_DREMIO__PAT
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "dremio-mcp.secretName" . }}
-              key: pat
-        {{- end }}
         {{- if .Values.dremio.allowDml }}
         - name: DREMIOAI_DREMIO__ALLOW_DML
           value: "true"
