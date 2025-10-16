@@ -28,11 +28,6 @@ dremio:
   # Optional: Allow DML operations (create views, etc.)
   allowDml: false
 
-  # DEPRECATED: Use existing secret for PAT (not recommended for production)
-  # If set, the secret should contain a key 'pat' with the token value
-  # For production, implement OAuth + External Token Provider instead
-  existingSecret: ""
-
 # MCP Server configuration
 mcp:
   # Enable streaming HTTP mode (required for HTTP-based deployments)
