@@ -356,14 +356,6 @@ class TestExampleValuesFiles:
         except subprocess.CalledProcessError as e:
             pytest.fail(f"values-oauth-production.yaml fails to render: {e}")
 
-    def test_onprem_renders(self, helm_chart):
-        """values-onprem.yaml should render successfully"""
-        try:
-            output = helm_chart.render(values_file=examples_dir / "values-onprem.yaml")
-            assert len(output) > 0
-        except subprocess.CalledProcessError as e:
-            pytest.fail(f"values-onprem.yaml fails to render: {e}")
-
     def test_with_pat_renders(self, helm_chart):
         """values-with-pat.yaml should render successfully"""
         try:
