@@ -20,10 +20,8 @@ data:
         enabled: {{ .Values.metrics.enabled }}
         port: {{ .Values.metrics.port }}
       {{- end }}
-    {{- if .Values.tools }}
+    {{- if .Values.tools.serverMode }}
     tools:
-      {{- if .Values.tools.serverMode }}
       server_mode: {{ .Values.tools.serverMode | quote }}
-      {{- end }}
     {{- end }}
 

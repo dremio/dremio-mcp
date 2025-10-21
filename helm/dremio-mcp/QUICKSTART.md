@@ -70,29 +70,6 @@ kubectl logs -f -l app.kubernetes.io/name=dremio-mcp -n dremio
 kubectl get svc -n dremio
 ```
 
-## Step 4: Access the MCP Server
-
-### Port Forward (for testing):
-
-```bash
-kubectl port-forward svc/dremio-mcp 8000:8000 -n dremio
-```
-
-Then access at `http://localhost:8000`
-
-### Using Ingress (for production):
-
-```bash
-helm upgrade dremio-mcp ./helm/dremio-mcp \
-  --set dremio.uri=https://dremio.example.com:9047 \
-  --set ingress.enabled=true \
-  --set ingress.className=nginx \
-  --set ingress.hosts[0].host=dremio-mcp.example.com \
-  --set ingress.hosts[0].paths[0].path=/ \
-  --set ingress.hosts[0].paths[0].pathType=Prefix \
-  -n dremio
-```
-
 ## Common Commands
 
 ### Upgrade the deployment:
@@ -149,16 +126,6 @@ kubectl logs -f -l app.kubernetes.io/name=dremio-mcp -n dremio
 kubectl logs -l app.kubernetes.io/name=dremio-mcp -n dremio --previous
 ```
 
-### Test connectivity to Dremio:
-
-```bash
-# Get a shell in the pod
-kubectl exec -it <pod-name> -n dremio -- /bin/sh
-
-# Test connection (if curl is available)
-curl -v https://dremio.example.com:9047
-```
-
 ## Advanced Configuration
 
 ### Enable Metrics:
@@ -168,9 +135,6 @@ helm upgrade dremio-mcp ./helm/dremio-mcp \
   --set dremio.uri=https://dremio.example.com:9047 \
   --set metrics.enabled=true \
   --set metrics.port=9091 \
-  --set service.annotations."prometheus\.io/scrape"=true \
-  --set service.annotations."prometheus\.io/port"=9091 \
-  --set service.annotations."prometheus\.io/path"=/metrics \
   -n dremio
 ```
 

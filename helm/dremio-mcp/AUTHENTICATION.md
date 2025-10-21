@@ -171,7 +171,7 @@ Use the official Model Context Protocol SDK to communicate with the MCP server.
 ```typescript
 // mcp-client.ts - MCP server communication using official SDK
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamable-http.js';
 
 class DremioMCPClient {
   private mcpServerUrl: string;
@@ -184,10 +184,11 @@ class DremioMCPClient {
 
   /**
    * Connect to MCP server with Dremio token
+   * Uses StreamableHTTPClientTransport for compatibility with --enable-streaming-http
    */
   async connect(dremioToken: string): Promise<void> {
-    // Create SSE transport with authentication
-    const transport = new SSEClientTransport(
+    // Create Streamable HTTP transport with authentication
+    const transport = new StreamableHTTPClientTransport(
       new URL(this.mcpServerUrl),
       {
         headers: {
