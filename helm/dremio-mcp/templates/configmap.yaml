@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dremio-mcp.fullname" . }}-config
+  labels:
+    {{- include "dremio-mcp.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    dremio:
+      uri: {{ .Values.dremio.uri | quote }}
+      {{- if or .Values.dremio.pat .Values.dremio.existingSecret }}
+      # PAT will be injected from secret at runtime via file reference
+      pat: "@/app/secrets/pat"
+      {{- end }}
+      {{- if .Values.dremio.allowDml }}
+      allow_dml: {{ .Values.dremio.allowDml }}
+      {{- end }}
+      {{- if .Values.metrics.enabled }}
+      metrics:
+        enabled: {{ .Values.metrics.enabled }}
+        port: {{ .Values.metrics.port }}
+      {{- end }}
+    {{- if .Values.tools.serverMode }}
+    tools:
+      server_mode: {{ .Values.tools.serverMode | quote }}
+    {{- end }}
+

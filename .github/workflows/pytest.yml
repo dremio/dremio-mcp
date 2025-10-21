@@ -24,6 +24,9 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Install Helm
+        uses: azure/setup-helm@v4.3.0
+
       - name: Run tests
         run: |
           uv run pytest tests

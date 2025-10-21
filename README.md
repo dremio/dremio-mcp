@@ -51,11 +51,54 @@ architecture-beta
 
 # Installation
 
-The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple
+The Dremio MCP server can be deployed in two ways:
+
+## Remote / Streaming HTTP Deployment
+
+For production deployments in Kubernetes environments, use the Helm chart:
+
+📦 **[Helm Chart Documentation](helm/dremio-mcp/README.md)**
+
+### Quick Start with Helm
+
+```bash
+# Build Docker image
+docker build -t dremio-mcp:0.1.0 .
+
+# Production deployment with OAuth (Recommended)
+helm install my-dremio-mcp ./helm/dremio-mcp \
+  --set dremio.uri=https://dremio.example.com:9047
+
+# Development/Testing with PAT (Not for production)
+helm install my-dremio-mcp ./helm/dremio-mcp \
+  --set dremio.uri=https://dremio.example.com:9047 \
+  --set dremio.pat=<your-pat>
+```
+
+### Key Features
+
+- ✅ **OAuth + External Token Provider** authentication (recommended for production)
+- ✅ **Streaming HTTP mode** for web-based deployments
+- ✅ **Horizontal Pod Autoscaling** for scalability
+- ✅ **Prometheus metrics** integration
+- ✅ **Ingress support** with TLS/SSL
+- ✅ **Security best practices** (non-root, read-only filesystem)
+
+### Documentation
+
+- **[Helm Chart README](helm/dremio-mcp/README.md)** - Complete installation and configuration guide
+- **[Authentication Guide](helm/dremio-mcp/AUTHENTICATION.md)** - OAuth + External Token Provider implementation
+- **[Example Configurations](helm/dremio-mcp/examples/)** - Production and development examples
+
+---
+
+## Local Installation (Desktop/Development)
+
+The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple:
 
 1. Clone or download this repository.
 2. Install the [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager (note that the MCP server requires python 3.11 or later)
-  - If you install this for the first time, restart your terminal at the end of the install
+- If you install this for the first time, restart your terminal at the end of the install
 3. Ensure that you have python installed by running the command below. It should show python 3.11 or later (If you don't have python installed, follow the instructions [here](https://docs.astral.sh/uv/guides/install-python/) OR simply run `uv python install`)
 ```shell
 $ uv python find
@@ -83,14 +126,15 @@ $ uv run dremio-mcp-server --help
 ╰──────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-# Initial setup
+
+### Initial setup
 
 There are two configurations necessary before the MCP server can be invoked.
 
 1. **The server config file**: This will cover the details of connecting and communicating with Dremio
 2. **The LLM config file**: This covers configuring the LLM desktop app (Claude for now) to make it aware of the MCP server
 
-## Quick start
+#### Quick start
 
 The quickest way to do this setup is -
 
@@ -100,17 +144,13 @@ The quickest way to do this setup is -
 $ uv run dremio-mcp-server config create dremioai \
     --uri <dremio uri> \
     # the endpoint portion of the URL for your environment
-    --pat <dremio pat> \
+    --pat <dremio pat>
     # https://docs.dremio.com/current/security/authentication/personal-access-tokens/#using-a-pat
-    # required for cloud: add your project ID if setting up for dremio cloud
-    # --project-id <dremio project id>
 ```
 
-Note: the uri is api endpoint associated with your environment:
+Note: the uri is the API endpoint for your Dremio Software instance:
 
-- For Dremio cloud based in the US region (https://app.dremio.cloud)	use `https://api.dremio.cloud` or use the short hand `prod`
-- For Dremio cloud based in the EMEA region (https://app.eu.dremio.cloud)	use `https://api.eu.dremio.cloud` or use the short hand `prodemea`
-- For SW/K8S deployments use https://<coordinator‑host>:<9047 or custom port>
+- For Dremio Software deployments use `https://<coordinator-host>:<9047 or custom port>`
 
 Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. 
 
@@ -166,10 +206,12 @@ tools:
 
 **You are done!**. You can start Claude and start using the MCP server
 
-### Demo
+### Demo (Local install)
 ![Demo](assets/demo.gif)
 
 The rest of the documentation below provides details of the config files
+
+---
 
 ## Configuration details
 
@@ -180,13 +222,10 @@ This file is located by default at `$HOME/.config/dremioai/config.yaml` but can 
 #### Format
 
 ```yaml
-# The dremio section contains 3 main things - the URI to connect, PAT to use
-# and optionally the project_id if using with Dremio Cloud
+# The dremio section contains the URI to connect and PAT to use
 dremio:
-    uri: https://.... # the Dremio URI
+    uri: https://.... # the Dremio Software URI
     pat: "@~/ws/tokens/idl.token" # PAT can be put in a file and used here with @ prefix
-    project_id: <string> Project ID required for Dremio Cloud
-    enable_search: <bool> # Optional: Enable semantic search
     allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
 tools:
     server_mode: FOR_DATA_PATTERNS # the serverm
@@ -209,6 +248,8 @@ There are 3 modes
 Multiple modes can be specified with separated by `,`
 
 ### The LLM (Claude) config file
+
+**Note**: This is applicable only for local installs
 
 To setup the Claude config file (refer to [this as an example](https://modelcontextprotocol.io/quickstart/user#2-add-the-filesystem-mcp-server)) edit the Claude desktop config file
 
@@ -295,7 +336,7 @@ The log directory is automatically created if it doesn't exist, so no manual set
     - Framework integrations
     - Environment variables
 
-4. Other frameworks: (Experimental) Integrate the same MCP tools with other agentic frameworks like LangChain or BeeAI without modifying the code base.
+4. [Remote HTTP streaming / Helm Chart](helm/dremio-mcp/QUICKSTART.md)
 
 # Additional Information
 
