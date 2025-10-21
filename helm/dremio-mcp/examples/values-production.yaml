@@ -74,46 +74,6 @@ service:
     prometheus.io/port: "9091"
     prometheus.io/path: "/metrics"
 
-# Ingress configuration
-ingress:
-  enabled: true
-  className: "nginx"
-  annotations:
-    # TLS/SSL configuration
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    
-    # CORS configuration for chat frontend
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "https://chat.example.com"
-    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
-    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
-    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
-    
-    # Security headers
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
-    
-    # Rate limiting (adjust as needed)
-    nginx.ingress.kubernetes.io/limit-rps: "100"
-    
-    # Request size limits
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    
-  hosts:
-    - host: dremio-mcp.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - secretName: dremio-mcp-tls
-      hosts:
-        - dremio-mcp.example.com
-
 # Autoscaling configuration
 autoscaling:
   enabled: true
@@ -146,8 +106,6 @@ serviceAccount:
   automount: true
   annotations:
     # Add any cloud provider specific annotations
-    # Example for AWS:
-    # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/dremio-mcp-role
 
 # Pod annotations
 podAnnotations:

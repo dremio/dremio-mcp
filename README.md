@@ -53,41 +53,7 @@ architecture-beta
 
 The Dremio MCP server can be deployed in two ways:
 
-## Local Installation (Desktop/Development)
-
-The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple:
-
-1. Clone or download this repository.
-2. Install the [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager (note that the MCP server requires python 3.11 or later)
-  - If you install this for the first time, restart your terminal at the end of the install
-3. Ensure that you have python installed by running the command below. It should show python 3.11 or later (If you don't have python installed, follow the instructions [here](https://docs.astral.sh/uv/guides/install-python/) OR simply run `uv python install`)
-```shell
-$ uv python find
-```
-4. Do a sanity check by running the command and validating the output as shown below.
-
-```shell
-# cd <toplevel git dir> or add `--directory <toplevel git dir>`
-# to the command below
-
-$ uv run dremio-mcp-server --help
-
- Usage: dremio-mcp-server [OPTIONS] COMMAND [ARGS]...
-
-╭─ Options ────────────────────────────────────────────────────────────────────────╮
-│ --install-completion            Install completion for the current shell.        │
-│ --show-completion               Show completion for the current shell, to copy   │
-│                                 it or customize the installation.                │
-│ --help                -h        Show this message and exit.                      │
-╰──────────────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ───────────────────────────────────────────────────────────────────────╮
-│ run      Run the DremioAI MCP server                                             │
-│ tools    Support for testing tools directly                                      │
-│ config   Configuration management                                                │
-╰──────────────────────────────────────────────────────────────────────────────────╯
-```
-
-## Kubernetes/Production Deployment
+## Remote / Streaming HTTP Deployment
 
 For production deployments in Kubernetes environments, use the Helm chart:
 
@@ -126,14 +92,49 @@ helm install my-dremio-mcp ./helm/dremio-mcp \
 
 ---
 
-# Initial setup
+## Local Installation (Desktop/Development)
+
+The MCP server runs locally on the machine that runs the LLM frontend (eg Claude). The installation steps are simple:
+
+1. Clone or download this repository.
+2. Install the [uv](https://docs.astral.sh/uv/getting-started/installation/) package manager (note that the MCP server requires python 3.11 or later)
+- If you install this for the first time, restart your terminal at the end of the install
+3. Ensure that you have python installed by running the command below. It should show python 3.11 or later (If you don't have python installed, follow the instructions [here](https://docs.astral.sh/uv/guides/install-python/) OR simply run `uv python install`)
+```shell
+$ uv python find
+```
+4. Do a sanity check by running the command and validating the output as shown below.
+
+```shell
+# cd <toplevel git dir> or add `--directory <toplevel git dir>`
+# to the command below
+
+$ uv run dremio-mcp-server --help
+
+ Usage: dremio-mcp-server [OPTIONS] COMMAND [ARGS]...
+
+╭─ Options ────────────────────────────────────────────────────────────────────────╮
+│ --install-completion            Install completion for the current shell.        │
+│ --show-completion               Show completion for the current shell, to copy   │
+│                                 it or customize the installation.                │
+│ --help                -h        Show this message and exit.                      │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────╮
+│ run      Run the DremioAI MCP server                                             │
+│ tools    Support for testing tools directly                                      │
+│ config   Configuration management                                                │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+```
+
+
+### Initial setup
 
 There are two configurations necessary before the MCP server can be invoked.
 
 1. **The server config file**: This will cover the details of connecting and communicating with Dremio
 2. **The LLM config file**: This covers configuring the LLM desktop app (Claude for now) to make it aware of the MCP server
 
-## Quick start
+#### Quick start
 
 The quickest way to do this setup is -
 
@@ -205,10 +206,12 @@ tools:
 
 **You are done!**. You can start Claude and start using the MCP server
 
-### Demo
+### Demo (Local install)
 ![Demo](assets/demo.gif)
 
 The rest of the documentation below provides details of the config files
+
+---
 
 ## Configuration details
 
@@ -245,6 +248,8 @@ There are 3 modes
 Multiple modes can be specified with separated by `,`
 
 ### The LLM (Claude) config file
+
+**Note**: This is applicable only for local installs
 
 To setup the Claude config file (refer to [this as an example](https://modelcontextprotocol.io/quickstart/user#2-add-the-filesystem-mcp-server)) edit the Claude desktop config file
 
@@ -331,7 +336,7 @@ The log directory is automatically created if it doesn't exist, so no manual set
     - Framework integrations
     - Environment variables
 
-4. Other frameworks: (Experimental) Integrate the same MCP tools with other agentic frameworks like LangChain or BeeAI without modifying the code base.
+4. [Remote HTTP streaming / Helm Chart](helm/dremio-mcp/QUICKSTART.md)
 
 # Additional Information
 

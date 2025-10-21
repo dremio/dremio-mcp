@@ -57,7 +57,6 @@ Before implementing this authentication flow, you need:
 
 2. **Dremio External Token Provider** configured
    - Follow the [Dremio External Token Provider documentation](https://docs.dremio.com/current/security/authentication/application-authentication/external-token)
-   - Contact Dremio support for Dremio Cloud configuration
    - Configure in `dremio.conf` for Dremio Software
 
 ### Step 1: Implement Token Exchange in Chat Frontend
@@ -209,24 +208,6 @@ class DremioMCPClient {
   }
 
   /**
-   * Execute SQL query via MCP
-   */
-  async executeQuery(sql: string): Promise<any> {
-    if (!this.client) {
-      throw new Error('MCP client not connected');
-    }
-
-    const result = await this.client.callTool({
-      name: 'execute_sql',
-      arguments: {
-        sql: sql
-      }
-    });
-
-    return result;
-  }
-
-  /**
    * List available tools
    */
   async listTools(): Promise<any> {
@@ -248,25 +229,6 @@ class DremioMCPClient {
   }
 }
 
-// Usage example
-async function runQuery(oauthJwt: string, sql: string) {
-  // Step 1: Exchange OAuth JWT for Dremio token
-  const authService = new DremioAuthService('https://dremio.example.com');
-  const tokenResponse = await authService.exchangeToken(oauthJwt);
-
-  // Step 2: Connect to MCP server with Dremio token
-  const mcpClient = new DremioMCPClient('https://dremio-mcp.example.com');
-  await mcpClient.connect(tokenResponse.access_token);
-
-  try {
-    // Step 3: Execute query
-    const result = await mcpClient.executeQuery(sql);
-    return result;
-  } finally {
-    // Step 4: Clean up
-    await mcpClient.close();
-  }
-}
 ```
 
 ## Step 3: Deploy MCP Server
@@ -280,41 +242,6 @@ helm install dremio-mcp ./helm/dremio-mcp \
 ```
 
 See [examples/values-oauth-production.yaml](examples/values-oauth-production.yaml) for a complete production configuration.
-
-## Security Best Practices
-
-### 1. Token Storage
-
-- ✅ Store tokens in secure, httpOnly cookies or encrypted session storage
-- ✅ Never store tokens in localStorage (vulnerable to XSS)
-- ✅ Implement token rotation and refresh logic
-- ❌ Never log tokens or include them in error messages
-
-### 2. HTTPS/TLS
-
-- ✅ Always use HTTPS for all communications
-- ✅ Enforce TLS 1.2 or higher
-- ✅ Use valid SSL certificates (Let's Encrypt, etc.)
-- ❌ Never allow HTTP in production
-
-### 3. CORS Configuration
-
-```yaml
-# Ingress CORS configuration
-nginx.ingress.kubernetes.io/enable-cors: "true"
-nginx.ingress.kubernetes.io/cors-allow-origin: "https://chat.example.com"
-nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
-nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
-nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
-```
-
-### 4. Rate Limiting
-
-```yaml
-# Protect against abuse
-nginx.ingress.kubernetes.io/limit-rps: "100"
-nginx.ingress.kubernetes.io/limit-connections: "10"
-```
 
 ## Troubleshooting
 

@@ -33,7 +33,7 @@ mcp:
 
 # Tools configuration
 tools:
-  serverMode: "FOR_SELF,FOR_DATA_PATTERNS"
+  serverMode: "FOR_DATA_PATTERNS"
 
 # Metrics configuration
 metrics:
