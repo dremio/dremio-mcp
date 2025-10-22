@@ -57,7 +57,7 @@ The Dremio MCP server can be deployed in two ways:
 
 For production deployments in Kubernetes environments, use the Helm chart:
 
-📦 **[Helm Chart Documentation](helm/dremio-mcp/README.md)**
+📦 **[Helm Chart Documentation](helm/dremio-mcp/QUICKSTART.md)**
 
 ### Quick Start with Helm
 
