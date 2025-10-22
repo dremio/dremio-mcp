@@ -57,7 +57,7 @@ The Dremio MCP server can be deployed in two ways:
 
 For production deployments in Kubernetes environments, use the Helm chart:
 
-📦 **[Helm Chart Documentation](helm/dremio-mcp/README.md)**
+📦 **[Helm Chart Documentation](helm/dremio-mcp/QUICKSTART.md)**
 
 ### Quick Start with Helm
 
@@ -144,13 +144,17 @@ The quickest way to do this setup is -
 $ uv run dremio-mcp-server config create dremioai \
     --uri <dremio uri> \
     # the endpoint portion of the URL for your environment
-    --pat <dremio pat>
+    --pat <dremio pat> \
     # https://docs.dremio.com/current/security/authentication/personal-access-tokens/#using-a-pat
+    # required for cloud: add your project ID if setting up for dremio cloud
+    # --project-id <dremio project id>
 ```
 
-Note: the uri is the API endpoint for your Dremio Software instance:
+Note: the uri is api endpoint associated with your environment:
 
-- For Dremio Software deployments use `https://<coordinator-host>:<9047 or custom port>`
+- For Dremio cloud based in the US region (https://app.dremio.cloud)	use `https://api.dremio.cloud` or use the short hand `prod`
+- For Dremio cloud based in the EMEA region (https://app.eu.dremio.cloud)	use `https://api.eu.dremio.cloud` or use the short hand `prodemea`
+- For SW/K8S deployments use https://<coordinator‑host>:<9047 or custom port>
 
 Note: For security purposes, if you don't want the PAT to leak into your shell history file, create a file with your PAT in it and give it as an argument to the dremio config. 
 
@@ -222,10 +226,13 @@ This file is located by default at `$HOME/.config/dremioai/config.yaml` but can 
 #### Format
 
 ```yaml
-# The dremio section contains the URI to connect and PAT to use
+# The dremio section contains 3 main things - the URI to connect, PAT to use
+# and optionally the project_id if using with Dremio Cloud
 dremio:
-    uri: https://.... # the Dremio Software URI
+    uri: https://.... # the Dremio URI
     pat: "@~/ws/tokens/idl.token" # PAT can be put in a file and used here with @ prefix
+    project_id: <string> Project ID required for Dremio Cloud
+    enable_search: <bool> # Optional: Enable semantic search
     allow_dml: <bool> # Optional: Allow MCP Server to create views in Dremio
 tools:
     server_mode: FOR_DATA_PATTERNS # the serverm

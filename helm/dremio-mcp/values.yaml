@@ -1,6 +1,9 @@
+#
+# Copyright (C) 2017-2019 Dremio Corporation. This file is confidential and private property.
+#
+
+
 # Default values for dremio-mcp.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
 
 replicaCount: 1
 
@@ -24,11 +27,6 @@ dremio:
   # Not recommended for production - use OAuth with External Token Provider instead
   # See AUTHENTICATION.md for production setup
   pat: ""
-
-  # Optional: Use an existing secret for PAT
-  # The secret should have a key named 'pat'
-  # If set, this takes precedence over dremio.pat
-  existingSecret: ""
 
   # Optional: Allow DML operations (create views, etc.)
   allowDml: false
