@@ -71,7 +71,7 @@ class LineageSource(LineageBase):
         AfterValidator(
             partial(
                 subset_validator,
-                values=ContainerSubType,
+                values=[ContainerSubType.HOME, ContainerSubType.SOURCE],
             )
         ),
     ] = Field(..., alias="containerType")
@@ -97,7 +97,7 @@ class LineageChildren(LineageBase):
     ]
     dataset_type: Annotated[
         DatasetSubType,
-        AfterValidator(partial(subset_validator, values=DatasetSubType)),
+        AfterValidator(partial(subset_validator, values=[DatasetSubType.VIRTUAL])),
     ] = Field(..., alias="datasetType")
 
 
