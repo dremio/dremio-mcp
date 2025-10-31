@@ -181,7 +181,7 @@ def init(
                 response_types_supported=["code"],
                 grant_types_supported=["authorization_code", "refresh_token"],
                 code_challenge_methods_supported=["S256"],
-                token_endpoint_auth_methods_supported=["client_secret_post"],
+                token_endpoint_auth_methods_supported=["none"],
             )
             return PydanticJSONResponse(md)
         return Response(status_code=404)
@@ -201,7 +201,11 @@ def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Serve
     # Create a separate uvicorn server for Prometheus metrics.
     metrics_app = get_metrics_app()
     config = uvicorn.Config(
-        app=metrics_app, host=host, port=port, log_level=log_level.lower(), access_log=False
+        app=metrics_app,
+        host=host,
+        port=port,
+        log_level=log_level.lower(),
+        access_log=False,
     )
     server = uvicorn.Server(config)
 
@@ -227,10 +231,8 @@ def run_with_metrics_server(
         log.logger("server_startup").info("Starting metrics server as background task")
 
         threading.Thread(
-            target=lambda: asyncio.run(metrics_server.serve()), 
-            daemon=True
+            target=lambda: asyncio.run(metrics_server.serve()), daemon=True
         ).start()
-
 
     app.run(transport=transport.value)
 
