@@ -23,6 +23,21 @@ Table of Contents
 
 This repo provides an **M**odel **C**ontext **P**rotocol ([MCP](https://docs.anthropic.com/en/docs/welcome)) server for easing LLM integration with Dremio. If you are new to MCP and MCP Servers take our Dremio MCP Server course on Dremio University ([DremioU](https://university.dremio.com/course/dremio-mcp)). If you are familiar with these concepts already please proceed below.
 
+## 🚀 NEW: Enterprise Analytics Features
+
+The Dremio MCP Server now includes **production-grade enterprise analytics capabilities** for:
+
+- ✅ **ChatGPT Enterprise** integration
+- ✅ **AWS Bedrock** integration
+- ✅ Natural language query processing with intent classification
+- ✅ Fuzzy matching for user-friendly terminology
+- ✅ Automatic SQL generation and validation
+- ✅ Pre-execution safety checks and cost estimation
+- ✅ Automated root cause analysis for "why" queries
+- ✅ Intelligent visualization selection
+
+**See**: [Enterprise Analytics Documentation](ENTERPRISE_ANALYTICS.md) | [ChatGPT Integration Guide](examples/chatgpt-integration.md) | [Bedrock Integration Guide](examples/bedrock-integration.md)
+
 ```mermaid
 %%{init:
 {

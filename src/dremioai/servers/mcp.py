@@ -56,6 +56,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response as StarletteResponse
 
 from dremioai.tools.tools import ProjectIdMiddleware
+from dremioai.api.analytics_endpoints import router as analytics_router
 
 
 class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
@@ -104,6 +105,10 @@ class FastMCPServerWithAuthToken(FastMCP):
     def streamable_http_app(self):
         token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
         app = super().streamable_http_app()
+
+        # Include analytics router for ChatGPT/Bedrock integration
+        app.include_router(analytics_router)
+
         app.add_middleware(RequireAuthWithWWWAuthenticateMiddleware)
         app.add_middleware(AuthContextMiddleware)
         app.add_middleware(
