@@ -9,7 +9,7 @@ description = "Foundation for llm integration with Dremio"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "aiohttp>=3.11.12",
+    "aiohttp>=3.12.15",
     "beeai-framework>=0.1.8",
     "black>=25.1.0",
     "click>=8.1.8",

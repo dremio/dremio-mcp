@@ -43,6 +43,7 @@ class ArcticSource(BaseModel):
 class Query(BaseModel):
     sql: str = Field(..., alias="sql")
     context: Optional[List[str]] = None
+    engine_name: Optional[str] = Field(default=None, alias="engineName")
     references: Optional[Dict[str, ArcticSource]] = None
 
 
@@ -184,10 +185,12 @@ async def get_results(
     if client is None:
         client = AsyncHttpClient()
 
+    delay = settings.instance().dremio.api.polling_interval
+
     endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
     job: Job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)
     while not job.done:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(delay)
         job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)
 
     if not job.succeeded:
@@ -233,11 +236,18 @@ async def run_query(
 ) -> Union[JobResultsWrapper, pd.DataFrame]:
     client = AsyncHttpClient()
     if not isinstance(query, Query):
-        query = Query(sql=query)
+        engine_name = (
+            settings.instance().dremio.wlm.engine_name
+            if settings.instance().dremio.wlm is not None
+            else None
+        )
+        query = Query(sql=query, engineName=engine_name)
 
     project_id = settings.instance().dremio.project_id
     endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
     qs: QuerySubmission = await client.post(
-        f"{endpoint}/sql", body=query.model_dump(), deser=QuerySubmission
+        f"{endpoint}/sql",
+        body=query.model_dump(by_alias=True, exclude_none=True),
+        deser=QuerySubmission,
     )
     return await get_results(project_id, qs, use_df=use_df, client=client)

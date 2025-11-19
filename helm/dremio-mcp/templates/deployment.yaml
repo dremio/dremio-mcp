@@ -1,0 +1,119 @@
+#
+# Copyright (C) 2017-2019 Dremio Corporation. This file is confidential and private property.
+#
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dremio-mcp.fullname" . }}
+  labels:
+    {{- include "dremio-mcp.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dremio-mcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "dremio-mcp.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "dremio-mcp.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: {{ .Chart.Name }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+          - dremio-mcp-server
+          - run
+          - --cfg
+          - /app/config/config.yaml
+          {{- if .Values.mcp.enableStreamingHttp }}
+          - --enable-streaming-http
+          {{- end }}
+          {{- if .Values.mcp.logging.enableJson }}
+          - --enable-json-logging
+          {{- end }}
+          # Always disable file logging in containers (logs go to stdout/stderr)
+          - --no-log-to-file
+          - --log-level
+          - {{ .Values.mcp.logging.level }}
+          - --port
+          - "{{ .Values.mcp.port }}"
+          - --host
+          - {{ .Values.mcp.host }}
+        {{- with .Values.extraEnv }}
+        env:
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.mcp.port }}
+          protocol: TCP
+        {{- if .Values.metrics.enabled }}
+        - name: metrics
+          containerPort: {{ .Values.metrics.port }}
+          protocol: TCP
+        {{- end }}
+        {{- if .Values.mcp.enableStreamingHttp }}
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 12 }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 12 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        {{- if or .Values.dremio.pat .Values.dremio.existingSecret }}
+        - name: secrets
+          mountPath: /app/secrets
+          readOnly: true
+        {{- end }}
+        {{- with .Values.volumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "dremio-mcp.fullname" . }}-config
+      {{- if or .Values.dremio.pat .Values.dremio.existingSecret }}
+      - name: secrets
+        secret:
+          secretName: {{ if .Values.dremio.existingSecret }}{{ .Values.dremio.existingSecret }}{{ else }}{{ include "dremio-mcp.fullname" . }}-secret{{ end }}
+      {{- end }}
+      {{- with .Values.volumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+

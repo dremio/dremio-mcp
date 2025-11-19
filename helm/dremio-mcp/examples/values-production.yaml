@@ -1,0 +1,194 @@
+#
+# Copyright (C) 2017-2019 Dremio Corporation. This file is confidential and private property.
+#
+
+# Production deployment with OAuth + External Token Provider authentication
+# This is the RECOMMENDED configuration for production deployments
+#
+# Prerequisites:
+# 1. Configure OAuth 2.0 with your Identity Provider (Azure AD, Okta, Google, etc.)
+# 2. Configure Dremio External Token Provider
+#    See: https://docs.dremio.com/current/security/authentication/application-authentication/external-token
+# 3. Implement token exchange in your chat frontend (see AUTHENTICATION.md)
+
+# Dremio configuration - NO PAT
+dremio:
+  # Dremio Software instance URI
+  uri: "https://dremio.example.com:9047"
+
+  # Allow DML operations (create views, etc.)
+  allowDml: false
+
+  # NO PAT configured - authentication via OAuth + External Token Provider
+  # Tokens are provided by the chat frontend after OAuth exchange
+
+# MCP Server configuration
+mcp:
+  # Enable streaming HTTP mode (required for HTTP-based deployments)
+  enableStreamingHttp: true
+  
+  # Port for the MCP server
+  port: 8000
+  
+  # Host binding - 0.0.0.0 to accept connections from service
+  host: "0.0.0.0"
+  
+  # Logging configuration
+  logging:
+    # Enable JSON logging for structured log aggregation
+    enableJson: true
+    # Production log level
+    level: "INFO"
+    # File logging disabled (logs go to stdout/stderr)
+    toFile: false
+
+# Tools configuration
+tools:
+  # Enable appropriate tool modes for your use case
+  serverMode: "FOR_SELF,FOR_DATA_PATTERNS"
+
+# Metrics configuration
+metrics:
+  enabled: true
+  port: 9091
+
+# Image configuration
+image:
+  repository: myregistry.io/dremio-mcp
+  pullPolicy: Always
+  tag: "0.1.0"
+
+# Resource limits and requests
+# Adjust based on your workload
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 1000m
+    memory: 1Gi
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8000
+  annotations:
+    # Prometheus annotations for metrics scraping
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9091"
+    prometheus.io/path: "/metrics"
+
+# Autoscaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+
+# Service account configuration
+serviceAccount:
+  create: true
+  automount: true
+  annotations:
+    # Add any cloud provider specific annotations
+
+# Pod annotations
+podAnnotations:
+  # Add any monitoring or security annotations
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9091"
+
+# Pod labels
+podLabels:
+  app: dremio-mcp
+  environment: production
+  team: data-platform
+
+# Node selector for specific node pools
+nodeSelector:
+  workload-type: ai-services
+  # Example for cloud providers:
+  # cloud.google.com/gke-nodepool: ai-pool
+  # eks.amazonaws.com/nodegroup: ai-nodegroup
+
+# Tolerations for tainted nodes
+tolerations:
+  - key: "ai-workload"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+# Affinity rules for pod placement
+affinity:
+  # Prefer spreading pods across different nodes
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - dremio-mcp
+          topologyKey: kubernetes.io/hostname
+  
+  # Prefer nodes in specific zones for HA
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 50
+        preference:
+          matchExpressions:
+            - key: topology.kubernetes.io/zone
+              operator: In
+              values:
+                - us-east-1a
+                - us-east-1b
+                - us-east-1c
+
+# Health check configuration
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+# Extra environment variables (if needed)
+extraEnv:
+  # Example: Custom configuration
+  # - name: CUSTOM_CONFIG
+  #   value: "custom-value"
+

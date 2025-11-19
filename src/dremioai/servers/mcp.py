@@ -45,14 +45,11 @@ from shutil import which
 import asyncio
 from yaml import dump
 import sys
+import uvicorn
+import threading
 
-from mcp.server.auth.middleware.auth_context import (
-    AuthContextMiddleware,
-)
-from mcp.server.auth.middleware.bearer_auth import (
-    BearerAuthBackend,
-    RequireAuthMiddleware,
-)
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -96,14 +93,13 @@ class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
         async def verify_token(self, token: str) -> AccessToken | None:
             if token:
-                log.logger("verify_token").info(f"Token verified: {token}")
                 return AccessToken(
                     token=token,  # Include the token itself
                     client_id="unused-client",
                     scopes=["read"],
                 )
             else:
-                log.logger("verify_token").info(f"Token not provided: {token}")
+                log.logger("verify_token").info(f"Token not provided")
                 return None
 
     def streamable_http_app(self):
@@ -122,7 +118,7 @@ class FastMCPServerWithAuthToken(FastMCP):
             # context var
             app.add_middleware(ProjectIdMiddleware)
 
-        app.mount("/metrics", get_metrics_app(), name="metrics")
+        # Metrics are now served on a separate port, not mounted here
         return app
 
     def __init__(self, *args, **kwargs):
@@ -146,6 +142,9 @@ def init(
 
     if port is not None:
         opts["port"] = port
+    if host is not None:
+        opts["host"] = host
+
     mcp = mcp_cls("Dremio", **opts)
     setattr(mcp, "require_auth", require_auth)
     if transport == Transports.streamable_http and support_project_id_endpoints:
@@ -187,7 +186,7 @@ def init(
                 response_types_supported=["code"],
                 grant_types_supported=["authorization_code", "refresh_token"],
                 code_challenge_methods_supported=["S256"],
-                token_endpoint_auth_methods_supported=["client_secret_post"],
+                token_endpoint_auth_methods_supported=["none"],
             )
             return PydanticJSONResponse(md)
         return Response(status_code=404)
@@ -201,6 +200,46 @@ def init(
 
 
 app = None
+
+
+def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Server:
+    # Create a separate uvicorn server for Prometheus metrics.
+    metrics_app = get_metrics_app()
+    config = uvicorn.Config(
+        app=metrics_app,
+        host=host,
+        port=port,
+        log_level=log_level.lower(),
+        access_log=False,
+    )
+    server = uvicorn.Server(config)
+
+    log.logger("metrics_server").info(
+        f"Created metrics server config for {host}:{port}"
+    )
+    return server
+
+
+def run_with_metrics_server(
+    app: FastMCP, transport: Transports, metrics_server: uvicorn.Server | None = None
+):
+    """
+    Run the main MCP server alongside the metrics server using asyncio.
+
+    Args:
+        app: The FastMCP server instance
+        transport: Transport type
+        metrics_server: Optional metrics server to run concurrently
+    """
+    if metrics_server:
+        # Start metrics server as background task for all transports
+        log.logger("server_startup").info("Starting metrics server as background task")
+
+        threading.Thread(
+            target=lambda: asyncio.run(metrics_server.serve()), daemon=True
+        ).start()
+
+    app.run(transport=transport.value)
 
 
 def _mode() -> List[str]:
@@ -263,7 +302,21 @@ def main(
         support_project_id_endpoints=True,
         require_auth=not bool(disable_auth),
     )
-    app.run(transport=transport.value)
+
+    # Create metrics server based on configuration
+    metrics_server = None
+    if (
+        settings.instance().dremio.prometheus_metrics_enabled
+        and settings.instance().dremio.prometheus_metrics_port is not None
+    ):
+        metrics_server = create_metrics_server(
+            host=host,
+            port=dremio.prometheus_metrics_port,
+            log_level=log_level,
+        )
+
+    # Run the servers
+    run_with_metrics_server(app, transport, metrics_server)
 
 
 @ty.command(name="serve", help="Run the DremioAI MCP server with custom uvicorn settings")

@@ -13,18 +13,89 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import logging
+import asyncio
 
 from aiohttp import ClientSession, ClientResponse, ClientResponseError
+from typing import (
+    AnyStr,
+    Callable,
+    Optional,
+    Dict,
+    TypeAlias,
+    Union,
+    TextIO,
+    Awaitable,
+    Any,
+)
 from pathlib import Path
-from typing import AnyStr, Callable, Optional, Dict, TypeAlias, Union, TextIO
 from dremioai.log import logger
 from json import loads
 from pydantic import BaseModel, ValidationError
+from http import HTTPStatus
 
 from dremioai.config import settings
 from dremioai.api.oauth2 import get_oauth2_tokens
 
 DeserializationStrategy: TypeAlias = Union[Callable, BaseModel]
+
+
+class RetryConfig:
+    def __init__(self):
+        if settings.instance() and settings.instance().dremio:
+            self.config = settings.instance().dremio.api.http_retry
+        else:
+            self.config = settings.HttpRetry()
+
+    @property
+    def max_retries(self) -> int:
+        """Expose max_retries from config for convenience"""
+        return self.config.max_retries
+
+    def get_config_delay(self, attempt_number: int = 0) -> float:
+        return self.config.initial_delay * (
+            self.config.backoff_multiplier**attempt_number
+        )
+
+    def get_delay(
+        self,
+        response: ClientResponse,
+        attempt_number: int,
+    ) -> float:
+        retry_after = response.headers.get("Retry-After")
+        delay = self.get_config_delay(attempt_number=attempt_number)
+        if retry_after is not None:
+            try:
+                delay = min(delay, int(retry_after))
+            except (ValueError, TypeError) as e:
+                logger().debug(
+                    f"Invalid Retry-After header, using exponential backoff - {e}"
+                )
+
+        return min(delay, self.config.max_delay)
+
+
+async def retry_middleware(
+    req, handler: Callable[[any], Awaitable[ClientResponse]]
+) -> ClientResponse:
+    """
+    Middleware that automatically retries requests on 429 (rate limit) errors.
+    Uses exponential backoff with configurable parameters from settings.
+    """
+    retry_config = RetryConfig()
+    for attempt in range(retry_config.max_retries + 1):
+        response = await handler(req)
+        if response.status != HTTPStatus.TOO_MANY_REQUESTS:
+            break
+
+        delay = retry_config.get_delay(response, attempt)
+        logger(f"{__name__}.retry").warning(
+            f"Rate limited (429) on {req.method} {req.url.path}. "
+            f"Retry {attempt + 1}/{retry_config.max_retries} after {delay:.2f}s"
+        )
+        await asyncio.sleep(delay)
+
+    return response
 
 
 class AsyncHttpClient:
@@ -83,6 +154,18 @@ class AsyncHttpClient:
             )
         await self.download(response, file)
 
+    def log_request(
+        self, method: str, endpoint: str, params: Optional[Dict[AnyStr, Any]] = None
+    ):
+        if logger().isEnabledFor(logging.DEBUG):
+            sanitized_headers = {
+                k: (v if k != "Authorization" else "Bearer <redacted>")
+                for k, v in self.headers.items()
+            }
+            logger().debug(
+                f"{method} {self.uri}{endpoint}', headers={sanitized_headers}, params={params}"
+            )
+
     async def get(
         self,
         endpoint: AnyStr,
@@ -92,10 +175,8 @@ class AsyncHttpClient:
         file: Optional[TextIO] = None,
         top_level_list: bool = False,
     ):
-        async with ClientSession() as session:
-            logger().info(
-                f"{self.uri}{endpoint}', headers={self.headers}, params={params}"
-            )
+        async with ClientSession(middlewares=(retry_middleware,)) as session:
+            self.log_request("GET", endpoint, params)
             async with session.get(
                 f"{self.uri}{endpoint}",
                 headers=self.headers,
@@ -115,7 +196,8 @@ class AsyncHttpClient:
         file: Optional[TextIO] = None,
         top_level_list: bool = False,
     ):
-        async with ClientSession() as session:
+        async with ClientSession(middlewares=(retry_middleware,)) as session:
+            self.log_request("POST", endpoint)
             async with session.post(
                 f"{self.uri}{endpoint}", headers=self.headers, json=body, ssl=False
             ) as response:

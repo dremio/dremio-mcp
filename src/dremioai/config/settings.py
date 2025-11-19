@@ -50,6 +50,7 @@ from contextvars import ContextVar, copy_context
 from os import environ
 from importlib.util import find_spec
 from datetime import datetime
+from dremioai import log
 
 ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
@@ -131,6 +132,45 @@ class OAuth2(BaseModel):
         return self.expiry is not None and self.expiry < datetime.now()
 
 
+class Wlm(BaseModel):
+    engine_name: Optional[str] = None
+    model_config = ConfigDict(validate_assignment=True)
+
+
+class Metrics(BaseModel):
+    enabled: Optional[bool] = True
+    port: Optional[int] = 9091
+    model_config = ConfigDict(validate_assignment=True)
+
+
+class HttpRetry(BaseModel):
+    """Configuration for HTTP retry behavior with exponential backoff"""
+
+    max_retries: Optional[int] = Field(
+        default=20,
+        description="Maximum number of retry attempts for rate-limited requests",
+    )
+    initial_delay: Optional[float] = Field(
+        default=1.0, description="Initial delay in seconds before first retry"
+    )
+    max_delay: Optional[float] = Field(
+        default=60.0, description="Maximum delay in seconds between retries"
+    )
+    backoff_multiplier: Optional[float] = Field(
+        default=2.0, description="Multiplier for exponential backoff"
+    )
+    model_config = ConfigDict(validate_assignment=True)
+
+
+class ApiSettings(BaseModel):
+    # HTTP retry configuration
+    http_retry: Optional[HttpRetry] = Field(default_factory=HttpRetry)
+    polling_interval: Optional[float] = Field(
+        default=1, description="Polling interval for REST api in seconds"
+    )
+    model_config = ConfigDict(validate_assignment=True)
+
+
 class Dremio(BaseModel):
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
@@ -144,6 +184,10 @@ class Dremio(BaseModel):
     )
     oauth2: Optional[OAuth2] = None
     allow_dml: Optional[bool] = False
+    auth_issuer_uri_override: Optional[str] = None
+    wlm: Optional[Wlm] = None
+    api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
+    metrics: Optional[Metrics] = None
     model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")
@@ -186,11 +230,14 @@ class Dremio(BaseModel):
 
     @property
     def auth_issuer_uri(self) -> Optional[str]:
+        if self.auth_issuer_uri_override is not None:
+            return self.auth_issuer_uri_override
         if self.is_cloud:
             uri = urlparse(self.uri)
             if uri.netloc.startswith("api."):
                 uri = uri._replace(netloc=f"login.{uri.netloc[4:]}")
             return uri.geturl()
+        log.logger("settings").error("Oauth not supported for non-cloud instances")
         return None
 
     @property
@@ -201,6 +248,14 @@ class Dremio(BaseModel):
                 f"{issuer_uri}/oauth/token",
             )
         return None
+
+    @property
+    def prometheus_metrics_enabled(self) -> bool:
+        return self.metrics is not None and self.metrics.enabled
+
+    @property
+    def prometheus_metrics_port(self) -> int | None:
+        return self.metrics.port if self.metrics is not None else None
 
 
 class OpenAi(BaseModel):
