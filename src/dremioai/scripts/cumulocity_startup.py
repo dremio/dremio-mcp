@@ -144,7 +144,7 @@ def launch_mcp_server() -> None:
         "serve",
         "--port", "80",
         "--disable-auth",
-        "--enable-sse",
+        "--enable-streaming-http",
         "--no-log-to-file",
         "--enable-json-logging",
         "--root-path", "/service/dremio-mcp"
