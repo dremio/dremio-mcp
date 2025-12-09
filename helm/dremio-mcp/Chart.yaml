@@ -9,9 +9,9 @@ keywords:
   - mcp
   - ai
   - llm
-home: https://github.com/aniket-s-kulkarni/dremio-mcp
+home: https://github.com/dremio/dremio-mcp
 sources:
-  - https://github.com/aniket-s-kulkarni/dremio-mcp
+  - https://github.com/dremio/dremio-mcp
 maintainers:
   - name: Aniket Kulkarni
     email: aniket.kulkarni@dremio.com
