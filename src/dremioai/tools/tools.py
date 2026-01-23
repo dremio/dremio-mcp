@@ -32,6 +32,8 @@ from typing import (
 )
 
 from dataclasses import dataclass, asdict, field
+from datetime import datetime
+from decimal import Decimal
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -41,6 +43,7 @@ import re
 import functools
 
 import pandas as pd
+import numpy as np
 from dremioai.api.dremio import sql, usage, search
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
@@ -102,6 +105,31 @@ class Tool:
 class Tools:
     async def invoke(self):
         raise NotImplementedError("Subclasses should implement this method")
+
+
+def _json_safe_value(value: Any) -> Any:
+    if value is None or value is pd.NA or value is pd.NaT:
+        return None
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if isinstance(value, (pd.Timedelta,)):
+        return str(value)
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _df_to_json_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    if df.empty:
+        return []
+    df = df.where(pd.notnull(df), None)
+    records = df.to_dict(orient="records")
+    return [
+        {key: _json_safe_value(value) for key, value in row.items()}
+        for row in records
+    ]
 
 
 class ProjectIdMiddleware(BaseHTTPMiddleware):
@@ -333,7 +361,7 @@ class RunSqlQuery(Tools):
         try:
             s = f"/* dremioai: submitter={self.__class__.__name__} */\n{s}"
             df = await sql.run_query(query=s, use_df=True)
-            return {"result": df.to_dict(orient="records")}
+            return {"result": _df_to_json_records(df)}
         except RuntimeError as e:
             return {
                 "error": str(e),

@@ -208,7 +208,7 @@ async def http_streamable_mcp_server(
     logging_level: str,
     project_id: str = None,
     wlm_engine: str = None,
-) -> AsyncGenerator[StreamableMcpServerFixture]:
+) -> AsyncGenerator[StreamableMcpServerFixture, None]:
     old = settings.instance()
     sf = None
     try:
@@ -279,7 +279,7 @@ async def http_streamable_mcp_server(
 @contextlib.asynccontextmanager
 async def http_streamable_client_server(
     sf: ServerFixture, token=None
-) -> AsyncGenerator[ClientSession]:
+) -> AsyncGenerator[ClientSession, None]:
     headers = {"Authorization": f"Bearer {token}"} if token is not None else None
     async with streamablehttp_client(url=sf.url, headers=headers) as (
         read_stream,
