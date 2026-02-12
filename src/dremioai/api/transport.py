@@ -195,11 +195,12 @@ class AsyncHttpClient:
         deser: Optional[DeserializationStrategy] = None,
         file: Optional[TextIO] = None,
         top_level_list: bool = False,
+        params: Dict[AnyStr, Any] = None,
     ):
         async with ClientSession(middlewares=(retry_middleware,)) as session:
-            self.log_request("POST", endpoint)
+            self.log_request("POST", endpoint, params)
             async with session.post(
-                f"{self.uri}{endpoint}", headers=self.headers, json=body, ssl=False
+                f"{self.uri}{endpoint}", params=params, headers=self.headers, json=body, ssl=False
             ) as response:
                 return await self.handle_response(
                     response, deser, file, top_level_list=top_level_list
