@@ -171,6 +171,21 @@ class ApiSettings(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
+class LaunchDarkly(BaseModel):
+    """LaunchDarkly feature flag configuration."""
+
+    sdk_key: Optional[Annotated[str, AfterValidator(_resolve_token_file)]] = Field(
+        default=None,
+        description="LaunchDarkly SDK key (can be file path with @ prefix or direct value)",
+    )
+    model_config = ConfigDict(validate_assignment=True)
+
+    @property
+    def enabled(self) -> bool:
+        """LaunchDarkly is enabled if sdk_key is set."""
+        return self.sdk_key is not None
+
+
 class Dremio(BaseModel):
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
@@ -183,12 +198,17 @@ class Dremio(BaseModel):
         description="enable experimental tools",
     )
     oauth2: Optional[OAuth2] = None
-    allow_dml: Optional[bool] = False
+    raw_allow_dml: Optional[bool] = Field(default=False, alias="allow_dml")
     auth_issuer_uri_override: Optional[str] = None
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
+    launchdarkly: Optional[LaunchDarkly] = None
     model_config = ConfigDict(validate_assignment=True)
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        self._flag_manager = None
 
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):
@@ -256,6 +276,62 @@ class Dremio(BaseModel):
     @property
     def prometheus_metrics_port(self) -> int | None:
         return self.metrics.port if self.metrics is not None else None
+
+    @property
+    def allow_dml(self) -> bool:
+        """
+        Check if DML operations are allowed.
+
+        First checks the LaunchDarkly feature flag 'allow_dml', then falls back
+        to the configured value in raw_allow_dml.
+
+        Returns:
+            bool: True if DML operations are allowed
+        """
+        # Check feature flag first
+        flag_value = self.get_flag("allow_dml", default=None)
+        if flag_value is not None:
+            return flag_value
+
+        # Fall back to config value
+        return self.raw_allow_dml if self.raw_allow_dml is not None else False
+
+    def get_flag(
+        self,
+        flag_key: str,
+        default: Any,
+        project_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+    ) -> Any:
+        """
+        Get feature flag value with context.
+
+        This method evaluates a feature flag using LaunchDarkly. If LaunchDarkly is not
+        enabled or configured, it returns the default value.
+
+        Args:
+            flag_key: The LaunchDarkly feature flag key
+            default: Default value if flag is not found or LaunchDarkly is disabled
+            project_id: Optional project ID for context. If None, uses self.project_id
+            org_id: Optional organization ID for context
+
+        Returns:
+            The feature flag value, or default if unavailable
+        """
+        # Return default if LaunchDarkly is not configured
+        if not self.launchdarkly or not self.launchdarkly.enabled:
+            return default
+
+        # Lazy-load the feature flag manager with sdk_key
+        if self._flag_manager is None:
+            from dremioai.config.feature_flags import FeatureFlagManager
+
+            self._flag_manager = FeatureFlagManager.instance(sdk_key=self.launchdarkly.sdk_key)
+
+        # Use provided project_id or fall back to self.project_id
+        context_project_id = project_id if project_id is not None else self.project_id
+
+        return self._flag_manager.get_flag(flag_key, default, project_id=context_project_id, org_id=org_id)
 
 
 class OpenAi(BaseModel):

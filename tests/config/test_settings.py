@@ -180,3 +180,136 @@ def test_auth_urls(
     issuer = issuer if not error else None
     assert d.auth_issuer_uri == issuer
     assert d.auth_endpoints == auth
+
+
+def test_launchdarkly_sdk_key_from_env_with_yaml_config(monkeypatch):
+    """Test that LaunchDarkly SDK key can be set via env var while other settings are in YAML."""
+    # Set SDK key via environment variable
+    monkeypatch.setenv("DREMIOAI_DREMIO__LAUNCHDARKLY__SDK_KEY", "sdk-env-key-12345")
+
+    # Create settings with LaunchDarkly config in YAML (but no SDK key)
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "launchdarkly": {}
+        }
+    })
+
+    # Verify that SDK key from env var is picked up
+    assert s.dremio.launchdarkly is not None
+    assert s.dremio.launchdarkly.sdk_key == "sdk-env-key-12345"
+    # enabled property should be True when sdk_key is set
+    assert s.dremio.launchdarkly.enabled is True
+
+
+def test_launchdarkly_all_from_env(monkeypatch):
+    """Test that LaunchDarkly SDK key can be set via environment variable."""
+    monkeypatch.setenv("DREMIOAI_DREMIO__LAUNCHDARKLY__SDK_KEY", "sdk-env-key-67890")
+
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat"
+        }
+    })
+
+    assert s.dremio.launchdarkly is not None
+    assert s.dremio.launchdarkly.sdk_key == "sdk-env-key-67890"
+    # enabled property should be True when sdk_key is set
+    assert s.dremio.launchdarkly.enabled is True
+
+
+def test_launchdarkly_sdk_key_from_file(tmp_path):
+    """Test that LaunchDarkly SDK key can be loaded from a file."""
+    # Create a temporary file with SDK key
+    sdk_key_file = tmp_path / "sdk_key.txt"
+    sdk_key_file.write_text("sdk-file-key-abcdef")
+
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "launchdarkly": {
+                "sdk_key": f"@{sdk_key_file}"
+            }
+        }
+    })
+
+    assert s.dremio.launchdarkly is not None
+    assert s.dremio.launchdarkly.sdk_key == "sdk-file-key-abcdef"
+    # enabled property should be True when sdk_key is set
+    assert s.dremio.launchdarkly.enabled is True
+
+
+def test_launchdarkly_defaults():
+    """Test that LaunchDarkly has correct default values."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "launchdarkly": {}
+        }
+    })
+
+    assert s.dremio.launchdarkly is not None
+    assert s.dremio.launchdarkly.sdk_key is None
+    # enabled property should be False when sdk_key is None
+    assert s.dremio.launchdarkly.enabled is False
+
+
+def test_dremio_get_flag_without_launchdarkly():
+    """Test that get_flag returns default when LaunchDarkly is not configured."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat"
+        }
+    })
+
+    # Should return default value when LaunchDarkly is not configured
+    result = s.dremio.get_flag("test.flag", "default_value")
+    assert result == "default_value"
+
+
+def test_dremio_get_flag_with_launchdarkly_disabled():
+    """Test that get_flag returns default when LaunchDarkly is disabled."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "launchdarkly": {}  # No SDK key, so disabled
+        }
+    })
+
+    # Should return default value when LaunchDarkly is disabled
+    result = s.dremio.get_flag("test.flag", "default_value")
+    assert result == "default_value"
+
+
+def test_dremio_enable_search_fallback():
+    """Test that enable_search property falls back to config value when LD is disabled."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "enable_search": True
+        }
+    })
+
+    # Should return config value when LaunchDarkly is not configured
+    assert s.dremio.enable_search is True
+
+
+def test_dremio_allow_dml_fallback():
+    """Test that allow_dml property falls back to config value when LD is disabled."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "allow_dml": True
+        }
+    })
+
+    # Should return config value when LaunchDarkly is not configured
+    assert s.dremio.allow_dml is True
