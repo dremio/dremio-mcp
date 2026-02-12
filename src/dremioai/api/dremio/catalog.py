@@ -121,7 +121,7 @@ async def get_lineage(
 
     project_id = settings.instance().dremio.project_id
     endpoint = f"/v0/projects/{project_id}/catalog" if project_id else "/api/v3/catalog"
-    params = {"removeCatalogName": remove_catalog_name}
+    params = {"removeCatalogName": str(remove_catalog_name).lower()}
     result: LineageResponse = await client.get(
         f"{endpoint}/{dataset_id_or_path}/graph",
         params=params,
@@ -140,7 +140,7 @@ async def get_schema(
     client = AsyncHttpClient()
     project_id = settings.instance().dremio.project_id
     endpoint = f"/v0/projects/{project_id}/catalog" if project_id else "/api/v3/catalog"
-    params = {"removeCatalogName": remove_catalog_name}
+    params = {"removeCatalogName": str(remove_catalog_name).lower()}
     if by_id:
         endpoint += "/" + dataset_path_or_id
     else:

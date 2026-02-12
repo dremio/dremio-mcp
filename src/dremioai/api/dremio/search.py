@@ -227,7 +227,7 @@ async def get_search_results(
         else "/api/v3/search"
     )
 
-    params = {"removeCatalogName": remove_catalog_name}
+    params = {"removeCatalogName": str(remove_catalog_name).lower()}
 
     result = []
     response = await client.post(
