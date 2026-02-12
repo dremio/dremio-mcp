@@ -193,7 +193,6 @@ class Search(BaseModel):
     next_page_token: Optional[str] = Field(default=None, alias="pageToken")
     filter: Optional[Union[str, List[Category]]] = ""
     query: str = None
-    remove_catalog_name: Optional[bool] = Field(default=True, alias="removeCatalogName")
 
     @field_validator("filter", mode="after")
     @classmethod
