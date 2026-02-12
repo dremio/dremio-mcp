@@ -110,7 +110,10 @@ class LineageResponse(BaseModel):
     children: List[LineageChildren]
 
 
-async def get_lineage(dataset_id_or_path: str) -> Dict[str, Any]:
+async def get_lineage(
+    dataset_id_or_path: str,
+    remove_catalog_name: Optional[bool] = True
+) -> Dict[str, Any]:
     client = AsyncHttpClient()
     if "." in dataset_id_or_path:
         response = await get_schema(dataset_id_or_path, by_id=False)
@@ -118,8 +121,10 @@ async def get_lineage(dataset_id_or_path: str) -> Dict[str, Any]:
 
     project_id = settings.instance().dremio.project_id
     endpoint = f"/v0/projects/{project_id}/catalog" if project_id else "/api/v3/catalog"
+    params = {"removeCatalogName": str(remove_catalog_name).lower()}
     result: LineageResponse = await client.get(
         f"{endpoint}/{dataset_id_or_path}/graph",
+        params=params,
         deser=LineageResponse,
     )
     return result.model_dump()
@@ -130,10 +135,12 @@ async def get_schema(
     by_id: Optional[bool] = False,
     include_tags: Optional[bool] = False,
     flatten: Optional[bool] = False,
+    remove_catalog_name: Optional[bool] = True
 ) -> Dict[str, Any]:
     client = AsyncHttpClient()
     project_id = settings.instance().dremio.project_id
     endpoint = f"/v0/projects/{project_id}/catalog" if project_id else "/api/v3/catalog"
+    params = {"removeCatalogName": str(remove_catalog_name).lower()}
     if by_id:
         endpoint += "/" + dataset_path_or_id
     else:
@@ -142,7 +149,7 @@ async def get_schema(
                 reader(StringIO(dataset_path_or_id), delimiter=".", dialect=excel)
             )[0]
         endpoint += f'/by-path/{"/".join(dataset_path_or_id)}'
-    schema = await client.get(endpoint)
+    schema = await client.get(endpoint, params=params)
 
     if include_tags:
 

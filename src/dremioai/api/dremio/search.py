@@ -214,7 +214,8 @@ class EnterpriseSearchResultsWrapper(BaseModel):
 
 
 async def get_search_results(
-    search: str | Search, use_df: bool = False
+    search: str | Search, use_df: bool = False,
+    remove_catalog_name: Optional[bool] = True
 ) -> EnterpriseSearchResultsWrapper | pd.DataFrame:
     if isinstance(search, str):
         search = Search(query=search)
@@ -225,11 +226,15 @@ async def get_search_results(
         if settings.instance().dremio.project_id
         else "/api/v3/search"
     )
+
+    params = {"removeCatalogName": str(remove_catalog_name).lower()}
+
     result = []
     response = await client.post(
         endpoint,
         body=search.model_dump(exclude_none=True),
         deser=EnterpriseSearchResults,
+        params=params,
     )
     while response.results and response.error is None and response.more is None:
         result.extend(response.results)
@@ -240,6 +245,7 @@ async def get_search_results(
             endpoint,
             body=search.model_dump(exclude_none=True),
             deser=EnterpriseSearchResults,
+            params=params,
         )
 
     if use_df:
