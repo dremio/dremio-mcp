@@ -51,6 +51,59 @@ async def test_healthz(mock_config_dir, logging_server, logging_level):
 
 
 @pytest.mark.asyncio
+async def test_oauth_discovery_rfc8414_compliance(mock_config_dir, logging_server, logging_level):
+    """Test that OAuth discovery fails with trailing slash (reproduces DX-114676).
+
+    This test reproduces the issue that started happening around Feb 12, 2026 when
+    Claude Desktop clients were updated to strictly validate RFC 8414 Section 3.2,
+    which requires the issuer field in OAuth metadata to exactly match the discovery URL.
+
+    The bug: AnyHttpUrl adds a trailing slash to the issuer URL, causing strict clients
+    to reject the OAuth metadata because the issuer doesn't match the discovery URL.
+    """
+    async with http_streamable_mcp_server(logging_server, logging_level) as sf:
+        async with AsyncClient() as client:
+            oauth_url = urlparse(sf.mcp_server.url)._replace(
+                path="/.well-known/oauth-authorization-server"
+            ).geturl()
+
+            from dremioai.config import settings as settings_module
+            old_settings = settings_module.instance()
+            try:
+                settings_module._settings.set(
+                    settings_module.Settings.model_validate(
+                        {
+                            "dremio": {
+                                "uri": "https://api.dremio.cloud",
+                                "pat": "test-pat",
+                            },
+                            "tools": {"server_mode": "FOR_SELF"},
+                        }
+                    )
+                )
+
+                r = await client.get(oauth_url)
+
+                if r.status_code == 404:
+                    pytest.skip("OAuth not configured for this test environment")
+
+                assert r.status_code == 200, f"OAuth metadata endpoint failed: {r.text}"
+
+                data = r.json()
+                issuer_from_metadata = data["issuer"]
+
+                if issuer_from_metadata.endswith('/'):
+                    pytest.fail(
+                        f"RFC 8414 Section 3.2 violation: issuer has trailing slash.\n"
+                        f"Got: {issuer_from_metadata}\n"
+                        f"This causes OAuth discovery to fail with strict clients (Claude Desktop after Feb 12, 2026).\n"
+                        f"The issuer field MUST exactly match the discovery URL without trailing slash."
+                    )
+            finally:
+                settings_module._settings.set(old_settings)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "engine_name",
     [
