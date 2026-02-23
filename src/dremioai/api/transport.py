@@ -222,5 +222,5 @@ class DremioAsyncHttpClient(AsyncHttpClient):
         pat = dremio.pat
 
         if uri is None or pat is None:
-            raise RuntimeError(f"uri={uri} pat={pat} are required")
+            raise RuntimeError("Dremio connection is not properly configured. Both URI and authentication token are required.")
         super().__init__(uri, pat)

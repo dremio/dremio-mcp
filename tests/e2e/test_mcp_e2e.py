@@ -69,7 +69,7 @@ async def test_wlm_engine_name(
             sf.mcp_server, token="my-token"
         ) as session:
             result: CallToolResult = await session.call_tool(
-                "RunSqlQuery", {"s": "SELECT 1"}
+                "RunSqlQuery", {"query": "SELECT 1"}
             )
             assert (
                 result is not None
