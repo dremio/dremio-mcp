@@ -102,7 +102,7 @@ async def test_create_fastmcp_server_and_register_tools():
             # Test basic invocation of each tool
             successful_invocations = 0
             args = {
-                "RunSqlQuery": {"s": "SELECT 1"},
+                "RunSqlQuery": {"query": "SELECT 1"},
                 "SearchTableAndViews": {"query": "test query"},
                 "GetSchemaOfTable": {"table_name": "test_table"},
                 "GetUsefulSystemTableNames": {},

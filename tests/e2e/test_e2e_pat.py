@@ -41,7 +41,7 @@ async def test_tool_pat(mock_config_dir, logging_server, logging_level, project_
             sf.mcp_server, token="my-token"
         ) as session:
             result: CallToolResult = await session.call_tool(
-                "RunSqlQuery", {"s": "SELECT 1"}
+                "RunSqlQuery", {"query": "SELECT 1"}
             )
             assert (
                 result is not None and result.structuredContent is not None

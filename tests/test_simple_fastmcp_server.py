@@ -98,7 +98,7 @@ class TestSimpleFastMCPServer:
 
                 # Call the tool
                 result = await fastmcp_server.call_tool(
-                    "RunSqlQuery", {"s": "SELECT 1 as test_column"}
+                    "RunSqlQuery", {"query": "SELECT 1 as test_column"}
                 )
 
                 # Verify result is not None

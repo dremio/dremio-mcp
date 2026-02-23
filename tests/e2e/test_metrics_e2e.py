@@ -107,7 +107,7 @@ async def test_metrics_with_tool_invocation(
             sf.mcp_server, token="test-token"
         ) as session:
             result: CallToolResult = await session.call_tool(
-                "RunSqlQuery", {"s": "SELECT 1"}
+                "RunSqlQuery", {"query": "SELECT 1"}
             )
             assert result is not None and result.structuredContent is not None
 

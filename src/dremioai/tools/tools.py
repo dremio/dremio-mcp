@@ -349,18 +349,23 @@ class RunSqlQuery(Tools):
 
     @secured
     @with_metrics
-    async def invoke(self, s: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
+    async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
         """Run a SELECT sql query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes
         You are premitted to run only SELECT queries. No DML statements are allowed.
 
         Args:
-            s: sql query
+            query: sql query
         """
-        RunSqlQuery.ensure_query_allowed(s)
         try:
-            s = f"/* dremioai: submitter={self.__class__.__name__} */\n{s}"
-            df = await sql.run_query(query=s, use_df=True)
+            RunSqlQuery.ensure_query_allowed(query)
+        except ValueError:
+            return {
+                "error": "Only SELECT queries are allowed. DML statements are not permitted.",
+            }
+        try:
+            query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            df = await sql.run_query(query=query, use_df=True)
             return {"result": _df_to_json_records(df)}
         except RuntimeError as e:
             return {
@@ -426,11 +431,16 @@ class GetUsefulSystemTableNames(Tools):
         """Gets the names of system tables in the dremio cluster, useful for various analysis.
         Use Get Schema of Table tool to get the schema of the table"""
         return {
-            f'information_schema."tables"': (
-                "Information about tables in this cluster."
-                "Be sure to filter out SYSTEM_TABLE for looking at user tables."
+            'INFORMATION_SCHEMA."TABLES"': (
+                "Information about tables in this cluster. "
+                "Be sure to filter out SYSTEM_TABLE for looking at user tables. "
                 "You must encapsulate TABLES in double quotes."
             ),
+            'sys.project.jobs_recent': "Recent job execution history including status, duration, user, and error details.",
+            'sys.project.engines': "Engine configuration and status for the project.",
+            'sys.organization.users': "Organization user information.",
+            'INFORMATION_SCHEMA."COLUMNS"': "Column-level metadata for all tables and views.",
+            'INFORMATION_SCHEMA."VIEWS"': "View definitions and metadata.",
         }
 
 
@@ -443,7 +453,9 @@ class GetSchemaOfTable(Tools):
         """Gets the schema of the given table.
 
         Args:
-            table_name: string with the name of the table, including the schema. Or list of paths that make up the table
+            table_name: The fully qualified table name. Accepts either:
+              - A dot-separated string: '"source"."schema"."table"'
+              - A list of path components: ["source", "schema", "table"]
 
         Returns:
             A dictionary with information about the table. The field "fields" is a list of dictionaries
@@ -451,8 +463,12 @@ class GetSchemaOfTable(Tools):
             information about the table
         """
         if isinstance(table_name, list):
+            if not table_name:
+                return {"error": "table_name must not be empty. Provide a list of path components, e.g. ['source', 'schema', 'table']."}
             paths = table_name
         else:
+            if not table_name or not table_name.strip():
+                return {"error": "table_name must not be empty. Provide a dot-separated name, e.g. '\"source\".\"schema\".\"table\"'."}
             paths = list(reader(StringIO(table_name), delimiter="."))
         result = await get_schema(paths[0], include_tags=True)
         if result and "sql" in result:
@@ -474,7 +490,14 @@ class GetTableOrViewLineage(Tools):
         Returns:
             A json representation with the lineage of the table or view.
         """
-        return await get_lineage(table_name)
+        try:
+            return await get_lineage(table_name)
+        except Exception as e:
+            logger.error(f"Lineage lookup failed for {table_name}: {e}")
+            return {
+                "error": "Unable to retrieve lineage for the specified table or view.",
+                "message": "The lineage lookup failed. Please verify the table name and try again.",
+            }
 
 
 class SearchTableAndViews(Tools):
@@ -626,6 +649,8 @@ class RunPromQL(Tools):
 class GetDescriptionOfTableOrSchema(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
 
+    @secured
+    @with_metrics
     async def invoke(self, name: Union[List[str], str]) -> Dict[str, Any]:
         """
         Given one or more table names or schema names, this will return the description of the table or schema, if any exists
