@@ -57,30 +57,21 @@ ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
 
 class GetterModel(BaseModel):
-    """Base model with explicit getter for field access."""
-
     model_config = ConfigDict(validate_assignment=True)
 
     def get(self, field_name: str, default: Any = None):
-        """Get a field value by name."""
         return getattr(self, field_name, default)
 
 
 class FlagAwareModel(GetterModel):
-    """GetterModel that checks LaunchDarkly flags before falling back to config values."""
-
     _flag_prefix: str = ""
 
     def get(self, field_name: str, default: Any = None):
-        """Get a field value. Checks LD flag first, falls back to config."""
-        try:
-            mgr = FeatureFlagManager.instance()
-            if mgr.is_enabled():
-                key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
-                if (flag := mgr.get_flag(key, default=default)) is not None:
-                    return flag
-        except ValueError:
-            pass  # FeatureFlagManager not initialized yet
+        mgr = FeatureFlagManager.instance()
+        if mgr.is_enabled():
+            key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
+            if (flag := mgr.get_flag(key, default=default)) is not None:
+                return flag
         return super().get(field_name, default)
 
 
@@ -171,7 +162,6 @@ class Metrics(FlagAwareModel):
 
 
 class HttpRetry(FlagAwareModel):
-    """Configuration for HTTP retry behavior with exponential backoff"""
 
     max_retries: Optional[int] = Field(
         default=20,
@@ -197,7 +187,6 @@ class ApiSettings(FlagAwareModel):
 
 
 class LaunchDarkly(BaseModel):
-    """LaunchDarkly feature flag configuration."""
 
     sdk_key: Optional[Annotated[str, AfterValidator(_resolve_token_file)]] = Field(
         default=None,
@@ -207,7 +196,6 @@ class LaunchDarkly(BaseModel):
 
     @property
     def enabled(self) -> bool:
-        """LaunchDarkly is enabled if sdk_key is set."""
         return self.sdk_key is not None
 
 
@@ -386,7 +374,6 @@ class Settings(BaseSettings):
 
 
 def _propagate_flag_prefixes(obj, prefix: str):
-    """Walk the model tree and set _flag_prefix on each FlagAwareModel child."""
     for name in type(obj).model_fields:
         child = getattr(obj, name, None)
         if isinstance(child, FlagAwareModel):

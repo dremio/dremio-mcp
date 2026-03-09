@@ -13,12 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-"""Tests for LaunchDarkly integration with settings.
-
-These tests mock the LD client to verify that .get() on any FlagAwareModel
-checks LD flags before falling back to config values.
-"""
-
 import pytest
 from unittest.mock import patch, MagicMock
 from dremioai.config import settings
@@ -27,7 +21,6 @@ from dremioai.config.feature_flags import FeatureFlagManager
 
 @pytest.fixture(autouse=True)
 def reset_feature_flag_manager():
-    """Reset the FeatureFlagManager singleton and global settings before each test."""
     FeatureFlagManager.reset()
     old = settings._settings.get()
     yield
@@ -36,11 +29,7 @@ def reset_feature_flag_manager():
 
 
 def _make_settings(**dremio_overrides):
-    """Helper to create Settings with Dremio config and set as global."""
-    base = {
-        "uri": "https://test.dremio.cloud",
-        "pat": "test-pat",
-    }
+    base = {"uri": "https://test.dremio.cloud", "pat": "test-pat"}
     base.update(dremio_overrides)
     s = settings.Settings.model_validate({"dremio": base})
     settings._settings.set(s)
@@ -48,21 +37,13 @@ def _make_settings(**dremio_overrides):
 
 
 def _make_mock_ld_client(flag_values: dict):
-    """Create a mock LDClient that returns specified flag values."""
     mock_client = MagicMock()
     mock_client.is_initialized.return_value = True
-
-    def variation_side_effect(flag_key, context, default):
-        if flag_key in flag_values:
-            return flag_values[flag_key]
-        return default
-
-    mock_client.variation.side_effect = variation_side_effect
+    mock_client.variation.side_effect = lambda key, ctx, default: flag_values.get(key, default)
     return mock_client
 
 
 class TestFeatureFlagManagerMocked:
-    """Test FeatureFlagManager with mocked LD client."""
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_initialization_with_sdk_key(self, mock_ldclient):
@@ -87,9 +68,7 @@ class TestFeatureFlagManagerMocked:
         mock_ldclient.get.return_value = mock_client
 
         mgr = FeatureFlagManager("test-sdk-key")
-        result = mgr.get_flag("my_flag", default=False)
-
-        assert result is True
+        assert mgr.get_flag("my_flag", default=False) is True
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_get_flag_returns_default_when_not_found(self, mock_ldclient):
@@ -97,9 +76,7 @@ class TestFeatureFlagManagerMocked:
         mock_ldclient.get.return_value = mock_client
 
         mgr = FeatureFlagManager("test-sdk-key")
-        result = mgr.get_flag("unknown_flag", default="fallback")
-
-        assert result == "fallback"
+        assert mgr.get_flag("unknown_flag", default="fallback") == "fallback"
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_get_flag_returns_default_on_exception(self, mock_ldclient):
@@ -109,31 +86,7 @@ class TestFeatureFlagManagerMocked:
         mock_ldclient.get.return_value = mock_client
 
         mgr = FeatureFlagManager("test-sdk-key")
-        result = mgr.get_flag("error_flag", default="safe_default")
-
-        assert result == "safe_default"
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_bool_flag(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"bool_flag": True})
-        mock_ldclient.get.return_value = mock_client
-
-        mgr = FeatureFlagManager("test-sdk-key")
-        result = mgr.get_bool_flag("bool_flag", default=False)
-
-        assert result is True
-        assert isinstance(result, bool)
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_string_flag(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"str_flag": "variant_a"})
-        mock_ldclient.get.return_value = mock_client
-
-        mgr = FeatureFlagManager("test-sdk-key")
-        result = mgr.get_string_flag("str_flag", default="control")
-
-        assert result == "variant_a"
-        assert isinstance(result, str)
+        assert mgr.get_flag("error_flag", default="safe_default") == "safe_default"
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_singleton_pattern(self, mock_ldclient):
@@ -147,19 +100,18 @@ class TestFeatureFlagManagerMocked:
 
         assert mgr1 is mgr2
 
-    def test_singleton_raises_when_ld_not_configured(self):
-        _make_settings()  # No launchdarkly config
-        with pytest.raises(ValueError, match="LaunchDarkly is not configured"):
-            FeatureFlagManager.instance()
+    def test_singleton_disabled_when_ld_not_configured(self):
+        _make_settings()
+        mgr = FeatureFlagManager.instance()
+        assert mgr.is_enabled() is False
 
-    def test_singleton_raises_when_sdk_key_not_set(self):
-        _make_settings(launchdarkly={})  # launchdarkly present but no sdk_key
-        with pytest.raises(ValueError, match="SDK key is not set"):
-            FeatureFlagManager.instance()
+    def test_singleton_disabled_when_sdk_key_not_set(self):
+        _make_settings(launchdarkly={})
+        mgr = FeatureFlagManager.instance()
+        assert mgr.is_enabled() is False
 
 
 class TestGetterModel:
-    """Test GetterModel.get() pass-through behavior."""
 
     def test_get_returns_field_value(self):
         cfg = _make_settings(allow_dml=True)
@@ -170,26 +122,22 @@ class TestGetterModel:
         assert cfg.dremio.get("allow_dml") is False
 
     def test_get_returns_property_value(self):
-        """get() works with properties like pat that have custom getters."""
         cfg = _make_settings()
         assert cfg.dremio.get("pat") == "test-pat"
 
     def test_get_returns_property_with_file_resolution(self, tmp_path):
-        """get('pat') returns the resolved value from @file references."""
         pat_file = tmp_path / "pat.txt"
         pat_file.write_text("resolved-pat-value")
         cfg = _make_settings(pat=f"@{pat_file}")
         assert cfg.dremio.get("pat") == "resolved-pat-value"
 
     def test_get_returns_project_id_property(self):
-        """get('project_id') returns the string property, not raw UUID."""
         pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         cfg = _make_settings(project_id=pid)
         assert cfg.dremio.get("project_id") == pid
 
 
 class TestFlagPrefixPropagation:
-    """Test that _flag_prefix is auto-propagated through the model tree."""
 
     def test_dremio_prefix(self):
         cfg = _make_settings()
@@ -217,7 +165,6 @@ class TestFlagPrefixPropagation:
 
 
 class TestFlagAwareGetOnDremio:
-    """Test FlagAwareModel.get() with LD overrides on Dremio fields."""
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_get_allow_dml_overridden_by_ld(self, mock_ldclient):
@@ -262,7 +209,6 @@ class TestFlagAwareGetOnDremio:
 
 
 class TestFlagAwareGetOnSubModels:
-    """Test FlagAwareModel.get() with LD overrides on nested sub-models."""
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_get_api_polling_interval_overridden(self, mock_ldclient):
@@ -313,7 +259,6 @@ class TestFlagAwareGetOnSubModels:
 
 
 class TestMultipleFlagOverrides:
-    """Test that multiple flags can be overridden simultaneously."""
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_both_dremio_flags_overridden(self, mock_ldclient):
@@ -361,7 +306,6 @@ class TestMultipleFlagOverrides:
 
 
 class TestLaunchDarklyConfig:
-    """Test LaunchDarkly configuration model."""
 
     def test_ld_disabled_by_default(self):
         cfg = _make_settings()
@@ -396,7 +340,6 @@ class TestLaunchDarklyConfig:
 
 
 class TestNonOverridableFieldsUnaffected:
-    """Test that direct attribute access bypasses LD (only .get() checks LD)."""
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_direct_access_returns_config_value(self, mock_ldclient):
@@ -419,7 +362,6 @@ class TestNonOverridableFieldsUnaffected:
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_model_dump_returns_config_values(self, mock_ldclient):
-        """model_dump() returns config values, not LD overrides."""
         mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
         mock_ldclient.get.return_value = mock_client
 
@@ -429,7 +371,6 @@ class TestNonOverridableFieldsUnaffected:
 
 
 class TestRawPatBehavior:
-    """Test that raw_pat / pat property behavior is preserved."""
 
     def test_pat_direct_value(self):
         cfg = _make_settings(pat="direct-pat")
@@ -455,7 +396,6 @@ class TestRawPatBehavior:
         assert "pat" in dumped
 
     def test_get_pat_returns_resolved_value(self, tmp_path):
-        """get('pat') returns the property (resolved), not raw_pat."""
         pat_file = tmp_path / "pat.txt"
         pat_file.write_text("resolved-from-file")
         cfg = _make_settings(pat=f"@{pat_file}")
@@ -463,7 +403,6 @@ class TestRawPatBehavior:
 
 
 class TestRawEnableSearchBehavior:
-    """Test that enable_search field behavior is preserved after removing raw_ prefix."""
 
     def test_enable_search_default_false(self):
         cfg = _make_settings()

@@ -16,17 +16,11 @@
 from typing import Optional, Any, Self
 from dremioai import log
 import ldclient
-from ldclient import Context
 from ldclient.config import Config
 
 
 class FeatureFlagManager:
-    """
-    Manages LaunchDarkly feature flags for MCP server.
-
-    Simple wrapper around LaunchDarkly client that follows the pattern from
-    launchdarkly_manual_test.py. Takes sdk_key as input during construction.
-    """
+    """Manages LaunchDarkly feature flags for MCP server."""
 
     _instance: Optional[Self] = None
     _client: Optional[ldclient.LDClient] = None
@@ -57,70 +51,31 @@ class FeatureFlagManager:
 
     @classmethod
     def instance(cls) -> Self:
-        """
-        Get the singleton instance of FeatureFlagManager.
-
-        Lazily initializes from settings.instance().dremio.launchdarkly.sdk_key.
-
-        Returns:
-            FeatureFlagManager: The singleton instance
-
-        Raises:
-            ValueError: If LaunchDarkly is not configured in settings
-        """
+        """Lazily initializes from settings.instance().dremio.launchdarkly.sdk_key."""
         if cls._instance is None:
             from dremioai.config import settings as _settings
 
+            sdk_key = None
             s = _settings.instance()
-            if s is None or s.dremio is None or s.dremio.launchdarkly is None:
-                raise ValueError("LaunchDarkly is not configured in settings")
-            sdk_key = s.dremio.launchdarkly.sdk_key
-            if sdk_key is None:
-                raise ValueError("LaunchDarkly SDK key is not set in settings")
-            cls._instance = cls(sdk_key)
+            if s and s.dremio and s.dremio.launchdarkly:
+                sdk_key = s.dremio.launchdarkly.sdk_key
+            cls._instance = cls(sdk_key or "")
         return cls._instance
 
     @classmethod
     def reset(cls):
-        """Reset the singleton instance. Useful for testing."""
         if cls._instance and cls._instance._client:
             cls._instance._client.close()
         cls._instance = None
         cls._client = None
 
     def is_enabled(self) -> bool:
-        """
-        Check if LaunchDarkly is enabled and initialized.
-
-        Returns:
-            bool: True if LaunchDarkly client is ready
-        """
         return self._client is not None and self._client.is_initialized()
 
-    def get_flag(
-        self,
-        flag_key: str,
-        default: Any,
-        project_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-    ) -> Any:
-        """
-        Get feature flag value with context.
-
-        This method evaluates a feature flag using LaunchDarkly's multi-context
-        evaluation. The context includes project_id and org_id for targeting.
-        """
+    def get_flag(self, flag_key: str, default: Any) -> Any:
         try:
             if self.is_enabled():
-                multi_builder = Context.multi_builder()
-                for kind, key in [("projectId", project_id), ("orgId", org_id)]:
-                    if key is not None:
-                        multi_builder.add(Context.builder(key).kind(kind).build())
-                value = self._client.variation(
-                    flag_key,
-                    multi_builder.build(),
-                    default,
-                )
+                value = self._client.variation(flag_key, ldclient.Context.create("mcp-server"), default)
                 log.logger("feature_flags").debug(
                     f"Flag '{flag_key}' evaluated to: {value} (default: {default})"
                 )
@@ -130,22 +85,3 @@ class FeatureFlagManager:
                 f"Error evaluating flag '{flag_key}' using default: {default}"
             )
         return default
-
-    def get_bool_flag(
-        self,
-        flag_key: str,
-        default: bool = False,
-        project_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-    ) -> bool:
-        return bool(self.get_flag(flag_key, default, project_id=project_id, org_id=org_id))
-
-    def get_string_flag(
-        self,
-        flag_key: str,
-        default: str = "",
-        project_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-    ) -> str:
-        return str(self.get_flag(flag_key, default, project_id=project_id, org_id=org_id))
-
