@@ -192,7 +192,7 @@ class Dremio(BaseModel):
     ]
     raw_pat: Optional[str] = Field(default=None, alias="pat")
     raw_project_id: Optional[ProjectId] = Field(default=None, alias="project_id")
-    enable_search: Optional[bool] = Field(
+    raw_enable_search: Optional[bool] = Field(
         default=False,
         alias=AliasChoices("enable_search", "enable_experimental"),
         description="enable experimental tools",
@@ -278,22 +278,29 @@ class Dremio(BaseModel):
         return self.metrics.port if self.metrics is not None else None
 
     @property
+    def enable_search(self) -> bool:
+        """
+        Check if semantic search is enabled.
+
+        First checks the LaunchDarkly feature flag 'enable_search', then falls back
+        to the configured value in raw_enable_search.
+        """
+        flag_value = self.get_flag("enable_search", default=None)
+        if flag_value is not None:
+            return flag_value
+        return self.raw_enable_search if self.raw_enable_search is not None else False
+
+    @property
     def allow_dml(self) -> bool:
         """
         Check if DML operations are allowed.
 
         First checks the LaunchDarkly feature flag 'allow_dml', then falls back
         to the configured value in raw_allow_dml.
-
-        Returns:
-            bool: True if DML operations are allowed
         """
-        # Check feature flag first
         flag_value = self.get_flag("allow_dml", default=None)
         if flag_value is not None:
             return flag_value
-
-        # Fall back to config value
         return self.raw_allow_dml if self.raw_allow_dml is not None else False
 
     def get_flag(
@@ -326,7 +333,9 @@ class Dremio(BaseModel):
         if self._flag_manager is None:
             from dremioai.config.feature_flags import FeatureFlagManager
 
-            self._flag_manager = FeatureFlagManager.instance(sdk_key=self.launchdarkly.sdk_key)
+            self._flag_manager = FeatureFlagManager.instance(
+                sdk_key=self.launchdarkly.sdk_key,
+            )
 
         # Use provided project_id or fall back to self.project_id
         context_project_id = project_id if project_id is not None else self.project_id

@@ -13,7 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-from typing import Optional, Any, Dict, Self
+from typing import Optional, Any, Self
 from dremioai import log
 import ldclient
 from ldclient import Context
@@ -39,7 +39,6 @@ class FeatureFlagManager:
             return
 
         try:
-            # Use ldclient.set_config pattern (mirrors launchdarkly_manual_test.py)
             ldclient.set_config(Config(sdk_key))
             self._client = ldclient.get()
 
@@ -81,6 +80,7 @@ class FeatureFlagManager:
         if cls._instance and cls._instance._client:
             cls._instance._client.close()
         cls._instance = None
+        cls._client = None
 
     def is_enabled(self) -> bool:
         """
@@ -102,8 +102,7 @@ class FeatureFlagManager:
         Get feature flag value with context.
 
         This method evaluates a feature flag using LaunchDarkly's multi-context
-        evaluation. The context should include project_id (required) and org_id (optional)
-        for proper targeting.
+        evaluation. The context includes project_id and org_id for targeting.
         """
         try:
             if self.is_enabled():
@@ -116,7 +115,7 @@ class FeatureFlagManager:
                     f"Flag '{flag_key}' evaluated to: {value} (default: {default})"
                 )
                 return value
-        except:
+        except Exception:
             log.logger("feature_flags").exception(
                 f"Error evaluating flag '{flag_key}' using default: {default}"
             )
@@ -126,17 +125,19 @@ class FeatureFlagManager:
         self,
         flag_key: str,
         default: bool = False,
-        context: Optional[Dict[str, Any]] = None,
+        project_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> bool:
-        return bool(self.get_flag(flag_key, default, context))
+        return bool(self.get_flag(flag_key, default, project_id=project_id, org_id=org_id))
 
     def get_string_flag(
         self,
         flag_key: str,
         default: str = "",
-        context: Optional[Dict[str, Any]] = None,
+        project_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> str:
-        return str(self.get_flag(flag_key, default, context))
+        return str(self.get_flag(flag_key, default, project_id=project_id, org_id=org_id))
 
     def build_context(self, project_id=None, org_id=None) -> Context:
         # Build multi-context with projectId and orgId kinds (mirrors tests/ld.py pattern)
