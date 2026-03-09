@@ -56,21 +56,27 @@ class FeatureFlagManager:
             )
 
     @classmethod
-    def instance(cls, sdk_key: Optional[str] = None) -> Self:
+    def instance(cls) -> Self:
         """
         Get the singleton instance of FeatureFlagManager.
 
-        Args:
-            sdk_key: LaunchDarkly SDK key (required on first call)
+        Lazily initializes from settings.instance().dremio.launchdarkly.sdk_key.
 
         Returns:
             FeatureFlagManager: The singleton instance
+
+        Raises:
+            ValueError: If LaunchDarkly is not configured in settings
         """
         if cls._instance is None:
+            from dremioai.config import settings as _settings
+
+            s = _settings.instance()
+            if s is None or s.dremio is None or s.dremio.launchdarkly is None:
+                raise ValueError("LaunchDarkly is not configured in settings")
+            sdk_key = s.dremio.launchdarkly.sdk_key
             if sdk_key is None:
-                raise ValueError(
-                    "sdk_key is required when creating FeatureFlagManager instance"
-                )
+                raise ValueError("LaunchDarkly SDK key is not set in settings")
             cls._instance = cls(sdk_key)
         return cls._instance
 

@@ -27,20 +27,24 @@ from dremioai.config.feature_flags import FeatureFlagManager
 
 @pytest.fixture(autouse=True)
 def reset_feature_flag_manager():
-    """Reset the FeatureFlagManager singleton before each test."""
+    """Reset the FeatureFlagManager singleton and global settings before each test."""
     FeatureFlagManager.reset()
+    old = settings._settings.get()
     yield
     FeatureFlagManager.reset()
+    settings._settings.set(old)
 
 
 def _make_settings(**dremio_overrides):
-    """Helper to create Settings with Dremio config."""
+    """Helper to create Settings with Dremio config and set as global."""
     base = {
         "uri": "https://test.dremio.cloud",
         "pat": "test-pat",
     }
     base.update(dremio_overrides)
-    return settings.Settings.model_validate({"dremio": base})
+    s = settings.Settings.model_validate({"dremio": base})
+    settings._settings.set(s)
+    return s
 
 
 def _make_mock_ld_client(flag_values: dict):
@@ -137,13 +141,20 @@ class TestFeatureFlagManagerMocked:
         mock_client.is_initialized.return_value = True
         mock_ldclient.get.return_value = mock_client
 
-        mgr1 = FeatureFlagManager.instance(sdk_key="test-key")
+        _make_settings(launchdarkly={"sdk_key": "test-key"})
+        mgr1 = FeatureFlagManager.instance()
         mgr2 = FeatureFlagManager.instance()
 
         assert mgr1 is mgr2
 
-    def test_singleton_requires_sdk_key_on_first_call(self):
-        with pytest.raises(ValueError, match="sdk_key is required"):
+    def test_singleton_raises_when_ld_not_configured(self):
+        _make_settings()  # No launchdarkly config
+        with pytest.raises(ValueError, match="LaunchDarkly is not configured"):
+            FeatureFlagManager.instance()
+
+    def test_singleton_raises_when_sdk_key_not_set(self):
+        _make_settings(launchdarkly={})  # launchdarkly present but no sdk_key
+        with pytest.raises(ValueError, match="SDK key is not set"):
             FeatureFlagManager.instance()
 
 

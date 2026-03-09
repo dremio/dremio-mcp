@@ -230,20 +230,6 @@ class Dremio(FlagAwareModel):
     metrics: Optional[Metrics] = None
     launchdarkly: Optional[LaunchDarkly] = None
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        self._init_flag_manager()
-
-    def _init_flag_manager(self):
-        """Initialize the FeatureFlagManager singleton if LaunchDarkly is configured."""
-        if self.launchdarkly and self.launchdarkly.enabled:
-            try:
-                FeatureFlagManager.instance(sdk_key=self.launchdarkly.sdk_key)
-            except Exception:
-                log.logger("settings").exception(
-                    "Failed to initialize FeatureFlagManager"
-                )
-
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):
         return self.raw_pat if pat != self.raw_pat else pat
