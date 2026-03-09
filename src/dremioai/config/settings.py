@@ -51,6 +51,7 @@ from os import environ
 from importlib.util import find_spec
 from datetime import datetime
 from dremioai import log
+from dremioai.config.feature_flags import FeatureFlagManager
 
 ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
@@ -60,9 +61,9 @@ class GetterModel(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
-    def get(self, field_name: str):
+    def get(self, field_name: str, default: Any = None):
         """Get a field value by name."""
-        return getattr(self, field_name)
+        return getattr(self, field_name, default)
 
 
 class FlagAwareModel(GetterModel):
@@ -70,18 +71,17 @@ class FlagAwareModel(GetterModel):
 
     _flag_prefix: str = ""
 
-    def get(self, field_name: str):
+    def get(self, field_name: str, default: Any = None):
         """Get a field value. Checks LD flag first, falls back to config."""
-        from dremioai.config.feature_flags import FeatureFlagManager
-
-        mgr = FeatureFlagManager._instance
-        if mgr and mgr.is_enabled():
-            prefix = self._flag_prefix
-            key = f"{prefix}.{field_name}" if prefix else field_name
-            flag_value = mgr.get_flag(key, default=None)
-            if flag_value is not None:
-                return flag_value
-        return super().get(field_name)
+        try:
+            mgr = FeatureFlagManager.instance()
+            if mgr.is_enabled():
+                key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
+                if (flag := mgr.get_flag(key, default=default)) is not None:
+                    return flag
+        except ValueError:
+            pass  # FeatureFlagManager not initialized yet
+        return super().get(field_name, default)
 
 
 def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
@@ -237,8 +237,6 @@ class Dremio(FlagAwareModel):
     def _init_flag_manager(self):
         """Initialize the FeatureFlagManager singleton if LaunchDarkly is configured."""
         if self.launchdarkly and self.launchdarkly.enabled:
-            from dremioai.config.feature_flags import FeatureFlagManager
-
             try:
                 FeatureFlagManager.instance(sdk_key=self.launchdarkly.sdk_key)
             except Exception:
