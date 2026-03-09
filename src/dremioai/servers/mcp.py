@@ -158,7 +158,7 @@ def init(
     if transport == Transports.streamable_http and support_project_id_endpoints:
         mcp.support_project_id_endpoints = support_project_id_endpoints
     mode = reduce(ior, mode) if mode is not None else None
-    allow_dml = settings.instance().dremio and settings.instance().dremio.allow_dml
+    allow_dml = settings.instance().dremio and settings.instance().dremio.get("allow_dml")
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
         is_sql_tool = tool is tools.RunSqlQuery

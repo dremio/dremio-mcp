@@ -55,6 +55,35 @@ from dremioai import log
 ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
 
+class GetterModel(BaseModel):
+    """Base model with explicit getter for field access."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    def get(self, field_name: str):
+        """Get a field value by name."""
+        return getattr(self, field_name)
+
+
+class FlagAwareModel(GetterModel):
+    """GetterModel that checks LaunchDarkly flags before falling back to config values."""
+
+    _flag_prefix: str = ""
+
+    def get(self, field_name: str):
+        """Get a field value. Checks LD flag first, falls back to config."""
+        from dremioai.config.feature_flags import FeatureFlagManager
+
+        mgr = FeatureFlagManager._instance
+        if mgr and mgr.is_enabled():
+            prefix = self._flag_prefix
+            key = f"{prefix}.{field_name}" if prefix else field_name
+            flag_value = mgr.get_flag(key, default=None)
+            if flag_value is not None:
+                return flag_value
+        return super().get(field_name)
+
+
 def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
     if isinstance(server_mode, str):
         try:
@@ -70,7 +99,7 @@ def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
     return server_mode
 
 
-class Tools(BaseModel):
+class Tools(FlagAwareModel):
     server_mode: Annotated[
         Optional[Union[ToolType, int, str]], AfterValidator(_resolve_tools_settings)
     ] = Field(default=ToolType.FOR_SELF)
@@ -132,18 +161,16 @@ class OAuth2(BaseModel):
         return self.expiry is not None and self.expiry < datetime.now()
 
 
-class Wlm(BaseModel):
+class Wlm(FlagAwareModel):
     engine_name: Optional[str] = None
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class Metrics(BaseModel):
+class Metrics(FlagAwareModel):
     enabled: Optional[bool] = True
     port: Optional[int] = 9091
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class HttpRetry(BaseModel):
+class HttpRetry(FlagAwareModel):
     """Configuration for HTTP retry behavior with exponential backoff"""
 
     max_retries: Optional[int] = Field(
@@ -159,16 +186,14 @@ class HttpRetry(BaseModel):
     backoff_multiplier: Optional[float] = Field(
         default=2.0, description="Multiplier for exponential backoff"
     )
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class ApiSettings(BaseModel):
+class ApiSettings(FlagAwareModel):
     # HTTP retry configuration
     http_retry: Optional[HttpRetry] = Field(default_factory=HttpRetry)
     polling_interval: Optional[float] = Field(
         default=1, description="Polling interval for REST api in seconds"
     )
-    model_config = ConfigDict(validate_assignment=True)
 
 
 class LaunchDarkly(BaseModel):
@@ -186,29 +211,40 @@ class LaunchDarkly(BaseModel):
         return self.sdk_key is not None
 
 
-class Dremio(BaseModel):
+class Dremio(FlagAwareModel):
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
     ]
     raw_pat: Optional[str] = Field(default=None, alias="pat")
     raw_project_id: Optional[ProjectId] = Field(default=None, alias="project_id")
-    raw_enable_search: Optional[bool] = Field(
+    enable_search: Optional[bool] = Field(
         default=False,
         alias=AliasChoices("enable_search", "enable_experimental"),
         description="enable experimental tools",
     )
     oauth2: Optional[OAuth2] = None
-    raw_allow_dml: Optional[bool] = Field(default=False, alias="allow_dml")
+    allow_dml: Optional[bool] = Field(default=False)
     auth_issuer_uri_override: Optional[str] = None
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
     launchdarkly: Optional[LaunchDarkly] = None
-    model_config = ConfigDict(validate_assignment=True)
 
     def __init__(self, **data):
         super().__init__(**data)
-        self._flag_manager = None
+        self._init_flag_manager()
+
+    def _init_flag_manager(self):
+        """Initialize the FeatureFlagManager singleton if LaunchDarkly is configured."""
+        if self.launchdarkly and self.launchdarkly.enabled:
+            from dremioai.config.feature_flags import FeatureFlagManager
+
+            try:
+                FeatureFlagManager.instance(sdk_key=self.launchdarkly.sdk_key)
+            except Exception:
+                log.logger("settings").exception(
+                    "Failed to initialize FeatureFlagManager"
+                )
 
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):
@@ -277,89 +313,21 @@ class Dremio(BaseModel):
     def prometheus_metrics_port(self) -> int | None:
         return self.metrics.port if self.metrics is not None else None
 
-    @property
-    def enable_search(self) -> bool:
-        """
-        Check if semantic search is enabled.
 
-        First checks the LaunchDarkly feature flag 'enable_search', then falls back
-        to the configured value in raw_enable_search.
-        """
-        flag_value = self.get_flag("enable_search", default=None)
-        if flag_value is not None:
-            return flag_value
-        return self.raw_enable_search if self.raw_enable_search is not None else False
-
-    @property
-    def allow_dml(self) -> bool:
-        """
-        Check if DML operations are allowed.
-
-        First checks the LaunchDarkly feature flag 'allow_dml', then falls back
-        to the configured value in raw_allow_dml.
-        """
-        flag_value = self.get_flag("allow_dml", default=None)
-        if flag_value is not None:
-            return flag_value
-        return self.raw_allow_dml if self.raw_allow_dml is not None else False
-
-    def get_flag(
-        self,
-        flag_key: str,
-        default: Any,
-        project_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-    ) -> Any:
-        """
-        Get feature flag value with context.
-
-        This method evaluates a feature flag using LaunchDarkly. If LaunchDarkly is not
-        enabled or configured, it returns the default value.
-
-        Args:
-            flag_key: The LaunchDarkly feature flag key
-            default: Default value if flag is not found or LaunchDarkly is disabled
-            project_id: Optional project ID for context. If None, uses self.project_id
-            org_id: Optional organization ID for context
-
-        Returns:
-            The feature flag value, or default if unavailable
-        """
-        # Return default if LaunchDarkly is not configured
-        if not self.launchdarkly or not self.launchdarkly.enabled:
-            return default
-
-        # Lazy-load the feature flag manager with sdk_key
-        if self._flag_manager is None:
-            from dremioai.config.feature_flags import FeatureFlagManager
-
-            self._flag_manager = FeatureFlagManager.instance(
-                sdk_key=self.launchdarkly.sdk_key,
-            )
-
-        # Use provided project_id or fall back to self.project_id
-        context_project_id = project_id if project_id is not None else self.project_id
-
-        return self._flag_manager.get_flag(flag_key, default, project_id=context_project_id, org_id=org_id)
-
-
-class OpenAi(BaseModel):
+class OpenAi(FlagAwareModel):
     api_key: Annotated[str, AfterValidator(_resolve_token_file)] = None
     model: Optional[str] = Field(default="gpt-4o")
     org: Optional[str] = Field(default=None)
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class Ollama(BaseModel):
+class Ollama(FlagAwareModel):
     model: Optional[str] = Field(default="llama3.1")
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class LangChain(BaseModel):
+class LangChain(FlagAwareModel):
     llm: Optional[Model] = None
     openai: Optional[OpenAi] = Field(default_factory=OpenAi)
     ollama: Optional[Ollama] = Field(default=None)
-    model_config = ConfigDict(validate_assignment=True)
 
 
 class Prometheus(BaseModel):
@@ -386,19 +354,17 @@ class MCPServer(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
-class Anthropic(BaseModel):
+class Anthropic(FlagAwareModel):
     api_key: Annotated[str, AfterValidator(_resolve_token_file)] = None
     chat_model: Optional[str] = Field(default=None)
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class BeeAI(BaseModel):
+class BeeAI(FlagAwareModel):
     mcp_server: Optional[MCPServer] = Field(default=None)
     sliding_memory_size: Optional[int] = Field(default=10)
     anthropic: Optional[Anthropic] = Field(default=None)
     openai: Optional[OpenAi] = Field(default=None)
     ollama: Optional[Ollama] = Field(default=None)
-    model_config = ConfigDict(validate_assignment=True)
 
 
 class Settings(BaseSettings):
@@ -415,6 +381,9 @@ class Settings(BaseSettings):
         use_enum_values=True,
     )
 
+    def model_post_init(self, __context):
+        _propagate_flag_prefixes(self, "")
+
     def with_overrides(self, overrides: Dict[str, Any]) -> Self:
         def set_values(aparts: List[str], value: Any, obj: Any):
             if len(aparts) == 1 and hasattr(obj, aparts[0]):
@@ -430,6 +399,16 @@ class Settings(BaseSettings):
             set_values(aparts, value, self)
 
         return self
+
+
+def _propagate_flag_prefixes(obj, prefix: str):
+    """Walk the model tree and set _flag_prefix on each FlagAwareModel child."""
+    for name in type(obj).model_fields:
+        child = getattr(obj, name, None)
+        if isinstance(child, FlagAwareModel):
+            child_prefix = f"{prefix}.{name}" if prefix else name
+            object.__setattr__(child, '_flag_prefix', child_prefix)
+            _propagate_flag_prefixes(child, child_prefix)
 
 
 _settings: ContextVar[Settings] = ContextVar("settings", default=None)

@@ -106,9 +106,13 @@ class FeatureFlagManager:
         """
         try:
             if self.is_enabled():
+                multi_builder = Context.multi_builder()
+                for kind, key in [("projectId", project_id), ("orgId", org_id)]:
+                    if key is not None:
+                        multi_builder.add(Context.builder(key).kind(kind).build())
                 value = self._client.variation(
                     flag_key,
-                    self.build_context(project_id=project_id, org_id=org_id),
+                    multi_builder.build(),
                     default,
                 )
                 log.logger("feature_flags").debug(
@@ -139,13 +143,3 @@ class FeatureFlagManager:
     ) -> str:
         return str(self.get_flag(flag_key, default, project_id=project_id, org_id=org_id))
 
-    def build_context(self, project_id=None, org_id=None) -> Context:
-        # Build multi-context with projectId and orgId kinds (mirrors tests/ld.py pattern)
-        multi_builder = Context.multi_builder()
-
-        # Add contexts for each kind that has a value
-        for kind, value in [("projectId", project_id), ("orgId", org_id)]:
-            if value is not None:
-                multi_builder.add(Context.builder(value).kind(kind).build())
-
-        return multi_builder.build()
