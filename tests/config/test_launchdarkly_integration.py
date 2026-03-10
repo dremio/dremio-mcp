@@ -172,10 +172,6 @@ def test_flag_prefix_propagation(accessor, expected, overrides):
     assert accessor(cfg)._flag_prefix == expected
 
 
-def test_flag_prefix_tools():
-    cfg = settings.Settings.model_validate({})
-    assert cfg.tools._flag_prefix == "tools"
-
 
 # -- FlagAwareMixin.get() with LD overrides -----------------------------------
 

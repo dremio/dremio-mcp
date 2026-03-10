@@ -37,6 +37,7 @@ from typing import (
     Any,
     Callable,
     Literal,
+    ClassVar,
     Tuple,
     get_args,
     get_type_hints,
@@ -81,8 +82,11 @@ class GetterMixin:
 # unaffected by remote flag state.
 class FlagAwareMixin(GetterMixin):
     _flag_prefix: str = ""
+    _flag_exclude: ClassVar[frozenset[str]] = frozenset()
 
     def get(self, field_name: str):
+        if field_name in self._flag_exclude:
+            return super().get(field_name)
         key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
         return FeatureFlagManager.instance().get_flag(
             key, super().get(field_name)
@@ -109,7 +113,7 @@ def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
     return server_mode
 
 
-class Tools(FlagAwareModel):
+class Tools(BaseModel):
     server_mode: Annotated[
         Optional[Union[ToolType, int, str]], AfterValidator(_resolve_tools_settings)
     ] = Field(default=ToolType.FOR_SELF)
@@ -219,6 +223,8 @@ class LaunchDarkly(BaseModel):
 
 
 class Dremio(FlagAwareModel):
+    _flag_exclude: ClassVar[frozenset[str]] = frozenset({"uri", "raw_pat", "raw_project_id"})
+
     uri: Annotated[
         Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
     ]
@@ -413,8 +419,11 @@ def _propagate_flag_prefixes(obj: BaseModel, prefix: str):
 def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
     """Recursively collect all LD flag keys from a FlagAwareMixin model class."""
     keys = []
+    excluded = getattr(model_cls, "_flag_exclude", frozenset())
     hints = get_type_hints(model_cls, include_extras=True)
     for name in model_cls.model_fields:
+        if name in excluded:
+            continue
         key = f"{prefix}.{name}" if prefix else name
         annotation = hints[name]
         # Unwrap Optional[X] (Union[X, None]) to get the inner type X.
