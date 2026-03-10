@@ -374,6 +374,8 @@ class Settings(FlagAwareMixin, BaseSettings):
 
     def model_post_init(self, __context):
         _propagate_flag_prefixes(self, "")
+        if self.launchdarkly and self.launchdarkly.sdk_key:
+            FeatureFlagManager.initialize(self.launchdarkly.sdk_key)
 
     def with_overrides(self, overrides: Dict[str, Any]) -> Self:
         def set_values(aparts: List[str], value: Any, obj: Any):

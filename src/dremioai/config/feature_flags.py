@@ -42,12 +42,19 @@ class FeatureFlagManager:
             self._client = None
 
     @classmethod
-    def instance(cls) -> Self:
-        """Lazily initializes from settings.instance().launchdarkly.sdk_key."""
-        if cls._instance is None:
-            from dremioai.config import settings
+    def initialize(cls, sdk_key: str = None):
+        """Initialize the singleton with the given SDK key.
 
-            cls._instance = cls(settings.instance().launchdarkly.sdk_key)
+        Called by Settings.model_post_init to avoid circular imports
+        (feature_flags never imports settings).
+        """
+        cls.reset()
+        cls._instance = cls(sdk_key)
+
+    @classmethod
+    def instance(cls) -> Self:
+        if cls._instance is None:
+            cls._instance = cls(None)
         return cls._instance
 
     @classmethod

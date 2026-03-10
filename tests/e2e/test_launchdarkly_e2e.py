@@ -50,17 +50,14 @@ async def test_allow_dml_without_ld(mock_config_dir, logging_server, logging_lev
 
 
 def _enable_ld_mock(mock_ldclient, flag_values: dict):
-    """Set up LD mock by directly injecting a configured FeatureFlagManager.
+    """Set up LD mock by initializing FeatureFlagManager directly.
 
-    We bypass lazy init because the MCP server runs in a separate thread
-    with its own ContextVar copy — settings changes in the test thread
-    aren't visible there. But FeatureFlagManager._instance is a class var
-    shared across threads.
+    We call initialize() rather than relying on Settings.model_post_init
+    because the MCP server runs in a separate thread with its own ContextVar
+    copy. FeatureFlagManager._instance is a class var shared across threads.
     """
     mock_ldclient.get.return_value = _make_mock_ld_client(flag_values)
-    FeatureFlagManager.reset()
-    mgr = FeatureFlagManager("test-sdk-key")
-    FeatureFlagManager._instance = mgr
+    FeatureFlagManager.initialize("test-sdk-key")
 
 
 @pytest.mark.asyncio

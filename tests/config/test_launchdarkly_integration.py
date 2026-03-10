@@ -13,8 +13,11 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+from pathlib import Path
+
 import pytest
 from unittest.mock import patch, MagicMock
+from yaml import safe_load
 from dremioai.config import settings
 from dremioai.config.feature_flags import FeatureFlagManager
 
@@ -464,3 +467,39 @@ def test_log_level_from_env(monkeypatch):
     monkeypatch.setenv("DREMIOAI_LOG_LEVEL", "TRACE")
     cfg = settings.Settings.model_validate({})
     assert cfg.log_level == "TRACE"
+
+
+# -- Golden flag keys ----------------------------------------------------------
+
+
+def _collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
+    """Recursively collect all flag keys from a model class."""
+    keys = []
+    for name, field_info in model_cls.model_fields.items():
+        key = f"{prefix}.{name}" if prefix else name
+        annotation = field_info.annotation
+        # Unwrap Optional[X] -> X
+        args = getattr(annotation, "__args__", ())
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            annotation = non_none[0]
+        if isinstance(annotation, type) and issubclass(annotation, settings.FlagAwareMixin):
+            keys.extend(_collect_flag_keys(annotation, key))
+        else:
+            keys.append(key)
+    return sorted(keys)
+
+
+def test_flag_keys_match_golden():
+    """Prevent accidental flag key changes from field renames.
+
+    If this test fails, a field was renamed/added/removed, which changes
+    the LD flag key. Update the golden file intentionally:
+        python scripts/generate_flag_keys.py --write
+    """
+    golden_path = Path(__file__).parent / "golden_flag_keys.yaml"
+    golden = safe_load(golden_path.read_text())["flag_keys"]
+    actual = _collect_flag_keys(settings.Settings)
+    assert actual == golden, (
+        "Flag keys changed! If intentional, run: python scripts/generate_flag_keys.py --write"
+    )
