@@ -392,12 +392,12 @@ class Settings(FlagAwareMixin, BaseSettings):
         return self
 
 
-def _propagate_flag_prefixes(obj, prefix: str):
+def _propagate_flag_prefixes(obj: BaseModel, prefix: str):
     for name in type(obj).model_fields:
         child = getattr(obj, name, None)
         if isinstance(child, FlagAwareMixin):
             child_prefix = f"{prefix}.{name}" if prefix else name
-            object.__setattr__(child, "_flag_prefix", child_prefix)
+            child._flag_prefix = child_prefix
             _propagate_flag_prefixes(child, child_prefix)
 
 
