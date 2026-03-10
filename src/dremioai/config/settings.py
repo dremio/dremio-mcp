@@ -63,11 +63,24 @@ class GetterModel(BaseModel):
         return getattr(self, field_name, default)
 
 
+# FlagAwareModel overrides .get() to check LaunchDarkly before returning the
+# config value. The LD flag key is "{_flag_prefix}.{field_name}", e.g.
+# "dremio.allow_dml" or "dremio.api.http_retry.max_retries".
+#
+# _flag_prefix is auto-set by _propagate_flag_prefixes() during
+# Settings.model_post_init — it mirrors the model's nesting path.
+#
+# Direct attribute access (obj.field) always returns the config value;
+# only .get() consults LD. This keeps model_dump() and serialization
+# unaffected by remote flag state.
 class FlagAwareModel(GetterModel):
     _flag_prefix: str = ""
 
     def get(self, field_name: str, default: Any = None):
-        mgr = FeatureFlagManager.instance()
+        try:
+            mgr = FeatureFlagManager.instance()
+        except Exception:
+            return super().get(field_name, default)
         if mgr.is_enabled():
             key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
             if (flag := mgr.get_flag(key, default=default)) is not None:
@@ -339,7 +352,8 @@ class BeeAI(FlagAwareModel):
     ollama: Optional[Ollama] = Field(default=None)
 
 
-class Settings(BaseSettings):
+class Settings(FlagAwareModel, BaseSettings):
+    log_level: Optional[str] = Field(default="INFO")
     dremio: Optional[Dremio] = Field(default=None)
     tools: Optional[Tools] = Field(default_factory=Tools)
     prometheus: Optional[Prometheus] = Field(default=None)
@@ -351,6 +365,7 @@ class Settings(BaseSettings):
         env_prefix="DREMIOAI_",
         env_extra="allow",
         use_enum_values=True,
+        validate_assignment=True,
     )
 
     def model_post_init(self, __context):

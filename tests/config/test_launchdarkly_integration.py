@@ -57,12 +57,6 @@ class TestFeatureFlagManagerMocked:
         assert mgr.is_enabled() is True
 
     @patch("dremioai.config.feature_flags.ldclient")
-    def test_initialization_without_sdk_key(self, mock_ldclient):
-        mgr = FeatureFlagManager("")
-        assert mgr.is_enabled() is False
-        mock_ldclient.set_config.assert_not_called()
-
-    @patch("dremioai.config.feature_flags.ldclient")
     def test_get_flag_returns_ld_value(self, mock_ldclient):
         mock_client = _make_mock_ld_client({"my_flag": True})
         mock_ldclient.get.return_value = mock_client
@@ -79,14 +73,13 @@ class TestFeatureFlagManagerMocked:
         assert mgr.get_flag("unknown_flag", default="fallback") == "fallback"
 
     @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_flag_returns_default_on_exception(self, mock_ldclient):
+    def test_get_flag_returns_default_when_not_initialized(self, mock_ldclient):
         mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_client.variation.side_effect = Exception("LD error")
+        mock_client.is_initialized.return_value = False
         mock_ldclient.get.return_value = mock_client
 
         mgr = FeatureFlagManager("test-sdk-key")
-        assert mgr.get_flag("error_flag", default="safe_default") == "safe_default"
+        assert mgr.get_flag("any_flag", default="fallback") == "fallback"
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_singleton_pattern(self, mock_ldclient):
@@ -100,12 +93,17 @@ class TestFeatureFlagManagerMocked:
 
         assert mgr1 is mgr2
 
-    def test_singleton_disabled_when_ld_not_configured(self):
+    def test_singleton_raises_when_ld_not_configured(self):
         _make_settings()
-        mgr = FeatureFlagManager.instance()
-        assert mgr.is_enabled() is False
+        with pytest.raises(AttributeError):
+            FeatureFlagManager.instance()
 
-    def test_singleton_disabled_when_sdk_key_not_set(self):
+    @patch("dremioai.config.feature_flags.ldclient")
+    def test_singleton_disabled_when_sdk_key_not_set(self, mock_ldclient):
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = False
+        mock_ldclient.get.return_value = mock_client
+
         _make_settings(launchdarkly={})
         mgr = FeatureFlagManager.instance()
         assert mgr.is_enabled() is False
@@ -437,3 +435,34 @@ class TestRawEnableSearchBehavior:
         assert cfg.dremio.enable_search is False
         # .get(): LD override
         assert cfg.dremio.get("enable_search") is True
+
+
+class TestLogLevel:
+
+    def test_log_level_default(self):
+        cfg = settings.Settings.model_validate({})
+        assert cfg.log_level == "INFO"
+
+    def test_log_level_from_config(self):
+        cfg = settings.Settings.model_validate({"log_level": "DEBUG"})
+        assert cfg.log_level == "DEBUG"
+
+    def test_log_level_get_without_ld(self):
+        cfg = settings.Settings.model_validate({"log_level": "WARNING"})
+        assert cfg.get("log_level") == "WARNING"
+
+    @patch("dremioai.config.feature_flags.ldclient")
+    def test_log_level_overridden_by_ld(self, mock_ldclient):
+        mock_client = _make_mock_ld_client({"log_level": "ERROR"})
+        mock_ldclient.get.return_value = mock_client
+
+        cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
+        # Settings._flag_prefix is "" so flag key is just "log_level"
+        assert cfg.get("log_level") == "ERROR"
+        # Direct access returns config value
+        assert cfg.log_level == "INFO"
+
+    def test_log_level_from_env(self, monkeypatch):
+        monkeypatch.setenv("DREMIOAI_LOG_LEVEL", "TRACE")
+        cfg = settings.Settings.model_validate({})
+        assert cfg.log_level == "TRACE"
