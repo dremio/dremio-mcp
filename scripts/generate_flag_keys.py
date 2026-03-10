@@ -13,32 +13,41 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-"""
-Generate the golden YAML of all possible LaunchDarkly flag keys.
+"""Generate the golden YAML of all possible LaunchDarkly flag keys.
 
 Recursively walks Settings and all FlagAwareMixin sub-models to produce
 a sorted list of every flag key that .get() could consult.
 
 Usage:
-    python scripts/generate_flag_keys.py              # print to stdout
-    python scripts/generate_flag_keys.py --write      # overwrite golden file
+    uv run python scripts/generate_flag_keys.py              # print to stdout
+    uv run python scripts/generate_flag_keys.py --write      # overwrite golden file
 """
 from pathlib import Path
 
+from typer import Typer, Option
 from yaml import dump
 
 from dremioai.config.settings import Settings, collect_flag_keys
 
+app = Typer(help="Generate the golden YAML of all possible LaunchDarkly flag keys.")
+
 GOLDEN_PATH = Path(__file__).resolve().parent.parent / "tests" / "config" / "golden_flag_keys.yaml"
 
 
-def main():
-    import sys
+@app.command()
+def main(
+    write: bool = Option(False, "--write", help="Overwrite the golden file instead of printing to stdout."),
+):
+    """Print or write the sorted list of all LD flag keys.
 
+    Examples:
+        uv run python scripts/generate_flag_keys.py
+        uv run python scripts/generate_flag_keys.py --write
+    """
     keys = collect_flag_keys(Settings)
     output = dump({"flag_keys": keys}, default_flow_style=False, sort_keys=False)
 
-    if "--write" in sys.argv:
+    if write:
         GOLDEN_PATH.write_text(output)
         print(f"Written to {GOLDEN_PATH}")
     else:
@@ -46,4 +55,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    app()

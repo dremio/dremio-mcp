@@ -475,13 +475,13 @@ def test_flag_keys_match_golden():
 
     If this test fails, a field was renamed/added/removed, which changes
     the LD flag key. Update the golden file intentionally:
-        python scripts/generate_flag_keys.py --write
+        uv run python scripts/generate_flag_keys.py --write
     """
     golden_path = Path(__file__).parent / "golden_flag_keys.yaml"
     golden = safe_load(golden_path.read_text())["flag_keys"]
     actual = settings.collect_flag_keys(settings.Settings)
     assert actual == golden, (
-        "Flag keys changed! If intentional, run: python scripts/generate_flag_keys.py --write"
+        "Flag keys changed! If intentional, run: uv run python scripts/generate_flag_keys.py --write"
     )
 
 
