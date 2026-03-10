@@ -38,6 +38,8 @@ from typing import (
     Callable,
     Literal,
     Tuple,
+    get_args,
+    get_type_hints,
 )
 from dremioai.config.tools import ToolType
 from enum import auto, StrEnum
@@ -401,6 +403,24 @@ def _propagate_flag_prefixes(obj: BaseModel, prefix: str):
             child_prefix = f"{prefix}.{name}" if prefix else name
             child._flag_prefix = child_prefix
             _propagate_flag_prefixes(child, child_prefix)
+
+
+def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
+    """Recursively collect all LD flag keys from a FlagAwareMixin model class."""
+    keys = []
+    hints = get_type_hints(model_cls, include_extras=True)
+    for name in model_cls.model_fields:
+        key = f"{prefix}.{name}" if prefix else name
+        annotation = hints[name]
+        # Unwrap Optional[X] / Union[X, None] -> X
+        inner = [a for a in get_args(annotation) if a is not type(None)]
+        if len(inner) == 1:
+            annotation = inner[0]
+        if isinstance(annotation, type) and issubclass(annotation, FlagAwareMixin):
+            keys.extend(collect_flag_keys(annotation, key))
+        else:
+            keys.append(key)
+    return sorted(keys)
 
 
 _settings: ContextVar[Settings] = ContextVar("settings", default=None)
