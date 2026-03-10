@@ -412,7 +412,11 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
     for name in model_cls.model_fields:
         key = f"{prefix}.{name}" if prefix else name
         annotation = hints[name]
-        # Unwrap Optional[X] / Union[X, None] -> X
+        # Unwrap Optional[X] (Union[X, None]) to get the inner type X.
+        # Without this, annotation is a generic alias (not a type), so
+        # isinstance(annotation, type) would be False and we'd never
+        # recurse into sub-models. We only unwrap when there's exactly
+        # one non-None arg (i.e. Optional[X]); complex Unions are left as-is.
         inner = [a for a in get_args(annotation) if a is not type(None)]
         if len(inner) == 1:
             annotation = inner[0]
