@@ -184,28 +184,22 @@ def test_auth_urls(
 
 def test_launchdarkly_sdk_key_from_env_with_yaml_config(monkeypatch):
     """Test that LaunchDarkly SDK key can be set via env var while other settings are in YAML."""
-    # Set SDK key via environment variable
-    monkeypatch.setenv("DREMIOAI_DREMIO__LAUNCHDARKLY__SDK_KEY", "sdk-env-key-12345")
+    monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", "sdk-env-key-12345")
 
-    # Create settings with LaunchDarkly config in YAML (but no SDK key)
     s = settings.Settings.model_validate({
         "dremio": {
             "uri": "https://test.dremio.cloud",
             "pat": "test-pat",
-            "launchdarkly": {}
         }
     })
 
-    # Verify that SDK key from env var is picked up
-    assert s.dremio.launchdarkly is not None
-    assert s.dremio.launchdarkly.sdk_key == "sdk-env-key-12345"
-    # enabled property should be True when sdk_key is set
-    assert s.dremio.launchdarkly.enabled is True
+    assert s.launchdarkly.sdk_key == "sdk-env-key-12345"
+    assert s.launchdarkly.enabled is True
 
 
 def test_launchdarkly_all_from_env(monkeypatch):
     """Test that LaunchDarkly SDK key can be set via environment variable."""
-    monkeypatch.setenv("DREMIOAI_DREMIO__LAUNCHDARKLY__SDK_KEY", "sdk-env-key-67890")
+    monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", "sdk-env-key-67890")
 
     s = settings.Settings.model_validate({
         "dremio": {
@@ -214,48 +208,32 @@ def test_launchdarkly_all_from_env(monkeypatch):
         }
     })
 
-    assert s.dremio.launchdarkly is not None
-    assert s.dremio.launchdarkly.sdk_key == "sdk-env-key-67890"
-    # enabled property should be True when sdk_key is set
-    assert s.dremio.launchdarkly.enabled is True
+    assert s.launchdarkly.sdk_key == "sdk-env-key-67890"
+    assert s.launchdarkly.enabled is True
 
 
 def test_launchdarkly_sdk_key_from_file(tmp_path):
     """Test that LaunchDarkly SDK key can be loaded from a file."""
-    # Create a temporary file with SDK key
     sdk_key_file = tmp_path / "sdk_key.txt"
     sdk_key_file.write_text("sdk-file-key-abcdef")
 
     s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
-            "launchdarkly": {
-                "sdk_key": f"@{sdk_key_file}"
-            }
+        "launchdarkly": {
+            "sdk_key": f"@{sdk_key_file}"
         }
     })
 
-    assert s.dremio.launchdarkly is not None
-    assert s.dremio.launchdarkly.sdk_key == "sdk-file-key-abcdef"
-    # enabled property should be True when sdk_key is set
-    assert s.dremio.launchdarkly.enabled is True
+    assert s.launchdarkly.sdk_key == "sdk-file-key-abcdef"
+    assert s.launchdarkly.enabled is True
 
 
 def test_launchdarkly_defaults():
     """Test that LaunchDarkly has correct default values."""
-    s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
-            "launchdarkly": {}
-        }
-    })
+    s = settings.Settings.model_validate({})
 
-    assert s.dremio.launchdarkly is not None
-    assert s.dremio.launchdarkly.sdk_key is None
-    # enabled property should be False when sdk_key is None
-    assert s.dremio.launchdarkly.enabled is False
+    assert s.launchdarkly is not None
+    assert s.launchdarkly.sdk_key is None
+    assert s.launchdarkly.enabled is False
 
 
 def test_dremio_get_without_launchdarkly():
@@ -277,7 +255,6 @@ def test_dremio_get_with_launchdarkly_disabled():
         "dremio": {
             "uri": "https://test.dremio.cloud",
             "pat": "test-pat",
-            "launchdarkly": {},  # No SDK key, so disabled
             "enable_search": True,
         }
     })

@@ -43,16 +43,11 @@ class FeatureFlagManager:
 
     @classmethod
     def instance(cls) -> Self:
-        """Lazily initializes from settings.instance().dremio.launchdarkly.sdk_key."""
+        """Lazily initializes from settings.instance().launchdarkly.sdk_key."""
         if cls._instance is None:
             from dremioai.config import settings
 
-            sdk_key = None
-            try:
-                sdk_key = settings.instance().dremio.launchdarkly.sdk_key
-            except (AttributeError, TypeError):
-                pass
-            cls._instance = cls(sdk_key)
+            cls._instance = cls(settings.instance().launchdarkly.sdk_key)
         return cls._instance
 
     @classmethod

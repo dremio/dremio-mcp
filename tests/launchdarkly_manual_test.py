@@ -58,7 +58,7 @@ def main(
     org_id: Annotated[Optional[str], Option(help="Organization ID for context")] = None,
     default: Annotated[bool, Option(help="Default value if flag not found")] = False,
 ):
-    if sdk_key is None and settings.instance().dremio.launchdarkly.sdk_key is None:
+    if sdk_key is None and settings.instance().launchdarkly.sdk_key is None:
         raise ValueError("SDK key is required")
 
     async def get_flag():
@@ -71,7 +71,7 @@ def main(
         settings.run_with(
             get_flag,
             {
-                "dremio.launchdarkly.sdk_key": sdk_key,
+                "launchdarkly.sdk_key": sdk_key,
                 "dremio.project_id": project_id,
             },
         )

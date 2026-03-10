@@ -28,10 +28,13 @@ def reset_feature_flag_manager():
     settings._settings.set(old)
 
 
-def _make_settings(**dremio_overrides):
+def _make_settings(launchdarkly=None, **dremio_overrides):
     base = {"uri": "https://test.dremio.cloud", "pat": "test-pat"}
     base.update(dremio_overrides)
-    s = settings.Settings.model_validate({"dremio": base})
+    cfg = {"dremio": base}
+    if launchdarkly is not None:
+        cfg["launchdarkly"] = launchdarkly
+    s = settings.Settings.model_validate(cfg)
     settings._settings.set(s)
     return s
 
@@ -297,17 +300,13 @@ def test_ld_partial_override_one_flag_only(mock_ldclient):
 
 
 @pytest.mark.parametrize("ld_config,expected", [
-    pytest.param(None, None, id="not_configured"),
+    pytest.param(None, False, id="default"),
     pytest.param({}, False, id="no_sdk_key"),
     pytest.param({"sdk_key": "test-key"}, True, id="with_sdk_key"),
 ])
 def test_ld_enabled_state(ld_config, expected):
-    overrides = {"launchdarkly": ld_config} if ld_config is not None else {}
-    cfg = _make_settings(**overrides)
-    if expected is None:
-        assert cfg.dremio.launchdarkly is None
-    else:
-        assert cfg.dremio.launchdarkly.enabled is expected
+    cfg = _make_settings(launchdarkly=ld_config)
+    assert cfg.launchdarkly.enabled is expected
 
 
 def test_ld_sdk_key_from_file(tmp_path):
@@ -315,20 +314,19 @@ def test_ld_sdk_key_from_file(tmp_path):
     key_file.write_text("file-sdk-key-abc")
 
     cfg = _make_settings(launchdarkly={"sdk_key": f"@{key_file}"})
-    assert cfg.dremio.launchdarkly.sdk_key == "file-sdk-key-abc"
+    assert cfg.launchdarkly.sdk_key == "file-sdk-key-abc"
 
 
 def test_ld_sdk_key_from_env(monkeypatch):
-    monkeypatch.setenv("DREMIOAI_DREMIO__LAUNCHDARKLY__SDK_KEY", "env-sdk-key")
+    monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", "env-sdk-key")
 
     cfg = settings.Settings.model_validate({
         "dremio": {
             "uri": "https://test.dremio.cloud",
             "pat": "test-pat",
-            "launchdarkly": {},
         }
     })
-    assert cfg.dremio.launchdarkly.sdk_key == "env-sdk-key"
+    assert cfg.launchdarkly.sdk_key == "env-sdk-key"
 
 
 # -- Direct access vs .get() --------------------------------------------------

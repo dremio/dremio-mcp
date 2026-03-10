@@ -233,7 +233,6 @@ class Dremio(FlagAwareModel):
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
-    launchdarkly: Optional[LaunchDarkly] = None
 
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):
@@ -360,6 +359,7 @@ class Settings(FlagAwareMixin, BaseSettings):
     log_level: Optional[str] = Field(default="INFO")
     dremio: Optional[Dremio] = Field(default=None)
     tools: Optional[Tools] = Field(default_factory=Tools)
+    launchdarkly: Optional[LaunchDarkly] = Field(default_factory=LaunchDarkly)
     prometheus: Optional[Prometheus] = Field(default=None)
     langchain: Optional[LangChain] = Field(default=None)
     beeai: Optional[BeeAI] = Field(default=None)
