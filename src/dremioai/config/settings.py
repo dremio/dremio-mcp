@@ -37,7 +37,6 @@ from typing import (
     Any,
     Callable,
     Literal,
-    ClassVar,
     Tuple,
     get_args,
     get_type_hints,
@@ -70,6 +69,19 @@ class GetterMixin:
         return getattr(self, field_name)
 
 
+# Annotated marker to exclude a field from LaunchDarkly flag lookups.
+# Usage: field: Annotated[type, NoFlag()] = Field(...)
+class NoFlag:
+    """Mark a field to skip LD flag lookups in FlagAwareMixin.get()."""
+    pass
+
+
+def _has_no_flag(model_cls: type, field_name: str) -> bool:
+    """Check if a field has the NoFlag annotation marker."""
+    info = model_cls.model_fields.get(field_name)
+    return info is not None and any(isinstance(m, NoFlag) for m in info.metadata)
+
+
 # FlagAwareMixin overrides .get() to check LaunchDarkly before returning the
 # config value. The LD flag key is "{_flag_prefix}.{field_name}", e.g.
 # "dremio.allow_dml" or "dremio.api.http_retry.max_retries".
@@ -80,12 +92,13 @@ class GetterMixin:
 # Direct attribute access (obj.field) always returns the config value;
 # only .get() consults LD. This keeps model_dump() and serialization
 # unaffected by remote flag state.
+#
+# Fields annotated with NoFlag() are excluded from LD lookups.
 class FlagAwareMixin(GetterMixin):
     _flag_prefix: str = ""
-    _flag_exclude: ClassVar[frozenset[str]] = frozenset()
 
     def get(self, field_name: str):
-        if field_name in self._flag_exclude:
+        if _has_no_flag(type(self), field_name):
             return super().get(field_name)
         key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
         return FeatureFlagManager.instance().get_flag(
@@ -223,13 +236,11 @@ class LaunchDarkly(BaseModel):
 
 
 class Dremio(FlagAwareModel):
-    _flag_exclude: ClassVar[frozenset[str]] = frozenset({"uri", "raw_pat", "raw_project_id"})
-
     uri: Annotated[
-        Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
+        Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri), NoFlag()
     ]
-    raw_pat: Optional[str] = Field(default=None, alias="pat")
-    raw_project_id: Optional[ProjectId] = Field(default=None, alias="project_id")
+    raw_pat: Annotated[Optional[str], NoFlag()] = Field(default=None, alias="pat")
+    raw_project_id: Annotated[Optional[ProjectId], NoFlag()] = Field(default=None, alias="project_id")
     enable_search: Optional[bool] = Field(
         default=False,
         alias=AliasChoices("enable_search", "enable_experimental"),
@@ -419,10 +430,9 @@ def _propagate_flag_prefixes(obj: BaseModel, prefix: str):
 def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
     """Recursively collect all LD flag keys from a FlagAwareMixin model class."""
     keys = []
-    excluded = getattr(model_cls, "_flag_exclude", frozenset())
     hints = get_type_hints(model_cls, include_extras=True)
     for name in model_cls.model_fields:
-        if name in excluded:
+        if _has_no_flag(model_cls, name):
             continue
         key = f"{prefix}.{name}" if prefix else name
         annotation = hints[name]

@@ -236,6 +236,31 @@ def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Serve
     return server
 
 
+_LOG_LEVEL_REFRESH_INTERVAL = 60  # seconds
+
+
+def _start_log_level_refresh():
+    """Start a daemon thread that periodically syncs log level from LD flags."""
+    def _refresh_loop():
+        _log = log.logger("log_level_refresh")
+        while True:
+            import time
+            time.sleep(_LOG_LEVEL_REFRESH_INTERVAL)
+            try:
+                s = settings.instance()
+                if s is None:
+                    continue
+                level_name = s.get("log_level")
+                level = getattr(logging, level_name.upper(), None)
+                if level is not None and level != log.level():
+                    _log.info(f"Updating log level to {level_name}")
+                    log.set_level(level)
+            except Exception as e:
+                _log.debug(f"Log level refresh failed: {e}")
+
+    threading.Thread(target=_refresh_loop, daemon=True).start()
+
+
 def run_with_metrics_server(
     app: FastMCP, transport: Transports, metrics_server: uvicorn.Server | None = None
 ):
@@ -255,6 +280,7 @@ def run_with_metrics_server(
             target=lambda: asyncio.run(metrics_server.serve()), daemon=True
         ).start()
 
+    _start_log_level_refresh()
     app.run(transport=transport.value)
 
 
