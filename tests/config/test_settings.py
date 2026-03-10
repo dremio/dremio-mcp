@@ -182,9 +182,9 @@ def test_auth_urls(
     assert d.auth_endpoints == auth
 
 
-def test_launchdarkly_sdk_key_from_env_with_yaml_config(monkeypatch):
-    """Test that LaunchDarkly SDK key can be set via env var while other settings are in YAML."""
-    monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", "sdk-env-key-12345")
+@pytest.mark.parametrize("sdk_key", ["sdk-env-key-12345", "sdk-env-key-67890"])
+def test_launchdarkly_sdk_key_from_env(monkeypatch, sdk_key):
+    monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", sdk_key)
 
     s = settings.Settings.model_validate({
         "dremio": {
@@ -193,22 +193,7 @@ def test_launchdarkly_sdk_key_from_env_with_yaml_config(monkeypatch):
         }
     })
 
-    assert s.launchdarkly.sdk_key == "sdk-env-key-12345"
-    assert s.launchdarkly.enabled is True
-
-
-def test_launchdarkly_all_from_env(monkeypatch):
-    """Test that LaunchDarkly SDK key can be set via environment variable."""
-    monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", "sdk-env-key-67890")
-
-    s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat"
-        }
-    })
-
-    assert s.launchdarkly.sdk_key == "sdk-env-key-67890"
+    assert s.launchdarkly.sdk_key == sdk_key
     assert s.launchdarkly.enabled is True
 
 
