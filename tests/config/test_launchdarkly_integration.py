@@ -62,7 +62,7 @@ class TestFeatureFlagManagerMocked:
         mock_ldclient.get.return_value = mock_client
 
         mgr = FeatureFlagManager("test-sdk-key")
-        assert mgr.get_flag("my_flag", default=False) is True
+        assert mgr.get_flag("my_flag", False) is True
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_get_flag_returns_default_when_not_found(self, mock_ldclient):
@@ -70,7 +70,7 @@ class TestFeatureFlagManagerMocked:
         mock_ldclient.get.return_value = mock_client
 
         mgr = FeatureFlagManager("test-sdk-key")
-        assert mgr.get_flag("unknown_flag", default="fallback") == "fallback"
+        assert mgr.get_flag("unknown_flag", "fallback") == "fallback"
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_get_flag_returns_default_when_not_initialized(self, mock_ldclient):
@@ -79,7 +79,7 @@ class TestFeatureFlagManagerMocked:
         mock_ldclient.get.return_value = mock_client
 
         mgr = FeatureFlagManager("test-sdk-key")
-        assert mgr.get_flag("any_flag", default="fallback") == "fallback"
+        assert mgr.get_flag("any_flag", "fallback") == "fallback"
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_singleton_pattern(self, mock_ldclient):
@@ -93,10 +93,10 @@ class TestFeatureFlagManagerMocked:
 
         assert mgr1 is mgr2
 
-    def test_singleton_raises_when_ld_not_configured(self):
+    def test_singleton_disabled_when_ld_not_configured(self):
         _make_settings()
-        with pytest.raises(AttributeError):
-            FeatureFlagManager.instance()
+        mgr = FeatureFlagManager.instance()
+        assert mgr.is_enabled() is False
 
     @patch("dremioai.config.feature_flags.ldclient")
     def test_singleton_disabled_when_sdk_key_not_set(self, mock_ldclient):

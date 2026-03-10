@@ -63,11 +63,7 @@ class GetterMixin:
     Use with BaseModel or BaseSettings via multiple inheritance.
     """
 
-    def get(self, field_name: str, default: Any = None):
-        if not hasattr(self, field_name):
-            raise AttributeError(
-                f"'{type(self).__name__}' has no attribute '{field_name}'"
-            )
+    def get(self, field_name: str):
         return getattr(self, field_name)
 
 
@@ -84,20 +80,11 @@ class GetterMixin:
 class FlagAwareMixin(GetterMixin):
     _flag_prefix: str = ""
 
-    def get(self, field_name: str, default: Any = None):
-        if not hasattr(self, field_name):
-            raise AttributeError(
-                f"'{type(self).__name__}' has no attribute '{field_name}'"
-            )
-        try:
-            mgr = FeatureFlagManager.instance()
-        except Exception:
-            return super().get(field_name, default)
-        if mgr.is_enabled():
-            key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
-            if (flag := mgr.get_flag(key, default=default)) is not None:
-                return flag
-        return super().get(field_name, default)
+    def get(self, field_name: str):
+        key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
+        return FeatureFlagManager.instance().get_flag(
+            key, super().get(field_name)
+        )
 
 
 # Convenience base for sub-models that need both FlagAwareMixin and BaseModel.
@@ -410,7 +397,7 @@ def _propagate_flag_prefixes(obj, prefix: str):
         child = getattr(obj, name, None)
         if isinstance(child, FlagAwareMixin):
             child_prefix = f"{prefix}.{name}" if prefix else name
-            object.__setattr__(child, '_flag_prefix', child_prefix)
+            object.__setattr__(child, "_flag_prefix", child_prefix)
             _propagate_flag_prefixes(child, child_prefix)
 
 

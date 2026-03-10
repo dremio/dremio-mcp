@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import logging
 from typing import Optional, Any, Self, ClassVar
 from dremioai import log
 import ldclient
@@ -26,7 +27,10 @@ class FeatureFlagManager:
     _instance: ClassVar[Self] = None
 
     def __init__(self, sdk_key: str):
-        try:
+        if sdk_key is not None:
+            self._log.info(
+                f"Initializing LaunchDarkly client with SDK key: {len(sdk_key)} bytes"
+            )
             ldclient.set_config(Config(sdk_key))
             self._client = ldclient.get()
 
@@ -34,9 +38,8 @@ class FeatureFlagManager:
                 self._log.info("LaunchDarkly client initialized successfully")
             else:
                 self._log.warning("LaunchDarkly client initialization pending")
-        except:
-            self._log.exception(f"Failed to initialize LaunchDarkly client")
-            raise
+        else:
+            self._client = None
 
     @classmethod
     def instance(cls) -> Self:
@@ -44,7 +47,11 @@ class FeatureFlagManager:
         if cls._instance is None:
             from dremioai.config import settings
 
-            sdk_key = settings.instance().dremio.launchdarkly.sdk_key
+            sdk_key = None
+            try:
+                sdk_key = settings.instance().dremio.launchdarkly.sdk_key
+            except (AttributeError, TypeError):
+                pass
             cls._instance = cls(sdk_key)
         return cls._instance
 
@@ -59,8 +66,12 @@ class FeatureFlagManager:
 
     def get_flag(self, flag_key: str, default: Any) -> Any:
         if not self.is_enabled():
-            self._log.debug(
-                f"Flag '{flag_key}' not evaluated, LaunchDarkly not enabled/initialized (default: {default})"
+            state, level = "enabled", logging.DEBUG
+            if self._client is not None:
+                state, level = "initialized", logging.WARNING
+            self._log.log(
+                level,
+                f"Flag '{flag_key}' not evaluated, LaunchDarkly not {state}",
             )
             return default
         value = self._client.variation(
