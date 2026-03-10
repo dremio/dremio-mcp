@@ -13,6 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import asyncio
+import logging
 from pathlib import Path
 
 import pytest
@@ -481,3 +483,63 @@ def test_flag_keys_match_golden():
     assert actual == golden, (
         "Flag keys changed! If intentional, run: python scripts/generate_flag_keys.py --write"
     )
+
+
+# -- Periodic log level refresh -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_log_level_refresh_updates_level():
+    """Periodic refresh picks up LD log_level changes and updates logging."""
+    from dremioai.servers.mcp import _log_level_refresh_loop, _LOG_LEVEL_REFRESH_INTERVAL
+    from dremioai import log
+
+    _make_settings()
+    original_level = log.level()
+
+    mock_client = MagicMock()
+    mock_client.is_initialized.return_value = True
+    mock_client.variation.side_effect = lambda key, ctx, default: (
+        "DEBUG" if key == "log_level" else default
+    )
+
+    with patch("dremioai.config.feature_flags.ldclient") as mock_ldclient:
+        mock_ldclient.get.return_value = mock_client
+        FeatureFlagManager.initialize("test-sdk-key")
+
+        # Run one iteration with a short interval
+        with patch("dremioai.servers.mcp._LOG_LEVEL_REFRESH_INTERVAL", 0):
+            task = asyncio.create_task(_log_level_refresh_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        assert log.level() == logging.DEBUG
+
+    # Restore original level
+    log.set_level(original_level)
+
+
+@pytest.mark.asyncio
+async def test_log_level_refresh_no_change_when_same():
+    """Refresh loop does not call set_level when level hasn't changed."""
+    from dremioai.servers.mcp import _log_level_refresh_loop
+    from dremioai import log
+
+    _make_settings()
+
+    with patch("dremioai.servers.mcp._LOG_LEVEL_REFRESH_INTERVAL", 0), \
+         patch.object(log, "set_level") as mock_set_level:
+        task = asyncio.create_task(_log_level_refresh_loop())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    # log_level defaults to INFO, which is already the current level
+    mock_set_level.assert_not_called()
