@@ -58,6 +58,7 @@ from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
 import asyncio
+import contextlib
 from yaml import dump
 import sys
 import uvicorn
@@ -150,7 +151,7 @@ def init(
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
     )
-    opts = {"log_level": "DEBUG", "debug": True}
+    opts = {"log_level": "DEBUG", "debug": True, "lifespan": _server_lifespan}
     if port is not None:
         opts["port"] = port
     if host is not None:
@@ -239,26 +240,32 @@ def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Serve
 _LOG_LEVEL_REFRESH_INTERVAL = 60  # seconds
 
 
-def _start_log_level_refresh():
-    """Start a daemon thread that periodically syncs log level from LD flags."""
-    def _refresh_loop():
-        _log = log.logger("log_level_refresh")
-        while True:
-            import time
-            time.sleep(_LOG_LEVEL_REFRESH_INTERVAL)
-            try:
-                s = settings.instance()
-                if s is None:
-                    continue
-                level_name = s.get("log_level")
-                level = getattr(logging, level_name.upper(), None)
-                if level is not None and level != log.level():
-                    _log.info(f"Updating log level to {level_name}")
-                    log.set_level(level)
-            except Exception as e:
-                _log.debug(f"Log level refresh failed: {e}")
+async def _log_level_refresh_loop():
+    """Periodically sync log level from LD flags."""
+    _log = log.logger("log_level_refresh")
+    while True:
+        await asyncio.sleep(_LOG_LEVEL_REFRESH_INTERVAL)
+        try:
+            s = settings.instance()
+            if s is None:
+                continue
+            level_name = s.get("log_level")
+            level = getattr(logging, level_name.upper(), None)
+            if level is not None and level != log.level():
+                _log.info(f"Updating log level to {level_name}")
+                log.set_level(level)
+        except Exception as e:
+            _log.debug(f"Log level refresh failed: {e}")
 
-    threading.Thread(target=_refresh_loop, daemon=True).start()
+
+@contextlib.asynccontextmanager
+async def _server_lifespan(app: FastMCP):
+    """Lifespan context manager that runs background tasks alongside the server."""
+    task = asyncio.create_task(_log_level_refresh_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
 
 
 def run_with_metrics_server(
@@ -280,7 +287,6 @@ def run_with_metrics_server(
             target=lambda: asyncio.run(metrics_server.serve()), daemon=True
         ).start()
 
-    _start_log_level_refresh()
     app.run(transport=transport.value)
 
 
