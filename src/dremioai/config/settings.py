@@ -304,20 +304,23 @@ class Dremio(FlagAwareModel):
         return self.metrics.port if self.metrics is not None else None
 
 
-class OpenAi(FlagAwareModel):
+class OpenAi(BaseModel):
     api_key: Annotated[str, AfterValidator(_resolve_token_file)] = None
     model: Optional[str] = Field(default="gpt-4o")
     org: Optional[str] = Field(default=None)
+    model_config = ConfigDict(validate_assignment=True)
 
 
-class Ollama(FlagAwareModel):
+class Ollama(BaseModel):
     model: Optional[str] = Field(default="llama3.1")
+    model_config = ConfigDict(validate_assignment=True)
 
 
-class LangChain(FlagAwareModel):
+class LangChain(BaseModel):
     llm: Optional[Model] = None
     openai: Optional[OpenAi] = Field(default_factory=OpenAi)
     ollama: Optional[Ollama] = Field(default=None)
+    model_config = ConfigDict(validate_assignment=True)
 
 
 class Prometheus(BaseModel):
@@ -344,17 +347,19 @@ class MCPServer(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
-class Anthropic(FlagAwareModel):
+class Anthropic(BaseModel):
     api_key: Annotated[str, AfterValidator(_resolve_token_file)] = None
     chat_model: Optional[str] = Field(default=None)
+    model_config = ConfigDict(validate_assignment=True)
 
 
-class BeeAI(FlagAwareModel):
+class BeeAI(BaseModel):
     mcp_server: Optional[MCPServer] = Field(default=None)
     sliding_memory_size: Optional[int] = Field(default=10)
     anthropic: Optional[Anthropic] = Field(default=None)
     openai: Optional[OpenAi] = Field(default=None)
     ollama: Optional[Ollama] = Field(default=None)
+    model_config = ConfigDict(validate_assignment=True)
 
 
 class Settings(FlagAwareMixin, BaseSettings):
