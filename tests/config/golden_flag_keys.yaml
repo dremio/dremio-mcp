@@ -1,5 +1,4 @@
 flag_keys:
-- beeai
 - dremio.allow_dml
 - dremio.api.http_retry.backoff_multiplier
 - dremio.api.http_retry.initial_delay
@@ -10,13 +9,9 @@ flag_keys:
 - dremio.enable_search
 - dremio.metrics.enabled
 - dremio.metrics.port
-- dremio.oauth2
 - dremio.raw_pat
 - dremio.raw_project_id
 - dremio.uri
 - dremio.wlm.engine_name
-- langchain
-- launchdarkly
 - log_level
-- prometheus
 - tools.server_mode

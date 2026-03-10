@@ -427,6 +427,10 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
             annotation = inner[0]
         if isinstance(annotation, type) and issubclass(annotation, FlagAwareMixin):
             keys.extend(collect_flag_keys(annotation, key))
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            # Non-flag-aware sub-models (e.g. LangChain, BeeAI) are opaque
+            # objects, not individual LD flags — skip them entirely.
+            continue
         else:
             keys.append(key)
     return sorted(keys)
