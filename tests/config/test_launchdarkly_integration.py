@@ -61,22 +61,15 @@ def test_ffm_initialization_with_sdk_key(mock_ldclient):
     assert mgr.is_enabled() is True
 
 
+@pytest.mark.parametrize("flags,key,default,expected", [
+    pytest.param({"my_flag": True}, "my_flag", False, True, id="found"),
+    pytest.param({}, "unknown_flag", "fallback", "fallback", id="not_found"),
+])
 @patch("dremioai.config.feature_flags.ldclient")
-def test_ffm_get_flag_returns_ld_value(mock_ldclient):
-    mock_client = _make_mock_ld_client({"my_flag": True})
-    mock_ldclient.get.return_value = mock_client
-
+def test_ffm_get_flag(mock_ldclient, flags, key, default, expected):
+    mock_ldclient.get.return_value = _make_mock_ld_client(flags)
     mgr = FeatureFlagManager("test-sdk-key")
-    assert mgr.get_flag("my_flag", False) is True
-
-
-@patch("dremioai.config.feature_flags.ldclient")
-def test_ffm_get_flag_returns_default_when_not_found(mock_ldclient):
-    mock_client = _make_mock_ld_client({})
-    mock_ldclient.get.return_value = mock_client
-
-    mgr = FeatureFlagManager("test-sdk-key")
-    assert mgr.get_flag("unknown_flag", "fallback") == "fallback"
+    assert mgr.get_flag(key, default) == expected
 
 
 @patch("dremioai.config.feature_flags.ldclient")
