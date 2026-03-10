@@ -43,441 +43,433 @@ def _make_mock_ld_client(flag_values: dict):
     return mock_client
 
 
-class TestFeatureFlagManagerMocked:
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_initialization_with_sdk_key(self, mock_ldclient):
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_ldclient.get.return_value = mock_client
+# -- FeatureFlagManager -------------------------------------------------------
 
-        mgr = FeatureFlagManager("test-sdk-key")
 
-        mock_ldclient.set_config.assert_called_once()
-        assert mgr.is_enabled() is True
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ffm_initialization_with_sdk_key(mock_ldclient):
+    mock_client = MagicMock()
+    mock_client.is_initialized.return_value = True
+    mock_ldclient.get.return_value = mock_client
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_flag_returns_ld_value(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"my_flag": True})
-        mock_ldclient.get.return_value = mock_client
+    mgr = FeatureFlagManager("test-sdk-key")
 
-        mgr = FeatureFlagManager("test-sdk-key")
-        assert mgr.get_flag("my_flag", False) is True
+    mock_ldclient.set_config.assert_called_once()
+    assert mgr.is_enabled() is True
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_flag_returns_default_when_not_found(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({})
-        mock_ldclient.get.return_value = mock_client
 
-        mgr = FeatureFlagManager("test-sdk-key")
-        assert mgr.get_flag("unknown_flag", "fallback") == "fallback"
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ffm_get_flag_returns_ld_value(mock_ldclient):
+    mock_client = _make_mock_ld_client({"my_flag": True})
+    mock_ldclient.get.return_value = mock_client
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_flag_returns_default_when_not_initialized(self, mock_ldclient):
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = False
-        mock_ldclient.get.return_value = mock_client
+    mgr = FeatureFlagManager("test-sdk-key")
+    assert mgr.get_flag("my_flag", False) is True
 
-        mgr = FeatureFlagManager("test-sdk-key")
-        assert mgr.get_flag("any_flag", "fallback") == "fallback"
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_singleton_pattern(self, mock_ldclient):
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = True
-        mock_ldclient.get.return_value = mock_client
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ffm_get_flag_returns_default_when_not_found(mock_ldclient):
+    mock_client = _make_mock_ld_client({})
+    mock_ldclient.get.return_value = mock_client
 
-        _make_settings(launchdarkly={"sdk_key": "test-key"})
-        mgr1 = FeatureFlagManager.instance()
-        mgr2 = FeatureFlagManager.instance()
+    mgr = FeatureFlagManager("test-sdk-key")
+    assert mgr.get_flag("unknown_flag", "fallback") == "fallback"
 
-        assert mgr1 is mgr2
 
-    def test_singleton_disabled_when_ld_not_configured(self):
-        _make_settings()
-        mgr = FeatureFlagManager.instance()
-        assert mgr.is_enabled() is False
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ffm_get_flag_returns_default_when_not_initialized(mock_ldclient):
+    mock_client = MagicMock()
+    mock_client.is_initialized.return_value = False
+    mock_ldclient.get.return_value = mock_client
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_singleton_disabled_when_sdk_key_not_set(self, mock_ldclient):
-        mock_client = MagicMock()
-        mock_client.is_initialized.return_value = False
-        mock_ldclient.get.return_value = mock_client
+    mgr = FeatureFlagManager("test-sdk-key")
+    assert mgr.get_flag("any_flag", "fallback") == "fallback"
 
-        _make_settings(launchdarkly={})
-        mgr = FeatureFlagManager.instance()
-        assert mgr.is_enabled() is False
 
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ffm_singleton_pattern(mock_ldclient):
+    mock_client = MagicMock()
+    mock_client.is_initialized.return_value = True
+    mock_ldclient.get.return_value = mock_client
 
-class TestGetterMixin:
+    _make_settings(launchdarkly={"sdk_key": "test-key"})
+    mgr1 = FeatureFlagManager.instance()
+    mgr2 = FeatureFlagManager.instance()
 
-    def test_get_returns_field_value(self):
-        cfg = _make_settings(allow_dml=True)
-        assert cfg.dremio.get("allow_dml") is True
+    assert mgr1 is mgr2
 
-    def test_get_returns_default_field_value(self):
-        cfg = _make_settings()
-        assert cfg.dremio.get("allow_dml") is False
 
-    def test_get_returns_property_value(self):
-        cfg = _make_settings()
-        assert cfg.dremio.get("pat") == "test-pat"
+def test_ffm_singleton_disabled_when_ld_not_configured():
+    _make_settings()
+    mgr = FeatureFlagManager.instance()
+    assert mgr.is_enabled() is False
 
-    def test_get_returns_property_with_file_resolution(self, tmp_path):
-        pat_file = tmp_path / "pat.txt"
-        pat_file.write_text("resolved-pat-value")
-        cfg = _make_settings(pat=f"@{pat_file}")
-        assert cfg.dremio.get("pat") == "resolved-pat-value"
 
-    def test_get_returns_project_id_property(self):
-        pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        cfg = _make_settings(project_id=pid)
-        assert cfg.dremio.get("project_id") == pid
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ffm_singleton_disabled_when_sdk_key_not_set(mock_ldclient):
+    mock_client = MagicMock()
+    mock_client.is_initialized.return_value = False
+    mock_ldclient.get.return_value = mock_client
 
-    def test_get_raises_attribute_error_for_invalid_field(self):
-        cfg = _make_settings()
-        with pytest.raises(AttributeError, match="has no attribute 'nonexistent'"):
-            cfg.dremio.get("nonexistent")
+    _make_settings(launchdarkly={})
+    mgr = FeatureFlagManager.instance()
+    assert mgr.is_enabled() is False
 
-    def test_get_raises_attribute_error_on_settings(self):
-        cfg = _make_settings()
-        with pytest.raises(AttributeError, match="has no attribute 'bogus'"):
-            cfg.get("bogus")
 
-    def test_get_raises_attribute_error_on_submodel(self):
-        cfg = _make_settings()
-        with pytest.raises(AttributeError, match="has no attribute 'missing'"):
-            cfg.dremio.api.get("missing")
+# -- GetterMixin ---------------------------------------------------------------
 
 
-class TestFlagPrefixPropagation:
+def test_get_returns_field_value():
+    cfg = _make_settings(allow_dml=True)
+    assert cfg.dremio.get("allow_dml") is True
 
-    def test_dremio_prefix(self):
-        cfg = _make_settings()
-        assert cfg.dremio._flag_prefix == "dremio"
 
-    def test_nested_prefix(self):
-        cfg = _make_settings()
-        assert cfg.dremio.api._flag_prefix == "dremio.api"
+def test_get_returns_default_field_value():
+    cfg = _make_settings()
+    assert cfg.dremio.get("allow_dml") is False
 
-    def test_deeply_nested_prefix(self):
-        cfg = _make_settings()
-        assert cfg.dremio.api.http_retry._flag_prefix == "dremio.api.http_retry"
 
-    def test_tools_prefix(self):
-        cfg = settings.Settings.model_validate({})
-        assert cfg.tools._flag_prefix == "tools"
+def test_get_returns_property_value():
+    cfg = _make_settings()
+    assert cfg.dremio.get("pat") == "test-pat"
 
-    def test_wlm_prefix(self):
-        cfg = _make_settings(wlm={"engine_name": "test"})
-        assert cfg.dremio.wlm._flag_prefix == "dremio.wlm"
 
-    def test_metrics_prefix(self):
-        cfg = _make_settings(metrics={"enabled": True, "port": 9091})
-        assert cfg.dremio.metrics._flag_prefix == "dremio.metrics"
+def test_get_returns_property_with_file_resolution(tmp_path):
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("resolved-pat-value")
+    cfg = _make_settings(pat=f"@{pat_file}")
+    assert cfg.dremio.get("pat") == "resolved-pat-value"
 
 
-class TestFlagAwareGetOnDremio:
+def test_get_returns_project_id_property():
+    pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    cfg = _make_settings(project_id=pid)
+    assert cfg.dremio.get("project_id") == pid
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_allow_dml_overridden_by_ld(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
-        mock_ldclient.get.return_value = mock_client
 
-        cfg = _make_settings(allow_dml=False, launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.get("allow_dml") is True
+@pytest.mark.parametrize("accessor,field", [
+    pytest.param(lambda c: c.dremio, "nonexistent", id="dremio"),
+    pytest.param(lambda c: c, "bogus", id="settings"),
+    pytest.param(lambda c: c.dremio.api, "missing", id="submodel"),
+])
+def test_get_raises_attribute_error(accessor, field):
+    cfg = _make_settings()
+    with pytest.raises(AttributeError):
+        accessor(cfg).get(field)
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_enable_search_overridden_by_ld(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.enable_search": True})
-        mock_ldclient.get.return_value = mock_client
 
-        cfg = _make_settings(enable_search=False, launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.get("enable_search") is True
+# -- Flag prefix propagation --------------------------------------------------
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_falls_back_when_flag_not_in_ld(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({})
-        mock_ldclient.get.return_value = mock_client
 
-        cfg = _make_settings(allow_dml=True, launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.get("allow_dml") is True
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_ld_override_false(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.allow_dml": False})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(allow_dml=True, launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.get("allow_dml") is False
-
-    def test_get_without_ld_returns_config_value(self):
-        cfg = _make_settings(allow_dml=True)
-        assert cfg.dremio.get("allow_dml") is True
-
-    def test_get_without_ld_returns_default(self):
-        cfg = _make_settings()
-        assert cfg.dremio.get("allow_dml") is False
-        assert cfg.dremio.get("enable_search") is False
-
-
-class TestFlagAwareGetOnSubModels:
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_api_polling_interval_overridden(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.api.polling_interval": 5.0})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.api.get("polling_interval") == 5.0
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_http_retry_overridden(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.api.http_retry.max_retries": 50})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.api.http_retry.get("max_retries") == 50
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_metrics_enabled_overridden(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.metrics.enabled": False})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(
-            metrics={"enabled": True, "port": 9091},
-            launchdarkly={"sdk_key": "test-key"},
-        )
-        assert cfg.dremio.metrics.get("enabled") is False
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_wlm_engine_name_overridden(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.wlm.engine_name": "override-engine"})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(
-            wlm={"engine_name": "default-engine"},
-            launchdarkly={"sdk_key": "test-key"},
-        )
-        assert cfg.dremio.wlm.get("engine_name") == "override-engine"
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_submodel_falls_back_when_flag_not_in_ld(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.api.get("polling_interval") == 1
-        assert cfg.dremio.api.http_retry.get("max_retries") == 20
-
-
-class TestMultipleFlagOverrides:
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_both_dremio_flags_overridden(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({
-            "dremio.allow_dml": True,
-            "dremio.enable_search": True,
-        })
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(
-            allow_dml=False,
-            enable_search=False,
-            launchdarkly={"sdk_key": "test-key"},
-        )
-        assert cfg.dremio.get("allow_dml") is True
-        assert cfg.dremio.get("enable_search") is True
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_mixed_dremio_and_submodel_overrides(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({
-            "dremio.allow_dml": True,
-            "dremio.api.polling_interval": 10.0,
-        })
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(
-            allow_dml=False,
-            launchdarkly={"sdk_key": "test-key"},
-        )
-        assert cfg.dremio.get("allow_dml") is True
-        assert cfg.dremio.api.get("polling_interval") == 10.0
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_partial_override_one_flag_only(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(
-            allow_dml=False,
-            enable_search=True,
-            launchdarkly={"sdk_key": "test-key"},
-        )
-        assert cfg.dremio.get("allow_dml") is True
-        assert cfg.dremio.get("enable_search") is True
-
-
-class TestLaunchDarklyConfig:
-
-    def test_ld_disabled_by_default(self):
-        cfg = _make_settings()
+@pytest.mark.parametrize("accessor,expected,overrides", [
+    pytest.param(lambda c: c.dremio, "dremio", {}, id="dremio"),
+    pytest.param(lambda c: c.dremio.api, "dremio.api", {}, id="api"),
+    pytest.param(lambda c: c.dremio.api.http_retry, "dremio.api.http_retry", {}, id="http_retry"),
+    pytest.param(lambda c: c.dremio.wlm, "dremio.wlm", {"wlm": {"engine_name": "test"}}, id="wlm"),
+    pytest.param(lambda c: c.dremio.metrics, "dremio.metrics", {"metrics": {"enabled": True, "port": 9091}}, id="metrics"),
+])
+def test_flag_prefix_propagation(accessor, expected, overrides):
+    cfg = _make_settings(**overrides)
+    assert accessor(cfg)._flag_prefix == expected
+
+
+def test_flag_prefix_tools():
+    cfg = settings.Settings.model_validate({})
+    assert cfg.tools._flag_prefix == "tools"
+
+
+# -- FlagAwareMixin.get() with LD overrides -----------------------------------
+
+
+@pytest.mark.parametrize("flag_key,flag_val,field,config_val,expected", [
+    pytest.param("dremio.allow_dml", True, "allow_dml", False, True, id="allow_dml_on"),
+    pytest.param("dremio.enable_search", True, "enable_search", False, True, id="enable_search_on"),
+    pytest.param("dremio.allow_dml", False, "allow_dml", True, False, id="allow_dml_off"),
+])
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ld_overrides_dremio_field(mock_ldclient, flag_key, flag_val, field, config_val, expected):
+    mock_client = _make_mock_ld_client({flag_key: flag_val})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(**{field: config_val}, launchdarkly={"sdk_key": "test-key"})
+    assert cfg.dremio.get(field) == expected
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ld_falls_back_when_flag_not_in_ld(mock_ldclient):
+    mock_client = _make_mock_ld_client({})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(allow_dml=True, launchdarkly={"sdk_key": "test-key"})
+    assert cfg.dremio.get("allow_dml") is True
+
+
+def test_get_without_ld_returns_config_value():
+    cfg = _make_settings(allow_dml=True)
+    assert cfg.dremio.get("allow_dml") is True
+
+
+def test_get_without_ld_returns_field_default():
+    cfg = _make_settings()
+    assert cfg.dremio.get("allow_dml") is False
+    assert cfg.dremio.get("enable_search") is False
+
+
+# -- LD overrides on nested sub-models ----------------------------------------
+
+
+@pytest.mark.parametrize("flag_key,flag_val,accessor,field,extra,expected", [
+    pytest.param("dremio.api.polling_interval", 5.0, lambda c: c.dremio.api, "polling_interval", {}, 5.0, id="api_polling"),
+    pytest.param("dremio.api.http_retry.max_retries", 50, lambda c: c.dremio.api.http_retry, "max_retries", {}, 50, id="http_retry"),
+    pytest.param("dremio.metrics.enabled", False, lambda c: c.dremio.metrics, "enabled", {"metrics": {"enabled": True, "port": 9091}}, False, id="metrics"),
+    pytest.param("dremio.wlm.engine_name", "override-engine", lambda c: c.dremio.wlm, "engine_name", {"wlm": {"engine_name": "default-engine"}}, "override-engine", id="wlm"),
+])
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ld_overrides_submodel(mock_ldclient, flag_key, flag_val, accessor, field, extra, expected):
+    mock_client = _make_mock_ld_client({flag_key: flag_val})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(**extra, launchdarkly={"sdk_key": "test-key"})
+    assert accessor(cfg).get(field) == expected
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ld_submodel_falls_back_when_flag_not_in_ld(mock_ldclient):
+    mock_client = _make_mock_ld_client({})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
+    assert cfg.dremio.api.get("polling_interval") == 1
+    assert cfg.dremio.api.http_retry.get("max_retries") == 20
+
+
+# -- Multiple flag overrides ---------------------------------------------------
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ld_overrides_both_dremio_flags(mock_ldclient):
+    mock_client = _make_mock_ld_client({
+        "dremio.allow_dml": True,
+        "dremio.enable_search": True,
+    })
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(
+        allow_dml=False,
+        enable_search=False,
+        launchdarkly={"sdk_key": "test-key"},
+    )
+    assert cfg.dremio.get("allow_dml") is True
+    assert cfg.dremio.get("enable_search") is True
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ld_mixed_dremio_and_submodel_overrides(mock_ldclient):
+    mock_client = _make_mock_ld_client({
+        "dremio.allow_dml": True,
+        "dremio.api.polling_interval": 10.0,
+    })
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(
+        allow_dml=False,
+        launchdarkly={"sdk_key": "test-key"},
+    )
+    assert cfg.dremio.get("allow_dml") is True
+    assert cfg.dremio.api.get("polling_interval") == 10.0
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_ld_partial_override_one_flag_only(mock_ldclient):
+    mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(
+        allow_dml=False,
+        enable_search=True,
+        launchdarkly={"sdk_key": "test-key"},
+    )
+    assert cfg.dremio.get("allow_dml") is True
+    assert cfg.dremio.get("enable_search") is True
+
+
+# -- LaunchDarkly config model -------------------------------------------------
+
+
+@pytest.mark.parametrize("ld_config,expected", [
+    pytest.param(None, None, id="not_configured"),
+    pytest.param({}, False, id="no_sdk_key"),
+    pytest.param({"sdk_key": "test-key"}, True, id="with_sdk_key"),
+])
+def test_ld_enabled_state(ld_config, expected):
+    overrides = {"launchdarkly": ld_config} if ld_config is not None else {}
+    cfg = _make_settings(**overrides)
+    if expected is None:
         assert cfg.dremio.launchdarkly is None
-
-    def test_ld_disabled_without_sdk_key(self):
-        cfg = _make_settings(launchdarkly={})
-        assert cfg.dremio.launchdarkly.enabled is False
-
-    def test_ld_enabled_with_sdk_key(self):
-        cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.launchdarkly.enabled is True
-
-    def test_ld_sdk_key_from_file(self, tmp_path):
-        key_file = tmp_path / "sdk_key.txt"
-        key_file.write_text("file-sdk-key-abc")
-
-        cfg = _make_settings(launchdarkly={"sdk_key": f"@{key_file}"})
-        assert cfg.dremio.launchdarkly.sdk_key == "file-sdk-key-abc"
-
-    def test_ld_sdk_key_from_env(self, monkeypatch):
-        monkeypatch.setenv("DREMIOAI_DREMIO__LAUNCHDARKLY__SDK_KEY", "env-sdk-key")
-
-        cfg = settings.Settings.model_validate({
-            "dremio": {
-                "uri": "https://test.dremio.cloud",
-                "pat": "test-pat",
-                "launchdarkly": {},
-            }
-        })
-        assert cfg.dremio.launchdarkly.sdk_key == "env-sdk-key"
+    else:
+        assert cfg.dremio.launchdarkly.enabled is expected
 
 
-class TestNonOverridableFieldsUnaffected:
+def test_ld_sdk_key_from_file(tmp_path):
+    key_file = tmp_path / "sdk_key.txt"
+    key_file.write_text("file-sdk-key-abc")
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_direct_access_returns_config_value(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(allow_dml=False, launchdarkly={"sdk_key": "test-key"})
-        # Direct access returns config value, not LD override
-        assert cfg.dremio.allow_dml is False
-        # .get() returns LD override
-        assert cfg.dremio.get("allow_dml") is True
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_uri_not_affected(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.uri": "https://evil.com"})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
-        assert cfg.dremio.uri == "https://test.dremio.cloud"
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_model_dump_returns_config_values(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(allow_dml=False, launchdarkly={"sdk_key": "test-key"})
-        dumped = cfg.dremio.model_dump()
-        assert dumped["allow_dml"] is False
+    cfg = _make_settings(launchdarkly={"sdk_key": f"@{key_file}"})
+    assert cfg.dremio.launchdarkly.sdk_key == "file-sdk-key-abc"
 
 
-class TestRawPatBehavior:
+def test_ld_sdk_key_from_env(monkeypatch):
+    monkeypatch.setenv("DREMIOAI_DREMIO__LAUNCHDARKLY__SDK_KEY", "env-sdk-key")
 
-    def test_pat_direct_value(self):
-        cfg = _make_settings(pat="direct-pat")
-        assert cfg.dremio.pat == "direct-pat"
-        assert cfg.dremio.raw_pat == "direct-pat"
-
-    def test_pat_file_resolution(self, tmp_path):
-        pat_file = tmp_path / "pat.txt"
-        pat_file.write_text("file-pat-value")
-        cfg = _make_settings(pat=f"@{pat_file}")
-        assert cfg.dremio.pat == "file-pat-value"
-        assert cfg.dremio.raw_pat == f"@{pat_file}"
-
-    def test_pat_setter(self):
-        cfg = _make_settings(pat="initial")
-        cfg.dremio.pat = "updated"
-        assert cfg.dremio.pat == "updated"
-        assert cfg.dremio.raw_pat == "updated"
-
-    def test_pat_serialization(self):
-        cfg = _make_settings(pat="test-pat")
-        dumped = cfg.dremio.model_dump(by_alias=True)
-        assert "pat" in dumped
-
-    def test_get_pat_returns_resolved_value(self, tmp_path):
-        pat_file = tmp_path / "pat.txt"
-        pat_file.write_text("resolved-from-file")
-        cfg = _make_settings(pat=f"@{pat_file}")
-        assert cfg.dremio.get("pat") == "resolved-from-file"
+    cfg = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "launchdarkly": {},
+        }
+    })
+    assert cfg.dremio.launchdarkly.sdk_key == "env-sdk-key"
 
 
-class TestRawEnableSearchBehavior:
-
-    def test_enable_search_default_false(self):
-        cfg = _make_settings()
-        assert cfg.dremio.enable_search is False
-
-    def test_enable_search_set_true(self):
-        cfg = _make_settings(enable_search=True)
-        assert cfg.dremio.enable_search is True
-
-    def test_enable_search_via_enable_experimental_alias(self):
-        d = settings.Dremio.model_validate(
-            {"enable_experimental": True, "uri": "https://foo", "pat": "bar"}
-        )
-        assert d.enable_search is True
-
-    def test_enable_search_serialization(self):
-        cfg = _make_settings(enable_search=True)
-        dumped = cfg.dremio.model_dump(by_alias=True)
-        assert dumped.get("enable_search") is True
-
-    def test_get_enable_search_without_ld(self):
-        cfg = _make_settings(enable_search=True)
-        assert cfg.dremio.get("enable_search") is True
-
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_get_enable_search_with_ld_override(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"dremio.enable_search": True})
-        mock_ldclient.get.return_value = mock_client
-
-        cfg = _make_settings(enable_search=False, launchdarkly={"sdk_key": "test-key"})
-        # Direct access: config value
-        assert cfg.dremio.enable_search is False
-        # .get(): LD override
-        assert cfg.dremio.get("enable_search") is True
+# -- Direct access vs .get() --------------------------------------------------
 
 
-class TestLogLevel:
+@patch("dremioai.config.feature_flags.ldclient")
+def test_direct_access_returns_config_value(mock_ldclient):
+    mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
+    mock_ldclient.get.return_value = mock_client
 
-    def test_log_level_default(self):
-        cfg = settings.Settings.model_validate({})
-        assert cfg.log_level == "INFO"
+    cfg = _make_settings(allow_dml=False, launchdarkly={"sdk_key": "test-key"})
+    assert cfg.dremio.allow_dml is False
+    assert cfg.dremio.get("allow_dml") is True
 
-    def test_log_level_from_config(self):
-        cfg = settings.Settings.model_validate({"log_level": "DEBUG"})
-        assert cfg.log_level == "DEBUG"
 
-    def test_log_level_get_without_ld(self):
-        cfg = settings.Settings.model_validate({"log_level": "WARNING"})
-        assert cfg.get("log_level") == "WARNING"
+@patch("dremioai.config.feature_flags.ldclient")
+def test_uri_direct_access_not_affected(mock_ldclient):
+    mock_client = _make_mock_ld_client({"dremio.uri": "https://evil.com"})
+    mock_ldclient.get.return_value = mock_client
 
-    @patch("dremioai.config.feature_flags.ldclient")
-    def test_log_level_overridden_by_ld(self, mock_ldclient):
-        mock_client = _make_mock_ld_client({"log_level": "ERROR"})
-        mock_ldclient.get.return_value = mock_client
+    cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
+    assert cfg.dremio.uri == "https://test.dremio.cloud"
 
-        cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
-        # Settings._flag_prefix is "" so flag key is just "log_level"
-        assert cfg.get("log_level") == "ERROR"
-        # Direct access returns config value
-        assert cfg.log_level == "INFO"
 
-    def test_log_level_from_env(self, monkeypatch):
-        monkeypatch.setenv("DREMIOAI_LOG_LEVEL", "TRACE")
-        cfg = settings.Settings.model_validate({})
-        assert cfg.log_level == "TRACE"
+@patch("dremioai.config.feature_flags.ldclient")
+def test_model_dump_returns_config_values(mock_ldclient):
+    mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(allow_dml=False, launchdarkly={"sdk_key": "test-key"})
+    dumped = cfg.dremio.model_dump()
+    assert dumped["allow_dml"] is False
+
+
+# -- pat property behavior -----------------------------------------------------
+
+
+def test_pat_direct_value():
+    cfg = _make_settings(pat="direct-pat")
+    assert cfg.dremio.pat == "direct-pat"
+    assert cfg.dremio.raw_pat == "direct-pat"
+
+
+def test_pat_file_resolution(tmp_path):
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("file-pat-value")
+    cfg = _make_settings(pat=f"@{pat_file}")
+    assert cfg.dremio.pat == "file-pat-value"
+    assert cfg.dremio.raw_pat == f"@{pat_file}"
+
+
+def test_pat_setter():
+    cfg = _make_settings(pat="initial")
+    cfg.dremio.pat = "updated"
+    assert cfg.dremio.pat == "updated"
+    assert cfg.dremio.raw_pat == "updated"
+
+
+def test_pat_serialization():
+    cfg = _make_settings(pat="test-pat")
+    dumped = cfg.dremio.model_dump(by_alias=True)
+    assert "pat" in dumped
+
+
+def test_get_pat_returns_resolved_value(tmp_path):
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("resolved-from-file")
+    cfg = _make_settings(pat=f"@{pat_file}")
+    assert cfg.dremio.get("pat") == "resolved-from-file"
+
+
+# -- enable_search behavior ----------------------------------------------------
+
+
+def test_enable_search_default_false():
+    cfg = _make_settings()
+    assert cfg.dremio.enable_search is False
+
+
+def test_enable_search_set_true():
+    cfg = _make_settings(enable_search=True)
+    assert cfg.dremio.enable_search is True
+
+
+def test_enable_search_via_enable_experimental_alias():
+    d = settings.Dremio.model_validate(
+        {"enable_experimental": True, "uri": "https://foo", "pat": "bar"}
+    )
+    assert d.enable_search is True
+
+
+def test_enable_search_serialization():
+    cfg = _make_settings(enable_search=True)
+    dumped = cfg.dremio.model_dump(by_alias=True)
+    assert dumped.get("enable_search") is True
+
+
+def test_get_enable_search_without_ld():
+    cfg = _make_settings(enable_search=True)
+    assert cfg.dremio.get("enable_search") is True
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_get_enable_search_with_ld_override(mock_ldclient):
+    mock_client = _make_mock_ld_client({"dremio.enable_search": True})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(enable_search=False, launchdarkly={"sdk_key": "test-key"})
+    assert cfg.dremio.enable_search is False
+    assert cfg.dremio.get("enable_search") is True
+
+
+# -- log_level -----------------------------------------------------------------
+
+
+def test_log_level_default():
+    cfg = settings.Settings.model_validate({})
+    assert cfg.log_level == "INFO"
+
+
+def test_log_level_from_config():
+    cfg = settings.Settings.model_validate({"log_level": "DEBUG"})
+    assert cfg.log_level == "DEBUG"
+
+
+def test_log_level_get_without_ld():
+    cfg = settings.Settings.model_validate({"log_level": "WARNING"})
+    assert cfg.get("log_level") == "WARNING"
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_log_level_overridden_by_ld(mock_ldclient):
+    mock_client = _make_mock_ld_client({"log_level": "ERROR"})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = _make_settings(launchdarkly={"sdk_key": "test-key"})
+    assert cfg.get("log_level") == "ERROR"
+    assert cfg.log_level == "INFO"
+
+
+def test_log_level_from_env(monkeypatch):
+    monkeypatch.setenv("DREMIOAI_LOG_LEVEL", "TRACE")
+    cfg = settings.Settings.model_validate({})
+    assert cfg.log_level == "TRACE"

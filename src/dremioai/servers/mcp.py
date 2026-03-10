@@ -35,9 +35,11 @@ class OAuthMetadataRFC8414(OAuthMetadata):
     a trailing slash during serialization. RFC 8414 Section 3.2 requires the issuer
     to exactly match the discovery URL without trailing slash.
     """
-    @field_serializer('issuer')
+
+    @field_serializer("issuer")
     def serialize_issuer(self, value: AnyHttpUrl) -> str:
-        return str(value).rstrip('/')
+        return str(value).rstrip("/")
+
 
 from dremioai.tools import tools
 import os
@@ -158,7 +160,7 @@ def init(
     if transport == Transports.streamable_http and support_project_id_endpoints:
         mcp.support_project_id_endpoints = support_project_id_endpoints
     mode = reduce(ior, mode) if mode is not None else None
-    allow_dml = settings.instance().dremio and settings.instance().dremio.get("allow_dml")
+    allow_dml = settings.instance().dremio.get("allow_dml")
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
         is_sql_tool = tool is tools.RunSqlQuery
