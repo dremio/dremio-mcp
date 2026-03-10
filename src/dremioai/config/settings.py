@@ -56,14 +56,22 @@ from dremioai.config.feature_flags import FeatureFlagManager
 ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
 
-class GetterModel(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
+class GetterMixin:
+    """Mixin that adds .get(field_name) to any Pydantic model.
+
+    Raises AttributeError if field_name is not a valid attribute.
+    Use with BaseModel or BaseSettings via multiple inheritance.
+    """
 
     def get(self, field_name: str, default: Any = None):
-        return getattr(self, field_name, default)
+        if not hasattr(self, field_name):
+            raise AttributeError(
+                f"'{type(self).__name__}' has no attribute '{field_name}'"
+            )
+        return getattr(self, field_name)
 
 
-# FlagAwareModel overrides .get() to check LaunchDarkly before returning the
+# FlagAwareMixin overrides .get() to check LaunchDarkly before returning the
 # config value. The LD flag key is "{_flag_prefix}.{field_name}", e.g.
 # "dremio.allow_dml" or "dremio.api.http_retry.max_retries".
 #
@@ -73,10 +81,14 @@ class GetterModel(BaseModel):
 # Direct attribute access (obj.field) always returns the config value;
 # only .get() consults LD. This keeps model_dump() and serialization
 # unaffected by remote flag state.
-class FlagAwareModel(GetterModel):
+class FlagAwareMixin(GetterMixin):
     _flag_prefix: str = ""
 
     def get(self, field_name: str, default: Any = None):
+        if not hasattr(self, field_name):
+            raise AttributeError(
+                f"'{type(self).__name__}' has no attribute '{field_name}'"
+            )
         try:
             mgr = FeatureFlagManager.instance()
         except Exception:
@@ -86,6 +98,11 @@ class FlagAwareModel(GetterModel):
             if (flag := mgr.get_flag(key, default=default)) is not None:
                 return flag
         return super().get(field_name, default)
+
+
+# Convenience base for sub-models that need both FlagAwareMixin and BaseModel.
+class FlagAwareModel(FlagAwareMixin, BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
 
 
 def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
@@ -352,7 +369,7 @@ class BeeAI(FlagAwareModel):
     ollama: Optional[Ollama] = Field(default=None)
 
 
-class Settings(FlagAwareModel, BaseSettings):
+class Settings(FlagAwareMixin, BaseSettings):
     log_level: Optional[str] = Field(default="INFO")
     dremio: Optional[Dremio] = Field(default=None)
     tools: Optional[Tools] = Field(default_factory=Tools)
@@ -391,7 +408,7 @@ class Settings(FlagAwareModel, BaseSettings):
 def _propagate_flag_prefixes(obj, prefix: str):
     for name in type(obj).model_fields:
         child = getattr(obj, name, None)
-        if isinstance(child, FlagAwareModel):
+        if isinstance(child, FlagAwareMixin):
             child_prefix = f"{prefix}.{name}" if prefix else name
             object.__setattr__(child, '_flag_prefix', child_prefix)
             _propagate_flag_prefixes(child, child_prefix)

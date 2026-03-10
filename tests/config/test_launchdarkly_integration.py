@@ -109,7 +109,7 @@ class TestFeatureFlagManagerMocked:
         assert mgr.is_enabled() is False
 
 
-class TestGetterModel:
+class TestGetterMixin:
 
     def test_get_returns_field_value(self):
         cfg = _make_settings(allow_dml=True)
@@ -133,6 +133,21 @@ class TestGetterModel:
         pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         cfg = _make_settings(project_id=pid)
         assert cfg.dremio.get("project_id") == pid
+
+    def test_get_raises_attribute_error_for_invalid_field(self):
+        cfg = _make_settings()
+        with pytest.raises(AttributeError, match="has no attribute 'nonexistent'"):
+            cfg.dremio.get("nonexistent")
+
+    def test_get_raises_attribute_error_on_settings(self):
+        cfg = _make_settings()
+        with pytest.raises(AttributeError, match="has no attribute 'bogus'"):
+            cfg.get("bogus")
+
+    def test_get_raises_attribute_error_on_submodel(self):
+        cfg = _make_settings()
+        with pytest.raises(AttributeError, match="has no attribute 'missing'"):
+            cfg.dremio.api.get("missing")
 
 
 class TestFlagPrefixPropagation:
