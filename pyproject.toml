@@ -20,6 +20,7 @@ dependencies = [
     "langchain-ollama>=0.2.3",
     "langchain-openai>=0.3.7",
     "langgraph>=0.3.12",
+    "launchdarkly-server-sdk>=9.15.0",
     "mcp>=1.9.4",
     "multidict>=6.4.0",
     "openai>=1.65.3",

@@ -180,3 +180,96 @@ def test_auth_urls(
     issuer = issuer if not error else None
     assert d.auth_issuer_uri == issuer
     assert d.auth_endpoints == auth
+
+
+@pytest.mark.parametrize("sdk_key", ["sdk-env-key-12345", "sdk-env-key-67890"])
+def test_launchdarkly_sdk_key_from_env(monkeypatch, sdk_key):
+    monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", sdk_key)
+
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+        }
+    })
+
+    assert s.launchdarkly.sdk_key == sdk_key
+    assert s.launchdarkly.enabled is True
+
+
+def test_launchdarkly_sdk_key_from_file(tmp_path):
+    """Test that LaunchDarkly SDK key can be loaded from a file."""
+    sdk_key_file = tmp_path / "sdk_key.txt"
+    sdk_key_file.write_text("sdk-file-key-abcdef")
+
+    s = settings.Settings.model_validate({
+        "launchdarkly": {
+            "sdk_key": f"@{sdk_key_file}"
+        }
+    })
+
+    assert s.launchdarkly.sdk_key == "sdk-file-key-abcdef"
+    assert s.launchdarkly.enabled is True
+
+
+def test_launchdarkly_defaults():
+    """Test that LaunchDarkly has correct default values."""
+    s = settings.Settings.model_validate({})
+
+    assert s.launchdarkly is not None
+    assert s.launchdarkly.sdk_key is None
+    assert s.launchdarkly.enabled is False
+
+
+def test_dremio_get_without_launchdarkly():
+    """Test that get() returns config value when LaunchDarkly is not configured."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "allow_dml": True,
+        }
+    })
+
+    assert s.dremio.get("allow_dml") is True
+
+
+def test_dremio_get_with_launchdarkly_disabled():
+    """Test that get() returns config value when LaunchDarkly is disabled."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "enable_search": True,
+        }
+    })
+
+    assert s.dremio.get("enable_search") is True
+
+
+def test_dremio_enable_search_fallback():
+    """Test that enable_search returns config value when LD is disabled."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "enable_search": True
+        }
+    })
+
+    assert s.dremio.enable_search is True
+    assert s.dremio.get("enable_search") is True
+
+
+def test_dremio_allow_dml_fallback():
+    """Test that allow_dml returns config value when LD is disabled."""
+    s = settings.Settings.model_validate({
+        "dremio": {
+            "uri": "https://test.dremio.cloud",
+            "pat": "test-pat",
+            "allow_dml": True
+        }
+    })
+
+    assert s.dremio.allow_dml is True
+    assert s.dremio.get("allow_dml") is True

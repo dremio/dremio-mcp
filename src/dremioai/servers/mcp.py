@@ -35,9 +35,11 @@ class OAuthMetadataRFC8414(OAuthMetadata):
     a trailing slash during serialization. RFC 8414 Section 3.2 requires the issuer
     to exactly match the discovery URL without trailing slash.
     """
-    @field_serializer('issuer')
+
+    @field_serializer("issuer")
     def serialize_issuer(self, value: AnyHttpUrl) -> str:
-        return str(value).rstrip('/')
+        return str(value).rstrip("/")
+
 
 from dremioai.tools import tools
 import os
@@ -56,6 +58,7 @@ from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
 import asyncio
+import contextlib
 from yaml import dump
 import sys
 import uvicorn
@@ -148,7 +151,7 @@ def init(
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
     )
-    opts = {"log_level": "DEBUG", "debug": True}
+    opts = {"log_level": "DEBUG", "debug": True, "lifespan": _server_lifespan}
     if port is not None:
         opts["port"] = port
     if host is not None:
@@ -158,7 +161,7 @@ def init(
     if transport == Transports.streamable_http and support_project_id_endpoints:
         mcp.support_project_id_endpoints = support_project_id_endpoints
     mode = reduce(ior, mode) if mode is not None else None
-    allow_dml = settings.instance().dremio and settings.instance().dremio.allow_dml
+    allow_dml = settings.instance().dremio.get("allow_dml")
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
         is_sql_tool = tool is tools.RunSqlQuery
@@ -232,6 +235,37 @@ def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Serve
         f"Created metrics server config for {host}:{port}"
     )
     return server
+
+
+_LOG_LEVEL_REFRESH_INTERVAL = 60  # seconds
+
+
+async def _log_level_refresh_loop():
+    """Periodically sync log level from LD flags."""
+    _log = log.logger("log_level_refresh")
+    while True:
+        await asyncio.sleep(_LOG_LEVEL_REFRESH_INTERVAL)
+        try:
+            s = settings.instance()
+            if s is None:
+                continue
+            level_name = s.get("log_level")
+            level = getattr(logging, level_name.upper(), None)
+            if level is not None and level != log.level():
+                _log.info(f"Updating log level to {level_name}")
+                log.set_level(level)
+        except Exception as e:
+            _log.debug(f"Log level refresh failed: {e}")
+
+
+@contextlib.asynccontextmanager
+async def _server_lifespan(app: FastMCP):
+    """Lifespan context manager that runs background tasks alongside the server."""
+    task = asyncio.create_task(_log_level_refresh_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
 
 
 def run_with_metrics_server(

@@ -38,6 +38,8 @@ from typing import (
     Callable,
     Literal,
     Tuple,
+    get_args,
+    get_type_hints,
 )
 from dremioai.config.tools import ToolType
 from enum import auto, StrEnum
@@ -51,8 +53,62 @@ from os import environ
 from importlib.util import find_spec
 from datetime import datetime
 from dremioai import log
+from dremioai.config.feature_flags import FeatureFlagManager
 
 ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
+
+
+class GetterMixin:
+    """Mixin that adds .get(field_name) to any Pydantic model.
+
+    Raises AttributeError if field_name is not a valid attribute.
+    Use with BaseModel or BaseSettings via multiple inheritance.
+    """
+
+    def get(self, field_name: str):
+        return getattr(self, field_name)
+
+
+# Annotated marker to exclude a field from LaunchDarkly flag lookups.
+# Usage: field: Annotated[type, NoFlag()] = Field(...)
+class NoFlag:
+    """Mark a field to skip LD flag lookups in FlagAwareMixin.get()."""
+    pass
+
+
+def _has_no_flag(model_cls: type, field_name: str) -> bool:
+    """Check if a field has the NoFlag annotation marker."""
+    info = model_cls.model_fields.get(field_name)
+    return info is not None and any(isinstance(m, NoFlag) for m in info.metadata)
+
+
+# FlagAwareMixin overrides .get() to check LaunchDarkly before returning the
+# config value. The LD flag key is "{_flag_prefix}.{field_name}", e.g.
+# "dremio.allow_dml" or "dremio.api.http_retry.max_retries".
+#
+# _flag_prefix is auto-set by _propagate_flag_prefixes() during
+# Settings.model_post_init — it mirrors the model's nesting path.
+#
+# Direct attribute access (obj.field) always returns the config value;
+# only .get() consults LD. This keeps model_dump() and serialization
+# unaffected by remote flag state.
+#
+# Fields annotated with NoFlag() are excluded from LD lookups.
+class FlagAwareMixin(GetterMixin):
+    _flag_prefix: str = ""
+
+    def get(self, field_name: str):
+        if _has_no_flag(type(self), field_name):
+            return super().get(field_name)
+        key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
+        return FeatureFlagManager.instance().get_flag(
+            key, super().get(field_name)
+        )
+
+
+# Convenience base for sub-models that need both FlagAwareMixin and BaseModel.
+class FlagAwareModel(FlagAwareMixin, BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
 
 
 def _resolve_tools_settings(server_mode: Union[ToolType, int, str]) -> ToolType:
@@ -132,19 +188,16 @@ class OAuth2(BaseModel):
         return self.expiry is not None and self.expiry < datetime.now()
 
 
-class Wlm(BaseModel):
+class Wlm(FlagAwareModel):
     engine_name: Optional[str] = None
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class Metrics(BaseModel):
+class Metrics(FlagAwareModel):
     enabled: Optional[bool] = True
     port: Optional[int] = 9091
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class HttpRetry(BaseModel):
-    """Configuration for HTTP retry behavior with exponential backoff"""
+class HttpRetry(FlagAwareModel):
 
     max_retries: Optional[int] = Field(
         default=20,
@@ -159,36 +212,46 @@ class HttpRetry(BaseModel):
     backoff_multiplier: Optional[float] = Field(
         default=2.0, description="Multiplier for exponential backoff"
     )
-    model_config = ConfigDict(validate_assignment=True)
 
 
-class ApiSettings(BaseModel):
+class ApiSettings(FlagAwareModel):
     # HTTP retry configuration
     http_retry: Optional[HttpRetry] = Field(default_factory=HttpRetry)
     polling_interval: Optional[float] = Field(
         default=1, description="Polling interval for REST api in seconds"
     )
+
+
+class LaunchDarkly(BaseModel):
+
+    sdk_key: Optional[Annotated[str, AfterValidator(_resolve_token_file)]] = Field(
+        default=None,
+        description="LaunchDarkly SDK key (can be file path with @ prefix or direct value)",
+    )
     model_config = ConfigDict(validate_assignment=True)
 
+    @property
+    def enabled(self) -> bool:
+        return self.sdk_key is not None
 
-class Dremio(BaseModel):
+
+class Dremio(FlagAwareModel):
     uri: Annotated[
-        Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri)
+        Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri), NoFlag()
     ]
-    raw_pat: Optional[str] = Field(default=None, alias="pat")
-    raw_project_id: Optional[ProjectId] = Field(default=None, alias="project_id")
+    raw_pat: Annotated[Optional[str], NoFlag()] = Field(default=None, alias="pat")
+    raw_project_id: Annotated[Optional[ProjectId], NoFlag()] = Field(default=None, alias="project_id")
     enable_search: Optional[bool] = Field(
         default=False,
         alias=AliasChoices("enable_search", "enable_experimental"),
         description="enable experimental tools",
     )
     oauth2: Optional[OAuth2] = None
-    allow_dml: Optional[bool] = False
+    allow_dml: Optional[bool] = Field(default=False)
     auth_issuer_uri_override: Optional[str] = None
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
-    model_config = ConfigDict(validate_assignment=True)
 
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):
@@ -316,9 +379,11 @@ class BeeAI(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
 
-class Settings(BaseSettings):
+class Settings(FlagAwareMixin, BaseSettings):
+    log_level: Optional[str] = Field(default="INFO")
     dremio: Optional[Dremio] = Field(default=None)
     tools: Optional[Tools] = Field(default_factory=Tools)
+    launchdarkly: Optional[LaunchDarkly] = Field(default_factory=LaunchDarkly)
     prometheus: Optional[Prometheus] = Field(default=None)
     langchain: Optional[LangChain] = Field(default=None)
     beeai: Optional[BeeAI] = Field(default=None)
@@ -328,7 +393,13 @@ class Settings(BaseSettings):
         env_prefix="DREMIOAI_",
         env_extra="allow",
         use_enum_values=True,
+        validate_assignment=True,
     )
+
+    def model_post_init(self, __context):
+        _propagate_flag_prefixes(self, "")
+        if self.launchdarkly and self.launchdarkly.sdk_key:
+            FeatureFlagManager.initialize(self.launchdarkly.sdk_key)
 
     def with_overrides(self, overrides: Dict[str, Any]) -> Self:
         def set_values(aparts: List[str], value: Any, obj: Any):
@@ -345,6 +416,43 @@ class Settings(BaseSettings):
             set_values(aparts, value, self)
 
         return self
+
+
+def _propagate_flag_prefixes(obj: BaseModel, prefix: str):
+    for name in type(obj).model_fields:
+        child = getattr(obj, name, None)
+        if isinstance(child, FlagAwareMixin):
+            child_prefix = f"{prefix}.{name}" if prefix else name
+            child._flag_prefix = child_prefix
+            _propagate_flag_prefixes(child, child_prefix)
+
+
+def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
+    """Recursively collect all LD flag keys from a FlagAwareMixin model class."""
+    keys = []
+    hints = get_type_hints(model_cls, include_extras=True)
+    for name in model_cls.model_fields:
+        if _has_no_flag(model_cls, name):
+            continue
+        key = f"{prefix}.{name}" if prefix else name
+        annotation = hints[name]
+        # Unwrap Optional[X] (Union[X, None]) to get the inner type X.
+        # Without this, annotation is a generic alias (not a type), so
+        # isinstance(annotation, type) would be False and we'd never
+        # recurse into sub-models. We only unwrap when there's exactly
+        # one non-None arg (i.e. Optional[X]); complex Unions are left as-is.
+        inner = [a for a in get_args(annotation) if a is not type(None)]
+        if len(inner) == 1:
+            annotation = inner[0]
+        if isinstance(annotation, type) and issubclass(annotation, FlagAwareMixin):
+            keys.extend(collect_flag_keys(annotation, key))
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            # Non-flag-aware sub-models (e.g. LangChain, BeeAI) are opaque
+            # objects, not individual LD flags — skip them entirely.
+            continue
+        else:
+            keys.append(key)
+    return sorted(keys)
 
 
 _settings: ContextVar[Settings] = ContextVar("settings", default=None)

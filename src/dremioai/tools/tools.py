@@ -224,7 +224,7 @@ def is_tool_for(
             return False
 
     if (For := get_for(tool)) is not None:
-        if For & ToolType.EXPERIMENTAL and not dremio.enable_search:
+        if For & ToolType.EXPERIMENTAL and not dremio.get("enable_search"):
             return False
         return (For & tool_type) != 0  # == tool_type
     return False
@@ -329,7 +329,7 @@ class RunSqlQuery(Tools):
 
     @staticmethod
     def ensure_query_allowed(s: str):
-        if settings.instance().dremio.allow_dml:
+        if settings.instance().dremio.get("allow_dml"):
             return
 
         try:

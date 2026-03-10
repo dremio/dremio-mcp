@@ -1,0 +1,13 @@
+flag_keys:
+- dremio.allow_dml
+- dremio.api.http_retry.backoff_multiplier
+- dremio.api.http_retry.initial_delay
+- dremio.api.http_retry.max_delay
+- dremio.api.http_retry.max_retries
+- dremio.api.polling_interval
+- dremio.auth_issuer_uri_override
+- dremio.enable_search
+- dremio.metrics.enabled
+- dremio.metrics.port
+- dremio.wlm.engine_name
+- log_level
