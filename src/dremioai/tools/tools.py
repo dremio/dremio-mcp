@@ -57,6 +57,7 @@ from sqlglot import expressions
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
+from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
 
@@ -149,6 +150,7 @@ class ProjectIdMiddleware(BaseHTTPMiddleware):
         )
         if m := ProjectIdMiddleware.pat.search(request.url.path):
             ProjectIdMiddleware.project_id_context.set(m.group(1))
+            FeatureFlagManager.set_project_id(m.group(1))
         else:
             ProjectIdMiddleware.logger.debug(
                 f"Path {request.url.path} ({request.url!r}) doesn't match"
@@ -175,11 +177,6 @@ def secured(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
         if project_id := ProjectIdMiddleware.get_project_id():
             overrides["dremio.project_id"] = project_id
             logger.debug(f"Overriding project_id with {project_id}")
-
-        from dremioai.servers.mcp import FastMCPServerWithAuthToken
-        if org_id := FastMCPServerWithAuthToken.DelegatingTokenVerifier.get_org_id():
-            overrides["dremio.org_id"] = org_id
-            logger.debug(f"Overriding org_id with {org_id}")
 
         return (
             await settings.run_with(fn, overrides, (self,) + args, kw)

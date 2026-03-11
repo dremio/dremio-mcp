@@ -53,12 +53,12 @@ from rich import console, table, print as pp
 from click import Choice
 import logging
 from dremioai.config import settings
+from dremioai.config.feature_flags import FeatureFlagManager
 from dremioai.api.oauth2 import get_oauth2_tokens
 from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
 import asyncio
-from contextvars import ContextVar
 import contextlib
 from yaml import dump
 import sys
@@ -107,11 +107,6 @@ class Transports(StrEnum):
 
 class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
-        org_id_context: ContextVar[str | None] = ContextVar("org_id", default=None)
-
-        @classmethod
-        def get_org_id(cls) -> str | None:
-            return cls.org_id_context.get()
 
         @staticmethod
         def _extract_jwt_aud(token: str) -> str | None:
@@ -134,7 +129,7 @@ class FastMCPServerWithAuthToken(FastMCP):
         async def verify_token(self, token: str) -> AccessToken | None:
             if token:
                 if org_id := self._extract_jwt_aud(token):
-                    FastMCPServerWithAuthToken.DelegatingTokenVerifier.org_id_context.set(org_id)
+                    FeatureFlagManager.set_org_id(org_id)
                 return AccessToken(
                     token=token,  # Include the token itself
                     client_id="unused-client",

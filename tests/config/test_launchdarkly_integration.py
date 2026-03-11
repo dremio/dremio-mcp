@@ -545,37 +545,11 @@ async def test_log_level_refresh_no_change_when_same():
     mock_set_level.assert_not_called()
 
 
-# -- org_id on Dremio model ----------------------------------------------------
-
-
-def test_org_id_default_none():
-    cfg = _make_settings()
-    assert cfg.dremio.org_id is None
-
-
-def test_org_id_set_via_config():
-    cfg = _make_settings(org_id="test-org-123")
-    assert cfg.dremio.org_id == "test-org-123"
-
-
-def test_org_id_setter():
-    cfg = _make_settings()
-    cfg.dremio.org_id = "new-org"
-    assert cfg.dremio.org_id == "new-org"
-
-
-def test_org_id_excluded_from_flag_keys():
-    """org_id has NoFlag() — it must not appear in LD flag keys."""
-    keys = settings.collect_flag_keys(settings.Settings)
-    assert not any("org_id" in k for k in keys)
-
-
 # -- _build_context -----------------------------------------------------------
 
 
 def test_build_context_no_project_no_org():
     """Without project/org, falls back to single 'mcp-server' context."""
-    _make_settings()
     mgr = FeatureFlagManager(None)
     ctx = mgr._build_context()
     assert ctx.key == "mcp-server"
@@ -583,37 +557,51 @@ def test_build_context_no_project_no_org():
 
 
 def test_build_context_with_project_id():
-    """With project_id, builds a multi-context including project kind."""
+    """With project_id, builds a multi-context including projectId kind."""
+    from dremioai.config.feature_flags import LDContextKind
     pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    _make_settings(project_id=pid)
-    mgr = FeatureFlagManager(None)
-    ctx = mgr._build_context()
-    assert ctx.multiple is True
-    assert ctx.get_individual_context("project") is not None
-    assert ctx.get_individual_context("project").key == pid
-    assert ctx.get_individual_context("application").key == "mcp-server"
+    FeatureFlagManager.set_project_id(pid)
+    try:
+        mgr = FeatureFlagManager(None)
+        ctx = mgr._build_context()
+        assert ctx.multiple is True
+        assert ctx.get_individual_context(LDContextKind.PROJECT) is not None
+        assert ctx.get_individual_context(LDContextKind.PROJECT).key == pid
+        assert ctx.get_individual_context(LDContextKind.APPLICATION).key == "mcp-server"
+    finally:
+        FeatureFlagManager.set_project_id(None)
 
 
 def test_build_context_with_org_id():
-    """With org_id, builds a multi-context including organization kind."""
-    _make_settings(org_id="org-456")
-    mgr = FeatureFlagManager(None)
-    ctx = mgr._build_context()
-    assert ctx.multiple is True
-    assert ctx.get_individual_context("organization") is not None
-    assert ctx.get_individual_context("organization").key == "org-456"
+    """With org_id, builds a multi-context including orgId kind."""
+    from dremioai.config.feature_flags import LDContextKind
+    FeatureFlagManager.set_org_id("org-456")
+    try:
+        mgr = FeatureFlagManager(None)
+        ctx = mgr._build_context()
+        assert ctx.multiple is True
+        assert ctx.get_individual_context(LDContextKind.ORGANIZATION) is not None
+        assert ctx.get_individual_context(LDContextKind.ORGANIZATION).key == "org-456"
+    finally:
+        FeatureFlagManager.set_org_id(None)
 
 
 def test_build_context_with_both():
     """With both project_id and org_id, builds a 3-kind multi-context."""
+    from dremioai.config.feature_flags import LDContextKind
     pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    _make_settings(project_id=pid, org_id="org-789")
-    mgr = FeatureFlagManager(None)
-    ctx = mgr._build_context()
-    assert ctx.multiple is True
-    assert ctx.get_individual_context("application").key == "mcp-server"
-    assert ctx.get_individual_context("project").key == pid
-    assert ctx.get_individual_context("organization").key == "org-789"
+    FeatureFlagManager.set_project_id(pid)
+    FeatureFlagManager.set_org_id("org-789")
+    try:
+        mgr = FeatureFlagManager(None)
+        ctx = mgr._build_context()
+        assert ctx.multiple is True
+        assert ctx.get_individual_context(LDContextKind.APPLICATION).key == "mcp-server"
+        assert ctx.get_individual_context(LDContextKind.PROJECT).key == pid
+        assert ctx.get_individual_context(LDContextKind.ORGANIZATION).key == "org-789"
+    finally:
+        FeatureFlagManager.set_project_id(None)
+        FeatureFlagManager.set_org_id(None)
 
 
 @patch("dremioai.config.feature_flags.ldclient")
@@ -626,16 +614,17 @@ def test_build_context_passed_to_variation(mock_ldclient):
     mock_ldclient.Context = real_ldclient.Context
 
     pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    _make_settings(
-        project_id=pid,
-        launchdarkly={"sdk_key": "test-key"},
-    )
-    mgr = FeatureFlagManager.instance()
-    mgr.get_flag("dremio.allow_dml", False)
-    # Verify variation was called with a multi-context, not the old single context
-    call_args = mock_client.variation.call_args
-    ctx = call_args[0][1]
-    assert ctx.multiple is True
+    FeatureFlagManager.set_project_id(pid)
+    try:
+        _make_settings(launchdarkly={"sdk_key": "test-key"})
+        mgr = FeatureFlagManager.instance()
+        mgr.get_flag("dremio.allow_dml", False)
+        # Verify variation was called with a multi-context, not the old single context
+        call_args = mock_client.variation.call_args
+        ctx = call_args[0][1]
+        assert ctx.multiple is True
+    finally:
+        FeatureFlagManager.set_project_id(None)
 
 
 # -- JWT aud extraction --------------------------------------------------------
