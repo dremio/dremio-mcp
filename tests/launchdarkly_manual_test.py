@@ -73,6 +73,7 @@ def main(
             {
                 "launchdarkly.sdk_key": sdk_key,
                 "dremio.project_id": project_id,
+                "dremio.org_id": org_id,
             },
         )
     )

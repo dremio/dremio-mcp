@@ -241,6 +241,7 @@ class Dremio(FlagAwareModel):
     ]
     raw_pat: Annotated[Optional[str], NoFlag()] = Field(default=None, alias="pat")
     raw_project_id: Annotated[Optional[ProjectId], NoFlag()] = Field(default=None, alias="project_id")
+    raw_org_id: Annotated[Optional[str], NoFlag()] = Field(default=None, alias="org_id")
     enable_search: Optional[bool] = Field(
         default=False,
         alias=AliasChoices("enable_search", "enable_experimental"),
@@ -256,6 +257,14 @@ class Dremio(FlagAwareModel):
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):
         return self.raw_pat if pat != self.raw_pat else pat
+
+    @property
+    def org_id(self) -> Optional[str]:
+        return self.raw_org_id
+
+    @org_id.setter
+    def org_id(self, v: str):
+        self.raw_org_id = v
 
     @property
     def oauth_configured(self) -> bool:

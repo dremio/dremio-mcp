@@ -58,6 +58,7 @@ from enum import StrEnum, auto
 from json import load, dump as jdump
 from shutil import which
 import asyncio
+from contextvars import ContextVar
 import contextlib
 from yaml import dump
 import sys
@@ -106,8 +107,34 @@ class Transports(StrEnum):
 
 class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
+        org_id_context: ContextVar[str | None] = ContextVar("org_id", default=None)
+
+        @classmethod
+        def get_org_id(cls) -> str | None:
+            return cls.org_id_context.get()
+
+        @staticmethod
+        def _extract_jwt_aud(token: str) -> str | None:
+            """Extract the aud claim from a JWT without signature verification.
+
+            The token is always forwarded to Dremio for real validation;
+            we only read the audience (org ID) for LD context targeting.
+            """
+            try:
+                import json
+                import base64
+                payload = token.split(".")[1]
+                payload += "=" * (-len(payload) % 4)
+                claims = json.loads(base64.urlsafe_b64decode(payload))
+                aud = claims.get("aud")
+                return aud[0] if isinstance(aud, list) else aud
+            except Exception:
+                return None
+
         async def verify_token(self, token: str) -> AccessToken | None:
             if token:
+                if org_id := self._extract_jwt_aud(token):
+                    FastMCPServerWithAuthToken.DelegatingTokenVerifier.org_id_context.set(org_id)
                 return AccessToken(
                     token=token,  # Include the token itself
                     client_id="unused-client",
@@ -192,6 +219,7 @@ def init(
     )
 
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+    @mcp.custom_route("/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"])
     async def authorization_server_metadata(request: Request) -> Response:
         if issuer := settings.instance().dremio.auth_issuer_uri:
             auth, tok = settings.instance().dremio.auth_endpoints

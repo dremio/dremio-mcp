@@ -66,6 +66,37 @@ class FeatureFlagManager:
     def is_enabled(self) -> bool:
         return self._client is not None and self._client.is_initialized()
 
+    def _build_context(self) -> ldclient.Context:
+        """Build an LD evaluation context from the current request scope.
+
+        Uses a multi-context when project_id or org_id are available
+        (set per-request via ContextVar → run_with). Falls back to
+        the same single "mcp-server" context used before this change.
+        """
+        from dremioai.config import settings as s
+
+        inst = s.instance()
+        dremio = inst.dremio if inst else None
+        project_id = dremio.project_id if dremio else None
+        org_id = dremio.org_id if dremio else None
+
+        if not project_id and not org_id:
+            return ldclient.Context.create("mcp-server")
+
+        builder = ldclient.Context.multi_builder()
+        builder.add(
+            ldclient.Context.builder("mcp-server").kind("application").build()
+        )
+        if project_id:
+            builder.add(
+                ldclient.Context.builder(project_id).kind("project").build()
+            )
+        if org_id:
+            builder.add(
+                ldclient.Context.builder(org_id).kind("organization").build()
+            )
+        return builder.build()
+
     def get_flag(self, flag_key: str, default: Any) -> Any:
         if not self.is_enabled():
             state, level = "enabled", logging.DEBUG
@@ -76,8 +107,7 @@ class FeatureFlagManager:
                 f"Flag '{flag_key}' not evaluated, LaunchDarkly not {state}",
             )
             return default
-        value = self._client.variation(
-            flag_key, ldclient.Context.create("mcp-server"), default
-        )
+        context = self._build_context()
+        value = self._client.variation(flag_key, context, default)
         self._log.debug(f"Flag '{flag_key}' evaluated to: {value} (default: {default})")
         return value

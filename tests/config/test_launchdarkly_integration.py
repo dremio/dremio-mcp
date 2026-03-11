@@ -543,3 +543,153 @@ async def test_log_level_refresh_no_change_when_same():
 
     # log_level defaults to INFO, which is already the current level
     mock_set_level.assert_not_called()
+
+
+# -- org_id on Dremio model ----------------------------------------------------
+
+
+def test_org_id_default_none():
+    cfg = _make_settings()
+    assert cfg.dremio.org_id is None
+
+
+def test_org_id_set_via_config():
+    cfg = _make_settings(org_id="test-org-123")
+    assert cfg.dremio.org_id == "test-org-123"
+
+
+def test_org_id_setter():
+    cfg = _make_settings()
+    cfg.dremio.org_id = "new-org"
+    assert cfg.dremio.org_id == "new-org"
+
+
+def test_org_id_excluded_from_flag_keys():
+    """org_id has NoFlag() — it must not appear in LD flag keys."""
+    keys = settings.collect_flag_keys(settings.Settings)
+    assert not any("org_id" in k for k in keys)
+
+
+# -- _build_context -----------------------------------------------------------
+
+
+def test_build_context_no_project_no_org():
+    """Without project/org, falls back to single 'mcp-server' context."""
+    _make_settings()
+    mgr = FeatureFlagManager(None)
+    ctx = mgr._build_context()
+    assert ctx.key == "mcp-server"
+    assert ctx.multiple is False
+
+
+def test_build_context_with_project_id():
+    """With project_id, builds a multi-context including project kind."""
+    pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    _make_settings(project_id=pid)
+    mgr = FeatureFlagManager(None)
+    ctx = mgr._build_context()
+    assert ctx.multiple is True
+    assert ctx.get_individual_context("project") is not None
+    assert ctx.get_individual_context("project").key == pid
+    assert ctx.get_individual_context("application").key == "mcp-server"
+
+
+def test_build_context_with_org_id():
+    """With org_id, builds a multi-context including organization kind."""
+    _make_settings(org_id="org-456")
+    mgr = FeatureFlagManager(None)
+    ctx = mgr._build_context()
+    assert ctx.multiple is True
+    assert ctx.get_individual_context("organization") is not None
+    assert ctx.get_individual_context("organization").key == "org-456"
+
+
+def test_build_context_with_both():
+    """With both project_id and org_id, builds a 3-kind multi-context."""
+    pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    _make_settings(project_id=pid, org_id="org-789")
+    mgr = FeatureFlagManager(None)
+    ctx = mgr._build_context()
+    assert ctx.multiple is True
+    assert ctx.get_individual_context("application").key == "mcp-server"
+    assert ctx.get_individual_context("project").key == pid
+    assert ctx.get_individual_context("organization").key == "org-789"
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_build_context_passed_to_variation(mock_ldclient):
+    """get_flag passes the built context to LD variation call."""
+    mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
+    mock_ldclient.get.return_value = mock_client
+    # Keep real Context accessible for _build_context
+    import ldclient as real_ldclient
+    mock_ldclient.Context = real_ldclient.Context
+
+    pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    _make_settings(
+        project_id=pid,
+        launchdarkly={"sdk_key": "test-key"},
+    )
+    mgr = FeatureFlagManager.instance()
+    mgr.get_flag("dremio.allow_dml", False)
+    # Verify variation was called with a multi-context, not the old single context
+    call_args = mock_client.variation.call_args
+    ctx = call_args[0][1]
+    assert ctx.multiple is True
+
+
+# -- JWT aud extraction --------------------------------------------------------
+
+
+def test_extract_jwt_aud():
+    """DelegatingTokenVerifier extracts aud from a JWT payload."""
+    import base64, json
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"sub": "user-1", "aud": "org-abc-123"}).encode()
+    ).decode().rstrip("=")
+    sig = "fakesig"
+    token = f"{header}.{payload}.{sig}"
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier._extract_jwt_aud(token)
+    assert result == "org-abc-123"
+
+
+def test_extract_jwt_aud_list():
+    """Extracts first element when aud is a list."""
+    import base64, json
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"sub": "user-1", "aud": ["org-first", "org-second"]}).encode()
+    ).decode().rstrip("=")
+    token = f"{header}.{payload}.fakesig"
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier._extract_jwt_aud(token)
+    assert result == "org-first"
+
+
+def test_extract_jwt_aud_missing():
+    """Returns None when aud claim is missing."""
+    import base64, json
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"sub": "user-1"}).encode()
+    ).decode().rstrip("=")
+    token = f"{header}.{payload}.fakesig"
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier._extract_jwt_aud(token)
+    assert result is None
+
+
+def test_extract_jwt_aud_opaque_token():
+    """Returns None for non-JWT (opaque) tokens."""
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier._extract_jwt_aud("opaque-token-abc123")
+    assert result is None
