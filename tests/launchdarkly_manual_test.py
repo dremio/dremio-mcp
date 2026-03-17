@@ -35,6 +35,7 @@ from asyncio import run
 
 from dremioai import log
 from dremioai.config import settings
+from dremioai.config.feature_flags import FeatureFlagManager, LDContextKind
 
 app = Typer(
     no_args_is_help=True,
@@ -62,6 +63,18 @@ def main(
         raise ValueError("SDK key is required")
 
     async def get_flag():
+        FeatureFlagManager.set_project_id(project_id)
+        FeatureFlagManager.set_org_id(org_id)
+
+        # Show LD context that will be used
+        pp("\n[bold]LD Context:[/bold]")
+        if project_id:
+            pp(f"  {LDContextKind.PROJECT}: {project_id}")
+        if org_id:
+            pp(f"  {LDContextKind.ORGANIZATION}: {org_id}")
+        if not project_id and not org_id:
+            pp("  [dim]single context: mcp-server (no project/org)[/dim]")
+
         pp(f"\n[blue]Evaluating flag:[/blue] {flag_name}")
         value = settings.instance().dremio.get(flag_name)
         pp(f"\n[green]✓ Flag Value:[/green] {value}")
@@ -70,10 +83,7 @@ def main(
     run(
         settings.run_with(
             get_flag,
-            {
-                "launchdarkly.sdk_key": sdk_key,
-                "dremio.project_id": project_id,
-            },
+            {"launchdarkly.sdk_key": sdk_key},
         )
     )
 

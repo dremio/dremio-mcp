@@ -14,10 +14,19 @@
 #  limitations under the License.
 #
 import logging
+from contextvars import ContextVar
+from enum import StrEnum
 from typing import Optional, Any, Self, ClassVar
 from dremioai import log
 import ldclient
 from ldclient.config import Config
+
+
+class LDContextKind(StrEnum):
+    """LaunchDarkly context kinds for multi-context targeting."""
+    APPLICATION = "application"
+    PROJECT = "projectId"
+    ORGANIZATION = "orgId"
 
 
 class FeatureFlagManager:
@@ -25,6 +34,20 @@ class FeatureFlagManager:
 
     _log = log.logger("feature_flags")
     _instance: ClassVar[Self] = None
+
+    # Per-request context for LD targeting.  Set by middleware / token
+    # verifier; read by _build_context().  Keeps feature_flags decoupled
+    # from settings (no import needed).
+    _project_id: ClassVar[ContextVar[str | None]] = ContextVar("ld_project_id", default=None)
+    _org_id: ClassVar[ContextVar[str | None]] = ContextVar("ld_org_id", default=None)
+
+    @classmethod
+    def set_project_id(cls, value: str | None) -> None:
+        cls._project_id.set(value)
+
+    @classmethod
+    def set_org_id(cls, value: str | None) -> None:
+        cls._org_id.set(value)
 
     def __init__(self, sdk_key: str):
         if sdk_key is not None:
@@ -66,6 +89,34 @@ class FeatureFlagManager:
     def is_enabled(self) -> bool:
         return self._client is not None and self._client.is_initialized()
 
+    def _build_context(self) -> ldclient.Context:
+        """Build an LD evaluation context from the current request scope.
+
+        Uses a multi-context when project_id or org_id are available
+        (set per-request via ContextVar by middleware / token verifier).
+        Falls back to the same single "mcp-server" context used before
+        this change.
+        """
+        project_id = self._project_id.get()
+        org_id = self._org_id.get()
+
+        if not project_id and not org_id:
+            return ldclient.Context.create("mcp-server")
+
+        builder = ldclient.Context.multi_builder()
+        builder.add(
+            ldclient.Context.builder("mcp-server").kind(LDContextKind.APPLICATION).build()
+        )
+        if project_id:
+            builder.add(
+                ldclient.Context.builder(project_id).kind(LDContextKind.PROJECT).build()
+            )
+        if org_id:
+            builder.add(
+                ldclient.Context.builder(org_id).kind(LDContextKind.ORGANIZATION).build()
+            )
+        return builder.build()
+
     def get_flag(self, flag_key: str, default: Any) -> Any:
         if not self.is_enabled():
             state, level = "enabled", logging.DEBUG
@@ -76,8 +127,7 @@ class FeatureFlagManager:
                 f"Flag '{flag_key}' not evaluated, LaunchDarkly not {state}",
             )
             return default
-        value = self._client.variation(
-            flag_key, ldclient.Context.create("mcp-server"), default
-        )
+        context = self._build_context()
+        value = self._client.variation(flag_key, context, default)
         self._log.debug(f"Flag '{flag_key}' evaluated to: {value} (default: {default})")
         return value

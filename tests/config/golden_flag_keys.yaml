@@ -7,6 +7,7 @@ flag_keys:
 - dremio.api.polling_interval
 - dremio.auth_issuer_uri_override
 - dremio.enable_search
+- dremio.extract_org_id_from_jwt
 - dremio.metrics.enabled
 - dremio.metrics.port
 - dremio.wlm.engine_name

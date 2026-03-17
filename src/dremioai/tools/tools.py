@@ -57,6 +57,7 @@ from sqlglot import expressions
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
+from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
 
@@ -149,6 +150,7 @@ class ProjectIdMiddleware(BaseHTTPMiddleware):
         )
         if m := ProjectIdMiddleware.pat.search(request.url.path):
             ProjectIdMiddleware.project_id_context.set(m.group(1))
+            FeatureFlagManager.set_project_id(m.group(1))
         else:
             ProjectIdMiddleware.logger.debug(
                 f"Path {request.url.path} ({request.url!r}) doesn't match"

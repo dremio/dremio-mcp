@@ -53,6 +53,7 @@ from rich import console, table, print as pp
 from click import Choice
 import logging
 from dremioai.config import settings
+from dremioai.config.feature_flags import FeatureFlagManager
 from dremioai.api.oauth2 import get_oauth2_tokens
 from enum import StrEnum, auto
 from json import load, dump as jdump
@@ -106,8 +107,27 @@ class Transports(StrEnum):
 
 class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
+
+        @staticmethod
+        def _extract_jwt_aud(token: str) -> str | None:
+            """Extract the aud claim from a JWT without signature verification.
+
+            The token is always forwarded to Dremio for real validation;
+            we only read the audience (org ID) for LD context targeting.
+            """
+            try:
+                import jwt
+                claims = jwt.decode(token, options={"verify_signature": False})
+                aud = claims.get("aud")
+                return aud[0] if isinstance(aud, list) else aud
+            except Exception:
+                return None
+
         async def verify_token(self, token: str) -> AccessToken | None:
             if token:
+                if settings.instance().dremio.get("extract_org_id_from_jwt"):
+                    if org_id := self._extract_jwt_aud(token):
+                        FeatureFlagManager.set_org_id(org_id)
                 return AccessToken(
                     token=token,  # Include the token itself
                     client_id="unused-client",
@@ -192,6 +212,7 @@ def init(
     )
 
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+    @mcp.custom_route("/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"])
     async def authorization_server_metadata(request: Request) -> Response:
         if issuer := settings.instance().dremio.auth_issuer_uri:
             auth, tok = settings.instance().dremio.auth_endpoints
