@@ -181,7 +181,7 @@ def _extract_project_id(mcp_url: str) -> Optional[str]:
 
 
 @contextlib.contextmanager
-def _local_mcp_server(dremio_uri: str, port: int = 8989):
+def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None = None):
     """Start a local MCP server configured to proxy to the given Dremio URI."""
     import threading
     from dremioai.config import settings
@@ -190,14 +190,15 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989):
 
     old = settings.instance()
     try:
-        configured_settings = old.model_copy(deep=True).with_overrides(
-            {
-                "dremio.uri": dremio_uri,
-                "dremio.raw_project_id": "DREMIO_DYNAMIC",
-                "dremio.enable_search": True,
-                "tools.server_mode": ToolType.FOR_DATA_PATTERNS.name,
-            }
-        )
+        overrides = {
+            "dremio.uri": dremio_uri,
+            "dremio.raw_project_id": "DREMIO_DYNAMIC",
+            "dremio.enable_search": True,
+            "tools.server_mode": ToolType.FOR_DATA_PATTERNS.name,
+        }
+        if ld_sdk_key:
+            overrides["launchdarkly.sdk_key"] = ld_sdk_key
+        configured_settings = old.model_copy(deep=True).with_overrides(overrides)
         settings._settings.set(configured_settings)
         mcp_server = init(
             transport=Transports.streamable_http,
@@ -268,6 +269,18 @@ async def run_test(
     local: Annotated[
         bool, Option(help="Start a local MCP server for running the tests")
     ] = False,
+    ld_sdk_key: Annotated[
+        Optional[str],
+        Option(help="LaunchDarkly SDK key for flag evaluation check"),
+    ] = None,
+    ld_flag: Annotated[
+        Optional[str],
+        Option(help="LD flag name to evaluate (e.g. dremio.allow_dml)"),
+    ] = None,
+    ld_expected: Annotated[
+        Optional[str],
+        Option(help="Expected flag value (parsed: true/false→bool, numeric→int/float, else str)"),
+    ] = None,
 ):
     if not local:
         # Remote mode: connect directly to the URL
@@ -283,7 +296,8 @@ async def run_test(
             pp("[green]OK[/green]")
         else:
             pp("Using provided token, skipping OAuth..")
-        await _run_smoketests(url, token, check_annotations, check_new_contract)
+        await _run_smoketests(url, token, check_annotations, check_new_contract,
+                              ld_sdk_key=ld_sdk_key, ld_flag=ld_flag, ld_expected=ld_expected)
         return
 
     # Local mode: start a local MCP server and test against it
@@ -300,7 +314,7 @@ async def run_test(
         f"Starting local MCP server (dremio.uri={dremio_api_uri}, project_id=DREMIO_DYNAMIC).."
     )
     local_port = random.randrange(9000, 12000)
-    with _local_mcp_server(dremio_api_uri, port=local_port):
+    with _local_mcp_server(dremio_api_uri, port=local_port, ld_sdk_key=ld_sdk_key):
         local_url = (
             f"http://127.0.0.1:{local_port}/mcp/{project_id}/"
             if project_id
@@ -314,7 +328,25 @@ async def run_test(
             token = a.access_token
             pp("[green]OK[/green]")
 
-        await _run_smoketests(local_url, token, check_annotations, check_new_contract)
+        await _run_smoketests(local_url, token, check_annotations, check_new_contract,
+                              ld_sdk_key=ld_sdk_key, ld_flag=ld_flag, ld_expected=ld_expected)
+
+
+def _parse_flag_value(value: str) -> bool | int | float | str:
+    """Parse a CLI string to a typed value for LD flag comparison."""
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
 
 
 async def _run_smoketests(
@@ -322,6 +354,9 @@ async def _run_smoketests(
     token: str,
     check_annotations: bool,
     check_new_contract: bool,
+    ld_sdk_key: str | None = None,
+    ld_flag: str | None = None,
+    ld_expected: str | None = None,
 ):
     # Determine the SQL query parameter name based on contract version
     sql_param = "query" if check_new_contract else "s"
@@ -553,6 +588,65 @@ async def _run_smoketests(
                     "Lineage error should not expose project IDs",
                 )
             pp("[green]OK[/green]")
+
+        # ------------------------------------------------------------------
+        # 12. LaunchDarkly flag evaluation (optional, requires --ld-sdk-key)
+        # ------------------------------------------------------------------
+        if ld_sdk_key and ld_flag:
+            pp(f"Checking LD flag '{ld_flag}'..", end=" ")
+
+            from dremioai.config.feature_flags import FeatureFlagManager
+
+            project_id = _extract_project_id(url)
+            org_id = None
+            if token:
+                try:
+                    import base64 as _b64
+                    payload = token.split(".")[1]
+                    payload += "=" * (-len(payload) % 4)
+                    claims = json.loads(_b64.urlsafe_b64decode(payload))
+                    aud = claims.get("aud")
+                    org_id = aud[0] if isinstance(aud, list) else aud
+                except Exception:
+                    pass
+
+            pp(f"\n  LD context: application=mcp-server, projectId={project_id}, orgId={org_id}")
+            _assert(
+                org_id is not None,
+                "JWT 'aud' claim must contain an orgId for org-based LD targeting "
+                "(token may be opaque or missing 'aud')",
+            )
+
+            try:
+                FeatureFlagManager.initialize(ld_sdk_key)
+                fm = FeatureFlagManager.instance()
+
+                # Wait for LD client to initialize (up to 5s)
+                import time as _time
+                for _ in range(10):
+                    if fm.is_enabled():
+                        break
+                    _time.sleep(0.5)
+                _assert(fm.is_enabled(), "LaunchDarkly client failed to initialize within 5s")
+
+                if project_id:
+                    FeatureFlagManager.set_project_id(project_id)
+                if org_id:
+                    FeatureFlagManager.set_org_id(org_id)
+
+                value = fm.get_flag(ld_flag, None)
+                pp(f"  Flag '{ld_flag}' = {value!r}")
+
+                if ld_expected is not None:
+                    expected = _parse_flag_value(ld_expected)
+                    _assert(
+                        value == expected,
+                        f"Expected {expected!r} ({type(expected).__name__}), got {value!r} ({type(value).__name__})",
+                    )
+                    pp(f"  Matches expected value {expected!r}")
+                pp("[green]OK[/green]")
+            finally:
+                FeatureFlagManager.reset()
 
     pp("\n[green]All smoketests passed![/green]")
 

@@ -248,6 +248,10 @@ class Dremio(FlagAwareModel):
     )
     oauth2: Optional[OAuth2] = None
     allow_dml: Optional[bool] = Field(default=False)
+    extract_org_id_from_jwt: Optional[bool] = Field(
+        default=False,
+        description="Extract org ID from JWT aud claim for LD context targeting",
+    )
     auth_issuer_uri_override: Optional[str] = None
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)

@@ -208,6 +208,7 @@ async def http_streamable_mcp_server(
     logging_level: str,
     project_id: str = None,
     wlm_engine: str = None,
+    dremio_overrides: dict = None,
 ) -> AsyncGenerator[StreamableMcpServerFixture, None]:
     old = settings.instance()
     sf = None
@@ -237,6 +238,8 @@ async def http_streamable_mcp_server(
         }
         if wlm_engine:
             config["dremio"]["wlm"] = {"engine_name": wlm_engine}
+        if dremio_overrides:
+            config["dremio"].update(dremio_overrides)
         settings._settings.set(settings.Settings.model_validate(config))
         settings.write_settings()
 

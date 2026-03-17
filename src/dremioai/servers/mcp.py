@@ -128,8 +128,9 @@ class FastMCPServerWithAuthToken(FastMCP):
 
         async def verify_token(self, token: str) -> AccessToken | None:
             if token:
-                if org_id := self._extract_jwt_aud(token):
-                    FeatureFlagManager.set_org_id(org_id)
+                if settings.instance().dremio.get("extract_org_id_from_jwt"):
+                    if org_id := self._extract_jwt_aud(token):
+                        FeatureFlagManager.set_org_id(org_id)
                 return AccessToken(
                     token=token,  # Include the token itself
                     client_id="unused-client",
