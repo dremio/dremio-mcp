@@ -29,6 +29,7 @@ dependencies = [
     "prometheus-client>=0.22.1",
     "prompt-toolkit>=3.0.50",
     "pydantic>=2.10.6",
+    "PyJWT>=2.8.0",
     "pydantic-settings>=2.8.1",
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",

@@ -14,10 +14,10 @@
 #  limitations under the License.
 #
 
-import base64
-import json
 import uuid
+import warnings
 
+import jwt
 import pytest
 from unittest.mock import patch, MagicMock
 from conftest import http_streamable_client_server, http_streamable_mcp_server
@@ -51,13 +51,10 @@ def _make_mock_ld_client(flag_values: dict):
 
 
 def _build_jwt(aud: str) -> str:
-    """Build a minimal JWT with the given ``aud`` claim.
-
-    No real signature — ``_extract_jwt_aud`` only base64-decodes the payload.
-    """
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
-    payload = base64.urlsafe_b64encode(json.dumps({"aud": aud}).encode()).rstrip(b"=").decode()
-    return f"{header}.{payload}.nosig"
+    """Build a minimal unsigned JWT with the given ``aud`` claim."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*HMAC key.*")
+        return jwt.encode({"aud": aud}, key="", algorithm="HS256")
 
 
 def _inject_capturing_ld_client() -> list:

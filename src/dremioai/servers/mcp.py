@@ -116,11 +116,8 @@ class FastMCPServerWithAuthToken(FastMCP):
             we only read the audience (org ID) for LD context targeting.
             """
             try:
-                import json
-                import base64
-                payload = token.split(".")[1]
-                payload += "=" * (-len(payload) % 4)
-                claims = json.loads(base64.urlsafe_b64decode(payload))
+                import jwt
+                claims = jwt.decode(token, options={"verify_signature": False})
                 aud = claims.get("aud")
                 return aud[0] if isinstance(aud, list) else aud
             except Exception:

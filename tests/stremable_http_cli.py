@@ -601,10 +601,8 @@ async def _run_smoketests(
             org_id = None
             if token:
                 try:
-                    import base64 as _b64
-                    payload = token.split(".")[1]
-                    payload += "=" * (-len(payload) % 4)
-                    claims = json.loads(_b64.urlsafe_b64decode(payload))
+                    import jwt
+                    claims = jwt.decode(token, options={"verify_signature": False})
                     aud = claims.get("aud")
                     org_id = aud[0] if isinstance(aud, list) else aud
                 except Exception:
