@@ -73,6 +73,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response as StarletteResponse
 
 from dremioai.tools.tools import ProjectIdMiddleware
+from dremioai.servers.jwks_verifier import JWKSVerifier
 
 
 class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
@@ -108,12 +109,19 @@ class Transports(StrEnum):
 class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
 
+        def __init__(self):
+            self._jwks_verifier = None
+            dremio = settings.instance().dremio
+            if jwks_uri := dremio.get("jwks_uri"):
+                lifespan = dremio.get("jwks_cache_lifespan") or 3600
+                self._jwks_verifier = JWKSVerifier(jwks_uri, lifespan=lifespan)
+
         @staticmethod
         def _extract_jwt_aud(token: str) -> str | None:
-            """Extract the aud claim from a JWT without signature verification.
+            """Extract aud from a JWT without signature verification.
 
-            The token is always forwarded to Dremio for real validation;
-            we only read the audience (org ID) for LD context targeting.
+            Used only when ``jwks_uri`` is not configured but
+            ``extract_org_id_from_jwt`` is enabled.
             """
             try:
                 import jwt
@@ -124,18 +132,26 @@ class FastMCPServerWithAuthToken(FastMCP):
                 return None
 
         async def verify_token(self, token: str) -> AccessToken | None:
-            if token:
-                if settings.instance().dremio.get("extract_org_id_from_jwt"):
-                    if org_id := self._extract_jwt_aud(token):
-                        FeatureFlagManager.set_org_id(org_id)
-                return AccessToken(
-                    token=token,  # Include the token itself
-                    client_id="unused-client",
-                    scopes=["read"],
-                )
-            else:
-                log.logger("verify_token").info(f"Token not provided")
+            if not token:
+                log.logger("verify_token").info("Token not provided")
                 return None
+
+            expires_at = org_id = None
+            if isinstance(self._jwks_verifier, JWKSVerifier):
+                if verified := await self._jwks_verifier.verify(token):
+                    expires_at, org_id = verified.exp, verified.aud
+            elif settings.instance().dremio.get("extract_org_id_from_jwt"):
+                org_id = self._extract_jwt_aud(token)
+
+            if org_id is not None and settings.instance().dremio.get("extract_org_id_from_jwt"):
+                FeatureFlagManager.set_org_id(org_id)
+
+            return AccessToken(
+                token=token,
+                client_id="unused-client",
+                scopes=["read"],
+                expires_at=expires_at,
+            )
 
     def streamable_http_app(self):
         token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
