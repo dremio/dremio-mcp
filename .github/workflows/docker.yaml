@@ -24,7 +24,7 @@ jobs:
       DOCKER_BUILDKIT: "1"
       DOCKER_HOST: tcp://localhost:2376
     runs-on:
-      labels: [ x-small ]
+      labels: [ small ]
       group: dremio-rg
     steps:
       - name: Checkout code
@@ -89,7 +89,9 @@ jobs:
             tag="${{ inputs.repository }}/${{ inputs.image-name }}:${suffix}"
           fi
 
-          echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "### Docker Image" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
       - env:
           ACCESS_TOKEN_FILE: /tmp/access_token.txt
           GCP_METADATA_URL: http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
