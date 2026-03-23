@@ -352,12 +352,13 @@ class RunSqlQuery(Tools):
     @secured
     @with_metrics
     async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
-        """Run a SELECT sql query on the Dremio cluster and return the results.
-        Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes
-        You are premitted to run only SELECT queries. No DML statements are allowed.
+        """Run a SQL query on the Dremio cluster and return the results.
+        Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
+        DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
+        If a DML query is not allowed, this will return an error.
 
         Args:
-            query: sql query
+        query: sql query
         """
         try:
             RunSqlQuery.ensure_query_allowed(query)
