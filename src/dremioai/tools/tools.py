@@ -45,7 +45,6 @@ import functools
 import pandas as pd
 import numpy as np
 from dremioai.api.dremio import sql, usage, search
-from dremioai.api.dremio.sql import run_query
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.api.prometheus import vm
@@ -105,9 +104,6 @@ class Tool:
 
 
 class Tools:
-    def get_description(self) -> str:
-        raise NotImplementedError("Subclasses should implement this method")
-
     async def invoke(self):
         raise NotImplementedError("Subclasses should implement this method")
 
@@ -239,45 +235,43 @@ def is_tool_for(
 class GetFailedJobDetails(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
 
-    def get_description(self) -> str:
-        return """Get the stats and details of failed or canceled jobs executed in the Dremio cluster in the past 7 days
-                along with a split by job type
-
-                Returns:
-                    A dictionary with the following keys:
-                    - Number of jobs in over 7 days
-                    - Job categories: A list of dictionaries with the following keys:
-                        - day: date of the job
-                        - query_type: type of the job
-                        - cnt: count of jobs
-                    - Job count by day, queryType and engine: A list of dictionaries with the following keys
-                        - day: date of the job
-                        - queryType: type of the job
-                        - engine: engine used
-                        - count: count of jobs
-                    - Job count by day, queryType and user: A list of dictionaries with the following keys
-                        - day: date of the job
-                        - queryType: type of the job
-                        - user: user who submitted the job
-                        - count: count of jobs
-                    - Job count by day, queriedDataset and state: A list of dictionaries with the following keys
-                        - day: date of the job
-                        - queriedDataset: dataset queried
-                        - state: state of the job
-                        - count: count of jobs
-                    - Job count by day, queryType and error: A list of dictionaries with the following keys
-                        - day: date of the job
-                        - queryType: type of the job
-                        - error: error message
-                        - count: count of jobs
-                """
-
     def group_by(self, df, by):
         return df.groupby(by).size().reset_index(name="count").to_dict(orient="records")
 
     @secured
     @with_metrics
     async def invoke(self) -> Dict[str, Any]:
+        """Get the stats and details of failed or canceled jobs executed in the Dremio cluster in the past 7 days
+        along with a split by job type
+
+        Returns:
+            A dictionary with the following keys:
+            - Number of jobs in over 7 days
+            - Job categories: A list of dictionaries with the following keys:
+                - day: date of the job
+                - query_type: type of the job
+                - cnt: count of jobs
+            - Job count by day, queryType and engine: A list of dictionaries with the following keys
+                - day: date of the job
+                - queryType: type of the job
+                - engine: engine used
+                - count: count of jobs
+            - Job count by day, queryType and user: A list of dictionaries with the following keys
+                - day: date of the job
+                - queryType: type of the job
+                - user: user who submitted the job
+                - count: count of jobs
+            - Job count by day, queriedDataset and state: A list of dictionaries with the following keys
+                - day: date of the job
+                - queriedDataset: dataset queried
+                - state: state of the job
+                - count: count of jobs
+            - Job count by day, queryType and error: A list of dictionaries with the following keys
+                - day: date of the job
+                - queryType: type of the job
+                - error: error message
+                - count: count of jobs
+        """
         table = (
             "sys.project.jobs_recent"
             if settings.instance().dremio.project_id
@@ -335,17 +329,6 @@ class RunSqlQuery(Tools):
         expressions.Union,
     ]
 
-    def get_description(self) -> str:
-        ret = ["""Run a SELECT sql query on the Dremio cluster and return the results.
-        Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes. """]
-        if settings.instance().dremio.get("allow_dml"):
-            ret += ["You are permitted to run SELECT as well as DML queries."]
-        else:
-            ret += ["You are permitted to run only SELECT queries. No DML statements are allowed."]
-
-        ret += ["Args: query: sql query"]
-        return "\n".join(ret)
-
     @staticmethod
     def ensure_query_allowed(s: str):
         if settings.instance().dremio.get("allow_dml"):
@@ -369,6 +352,14 @@ class RunSqlQuery(Tools):
     @secured
     @with_metrics
     async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
+        """Run a SQL query on the Dremio cluster and return the results.
+        Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
+        DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
+        If a DML query is not allowed, this will return an error.
+
+        Args:
+        query: sql query
+        """
         try:
             RunSqlQuery.ensure_query_allowed(query)
         except ValueError:
@@ -395,19 +386,17 @@ class BuildUsageReport(Tools):
     async def invoke(
         self, by: Optional[Literal["PROJECT", "ENGINE"]] = "ENGINE"
     ) -> Dict[str, Any]:
-        _, projects_usage, engines_usage = await usage.get_consolidated_usage()
-        if by == "PROJECT":
-            return projects_usage.to_dict(orient="records")
-        return {"results": engines_usage.to_dict(orient="records")}
+        """Build a usage report for the project grouped by engines for the past 7 days
 
-    def get_description(self) -> str:
-        return """
-        Build a usage report for the project grouped by engines for the past 7 days
         Hint: This is useful to plot a visualization
 
         Args:
             by: grouping the usage by 'PROJECT' or 'ENGINE'
         """
+        _, projects_usage, engines_usage = await usage.get_consolidated_usage()
+        if by == "PROJECT":
+            return projects_usage.to_dict(orient="records")
+        return {"results": engines_usage.to_dict(orient="records")}
 
 
 class Resource(Tools):
@@ -420,10 +409,9 @@ class GetNameOfJobsRecentTable(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
 
     async def invoke(self) -> Dict[str, str]:
+        """Gets the schema full name of the table that stores the jobs information"""
         return {"name": "sys.project.jobs_recent"}
 
-    def get_description(self) -> str:
-        return """Gets the schema full name of the table that stores the jobs information"""
 
 class Hints(Resource):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
@@ -433,18 +421,18 @@ class Hints(Resource):
         return "dremio://hints"
 
     async def invoke(self) -> Dict[str, str]:
-        return self.invoke.__doc__
-
-    def get_description(self) -> str:
-        return """Dremio cluster has few key diminsions that can be used to analyze and optimize the cluster.
+        """Dremio cluster has few key diminsions that can be used to analyze and optimize the cluster.
         Looking at the number of jobs and its statistics and failure rates, and overall system usage
         """
+        return self.invoke.__doc__
 
 
 class GetUsefulSystemTableNames(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
 
     async def invoke(self) -> Dict[str, str]:
+        """Gets the names of system tables in the dremio cluster, useful for various analysis.
+        Use Get Schema of Table tool to get the schema of the table"""
         return {
             'INFORMATION_SCHEMA."TABLES"': (
                 "Information about tables in this cluster. "
@@ -458,9 +446,6 @@ class GetUsefulSystemTableNames(Tools):
             'INFORMATION_SCHEMA."VIEWS"': "View definitions and metadata.",
         }
 
-    def get_description(self) -> str:
-        return """Gets the names of system tables in the dremio cluster, useful for various analysis.
-        Use Get Schema of Table tool to get the schema of the table"""
 
 class GetSchemaOfTable(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
@@ -468,6 +453,18 @@ class GetSchemaOfTable(Tools):
     @secured
     @with_metrics
     async def invoke(self, table_name: Union[str | List[str]]) -> Dict[str, Any]:
+        """Gets the schema of the given table.
+
+        Args:
+            table_name: The fully qualified table name. Accepts either:
+              - A dot-separated string: '"source"."schema"."table"'
+              - A list of path components: ["source", "schema", "table"]
+
+        Returns:
+            A dictionary with information about the table. The field "fields" is a list of dictionaries
+            that give column names and types. Optionally :"text" field and "tag" filed can provide more
+            information about the table
+        """
         if isinstance(table_name, list):
             if not table_name:
                 return {"error": "table_name must not be empty. Provide a list of path components, e.g. ['source', 'schema', 'table']."}
@@ -481,21 +478,6 @@ class GetSchemaOfTable(Tools):
             del result["sql"]
         return result
 
-    def get_description(self) -> str:
-        return """Gets the schema of the given table.
-
-        Args:
-            table_name: The fully qualified table name. Accepts either:
-              - A dot-separated string: '"source"."schema"."table"'
-              - A list of path components: ["source", "schema", "table"]
-
-        Returns:
-            A dictionary with information about the table. The field "fields" is a list of dictionaries
-            that give column names and types. Optionally :"text" field and "tag" filed can provide more
-            information about the table
-        """
-
-
 
 class GetTableOrViewLineage(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
@@ -503,6 +485,14 @@ class GetTableOrViewLineage(Tools):
     @secured
     @with_metrics
     async def invoke(self, table_name: Union[str, List[str]]) -> Dict[str, Any]:
+        """Finds the lineage of a table or view in the Dremio cluster
+
+        Args:
+            table_name: name of the table or view, including the schema. Be sure to quote the table name if it contains special characters
+
+        Returns:
+            A json representation with the lineage of the table or view.
+        """
         try:
             return await get_lineage(table_name)
         except Exception as e:
@@ -511,16 +501,6 @@ class GetTableOrViewLineage(Tools):
                 "error": "Unable to retrieve lineage for the specified table or view.",
                 "message": "The lineage lookup failed. Please verify the table name and try again.",
             }
-
-    def get_description(self) -> str:
-        return """Finds the lineage of a table or view in the Dremio cluster
-
-        Args:
-            table_name: name of the table or view, including the schema. Be sure to quote the table name if it contains special characters
-
-        Returns:
-            A json representation with the lineage of the table or view.
-        """
 
 
 class SearchTableAndViews(Tools):
@@ -534,19 +514,7 @@ class SearchTableAndViews(Tools):
     @secured
     @with_metrics
     async def invoke(self, query: str) -> Dict[str, Any]:
-        res = await run_in_parallel(
-            [
-                search.get_search_results(
-                    search.Search(query=query, filter=category), use_df=True
-                )
-                for category in (search.Category.TABLE, search.Category.VIEW)
-            ]
-        )
-        res = pd.concat(res)
-        return {"results": res.to_dict(orient="records")}
-
-    def get_description(self) -> str:
-        return """Runs a semantic search on the Dremio cluster to find tables and views that match the query.
+        """Runs a semantic search on the Dremio cluster to find tables and views that match the query.
 
         Args:
             query: The query to run
@@ -557,6 +525,16 @@ class SearchTableAndViews(Tools):
             key that lists the entire schema of the table or view. You can rely on this schema and avoid
             calling GetSchemaOfTable tool.
         """
+        res = await run_in_parallel(
+            [
+                search.get_search_results(
+                    search.Search(query=query, filter=category), use_df=True
+                )
+                for category in (search.Category.TABLE, search.Category.VIEW)
+            ]
+        )
+        res = pd.concat(res)
+        return {"results": res.to_dict(orient="records")}
 
 
 def _subclasses(cls):
@@ -616,6 +594,15 @@ class GetRelevantMetrics(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_PROMETHEUS]]
 
     async def invoke(self) -> Dict[str, Any]:
+        """
+        Get the names and descriptions of the relevant prometheus metrics for the Dremio cluster.
+        A metric that shares the same value for label 'daas_dremio_com_coordinator_project_id'
+        belongs to the same project
+
+        Returns: A dictionary with
+            - key: name of the metric
+            - value: description of the metric
+        """
         return {
             "jobs_total": "Total number of jobs executed in the Dremio cluster",
             "jobs_failed_total": "Total number of failed jobs executed in the Dremio cluster",
@@ -627,26 +614,12 @@ class GetRelevantMetrics(Tools):
             "dremio_engine_replica_running": "Number of running replicas in the Dremio engine. It correlates to dremio_engine_executors using engine_id label",
         }
 
-    def get_description(self) -> str:
-        return """
-        Get the names and descriptions of the relevant prometheus metrics for the Dremio cluster.
-        A metric that shares the same value for label 'daas_dremio_com_coordinator_project_id'
-        belongs to the same project
-
-        Returns: A dictionary with
-            - key: name of the metric
-            - value: description of the metric
-        """
-
 
 class GetMetricSchema(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_PROMETHEUS]]
 
     async def invoke(self, metric: str) -> Dict[str, Any]:
-        return await vm.get_metrics_schema(metric)
-
-    def get_description(self) -> str:
-        return """
+        """
         Given the name of the metric, this will return all the labels you can expect to see
         for that metric.
 
@@ -657,24 +630,23 @@ class GetMetricSchema(Tools):
             - key: name of the label
             - value: a sample value of the label
         """
+        return await vm.get_metrics_schema(metric)
 
 
 class RunPromQL(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_PROMETHEUS]]
 
     async def invoke(self, promql_query: str) -> Dict[str, Any]:
-        df = await vm.get_promql_result(
-            promql_query, start="-7d", step="1h", use_df=True
-        )
-        return df.to_dict(orient="records")
-
-    def get_description(self) -> str:
-        return """
+        """
         Runs a prometheus query, over the last 7 days and returns the results
 
         Args:
           promql_query: The PromQL query to run
         """
+        df = await vm.get_promql_result(
+            promql_query, start="-7d", step="1h", use_df=True
+        )
+        return df.to_dict(orient="records")
 
 
 class GetDescriptionOfTableOrSchema(Tools):
@@ -683,12 +655,7 @@ class GetDescriptionOfTableOrSchema(Tools):
     @secured
     @with_metrics
     async def invoke(self, name: Union[List[str], str]) -> Dict[str, Any]:
-        if isinstance(name, str):
-            name = [name]
-        return await get_descriptions(name)
-
-    def get_description(self) -> str:
-        return """
+        """
         Given one or more table names or schema names, this will return the description of the table or schema, if any exists
         as well as the description of any parent schemas
 
@@ -699,3 +666,6 @@ class GetDescriptionOfTableOrSchema(Tools):
             - key: a part of the table or schema name's heirarchy
             - value: a dictionary with the description and tags
         """
+        if isinstance(name, str):
+            name = [name]
+        return await get_descriptions(name)

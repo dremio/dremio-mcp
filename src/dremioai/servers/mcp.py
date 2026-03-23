@@ -188,7 +188,7 @@ def init(
         mcp.add_tool(
             tool_instance.invoke,
             name=tool.__name__,
-            description=tool_instance.get_description(),
+            description=tool_instance.invoke.__doc__,
             annotations=ToolAnnotations(
                 readOnlyHint=not (is_sql_tool and allow_dml),
                 destructiveHint=bool(is_sql_tool and allow_dml),
