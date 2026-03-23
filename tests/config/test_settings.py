@@ -129,8 +129,9 @@ def test_env_file(mock_config_dir):
         assert settings.instance().dremio.pat == "bar"
         assert settings.instance().tools.server_mode == ToolType.FOR_DATA_PATTERNS
     finally:
-        os.environ.pop("DREMIOAI_DREMIO_URI", None)
-        os.environ.pop("DREMIOAI_DREMIO_PAT", None)
+        os.environ.pop("DREMIOAI_DREMIO__URI", None)
+        os.environ.pop("DREMIOAI_DREMIO__PAT", None)
+        os.environ.pop("DREMIOAI_TOOLS__SERVER_MODE", None)
 
 
 @pytest.mark.parametrize(
