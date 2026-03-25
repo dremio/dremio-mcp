@@ -16,19 +16,28 @@ import asyncio
 
 class OAuth2Redirect:
     def __init__(
-        self, client_id, code_verifier, code_challenge, token_url, redirect_port
+        self, client_id, code_verifier, code_challenge, token_url, redirect_port,
+        redirect_path="/",
     ):
         self.client_id = client_id
         self.code_verifier = code_verifier
         self.code_challenge = code_challenge
         self.token_url = token_url
         self.redirect_port = redirect_port
+        self.redirect_path = redirect_path
         self.stop = asyncio.Event()
         self.token = {}
 
+    @property
+    def redirect_uri(self) -> str:
+        uri = f"http://localhost:{self.redirect_port}"
+        if self.redirect_path and self.redirect_path != "/":
+            uri += self.redirect_path
+        return uri
+
     async def auth_redirect(self, request: web.Request):
         print(f"auth_redirect: {request}")
-        redirect_uri = f"http://localhost:{self.redirect_port}"
+        redirect_uri = self.redirect_uri
         params = {
             "client_id": self.client_id,
             "code_verifier": self.code_verifier,
@@ -65,7 +74,7 @@ class OAuth2Redirect:
 
     async def start_server(self):
         app = web.Application()
-        app.router.add_get("/", self.auth_redirect)
+        app.router.add_get(self.redirect_path, self.auth_redirect)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "localhost", self.redirect_port)
@@ -106,6 +115,8 @@ class OAuth2:
         client_id: Optional[str] = None,
         auth_url: Optional[str] = None,
         token_url: Optional[str] = None,
+        redirect_port: int = 8976,
+        redirect_path: str = "/",
     ):
         if not auth_url:
             if settings.instance().dremio.oauth2.client_id is None:
@@ -123,36 +134,36 @@ class OAuth2:
             self.authorize_url = auth_url
             self.access_token_url = token_url
             self.client_id = client_id
-            if self.client_id is None:
-                raise RuntimeError("client_id is required")
-        self.redirect_port = 8976
+        self.redirect_port = redirect_port
+        self.redirect_path = redirect_path
         self.scope = "dremio.all offline_access"
         self.code_verifier, self.code_challenge = get_pkce_pair()
-        self.init_params = {
-            "client_id": self.client_id,
-            "response_type": "code",
-            "redirect_uri": f"http://localhost:{self.redirect_port}",
-            "scope": self.scope,
-            "code_challenge": self.code_challenge,
-            "code_challenge_method": "S256",
-        }
         self.oauth_redirect = OAuth2Redirect(
             self.client_id,
             self.code_verifier,
             self.code_challenge,
             self.access_token_url,
             self.redirect_port,
+            self.redirect_path,
         )
+        self.init_params = {
+            "client_id": self.client_id,
+            "response_type": "code",
+            "redirect_uri": self.oauth_redirect.redirect_uri,
+            "scope": self.scope,
+            "code_challenge": self.code_challenge,
+            "code_challenge_method": "S256",
+        }
 
 
 def get_oauth2_tokens(
     client_id: Optional[str] = None,
     auth_url: Optional[str] = None,
     token_url: Optional[str] = None,
+    redirect_port: int = 8976,
+    redirect_path: str = "/",
 ) -> OAuth2Redirect:
-    # client_id = "311658a1-19ae-4851-b6a6-911c794312e2",
-    # client_id = "a3743893-d849-4c8a-893b-533dd457aac4"
-    oauth = OAuth2(client_id, auth_url, token_url)
+    oauth = OAuth2(client_id, auth_url, token_url, redirect_port, redirect_path)
     server_thread = Thread(
         target=run_server,
         daemon=True,

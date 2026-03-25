@@ -30,6 +30,7 @@ from typing import Optional
 
 import jwt as pyjwt
 from jwt import PyJWKClient, PyJWKClientError, ExpiredSignatureError
+from jwt.exceptions import MissingCryptographyError
 from dremioai import log
 
 logger = log.logger(__name__)
@@ -40,6 +41,7 @@ _DEFAULT_JWKS_CACHE_LIFESPAN = 3600  # 1 hour in seconds
 @dataclass
 class VerifiedClaims:
     """Subset of JWT claims extracted after signature verification."""
+
     exp: Optional[int] = None
     aud: Optional[str] = None
 
@@ -89,11 +91,18 @@ class JWKSVerifier:
                 )
                 return await loop.run_in_executor(None, self._verify, token)
             except Exception:
-                logger.warning("JWKS verification failed after cache refresh", exc_info=True)
+                logger.warning(
+                    "JWKS verification failed after cache refresh", exc_info=True
+                )
                 return None
         except ExpiredSignatureError:
             logger.debug("Token expired")
             return VerifiedClaims(exp=0)
+        except MissingCryptographyError:
+            logger.error(
+                "JWT verification requires cryptography support (install PyJWT[crypto] / cryptography)"
+            )
+            return None
         except Exception:
             logger.debug("JWT verification failed, skipping enforcement", exc_info=True)
             return None
