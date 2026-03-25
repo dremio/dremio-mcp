@@ -77,10 +77,17 @@ def check_auth(
     url: Annotated[
         Optional[str], Option(help="The URL of the MCP server")
     ] = "http://127.0.0.1:8000/mcp",
+    redirect_port: Annotated[
+        int, Option(help="Local port for OAuth redirect listener")
+    ] = 8976,
+    redirect_path: Annotated[
+        str, Option(help="Path for OAuth redirect (e.g. /Callback)")
+    ] = "/",
 ) -> OAuth2Redirect:
     md = get_oauth_config(url)
     oauth = get_oauth2_tokens(
-        client_id, str(md.authorization_endpoint), str(md.token_endpoint)
+        client_id, str(md.authorization_endpoint), str(md.token_endpoint),
+        redirect_port, redirect_path,
     )
     pp(oauth.access_token)
     return oauth
@@ -281,6 +288,12 @@ async def run_test(
         Optional[str],
         Option(help="Expected flag value (parsed: true/false→bool, numeric→int/float, else str)"),
     ] = None,
+    redirect_port: Annotated[
+        int, Option(help="Local port for OAuth redirect listener")
+    ] = 8976,
+    redirect_path: Annotated[
+        str, Option(help="Path for OAuth redirect (e.g. /Callback)")
+    ] = "/",
 ):
     if not local:
         # Remote mode: connect directly to the URL
@@ -291,7 +304,7 @@ async def run_test(
             raise SystemExit(1)
         if token is None:
             pp("Checking auth..", end=" ")
-            a = check_auth(client_id, url)
+            a = check_auth(client_id, url, redirect_port, redirect_path)
             token = a.access_token
             pp("[green]OK[/green]")
         else:
@@ -324,7 +337,7 @@ async def run_test(
 
         if token is None:
             pp("Checking auth against local server..", end=" ")
-            a = check_auth(client_id, local_url)
+            a = check_auth(client_id, local_url, redirect_port, redirect_path)
             token = a.access_token
             pp("[green]OK[/green]")
 
