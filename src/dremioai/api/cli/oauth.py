@@ -1,12 +1,14 @@
 from enum import StrEnum, auto
+import asyncio
 from typing import Annotated, Optional, Tuple
 from urllib.parse import urlparse
 
-import requests
 from typer import Option, Typer
 from rich import print as pp
 
 from dremioai.api.oauth2 import get_oauth2_tokens
+from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
+from dremioai.api.transport import AsyncHttpClient
 from dremioai.config import settings
 
 app = Typer(
@@ -43,14 +45,14 @@ def resolve_oauth_endpoints(
 
     if mcp_uri:
         parsed = urlparse(mcp_uri)
+        endpoint = "/.well-known/oauth-authorization-server"
         well_known = parsed._replace(
-            path="/.well-known/oauth-authorization-server"
+            path=endpoint, params="", query="", fragment=""
         ).geturl()
         pp(f"Fetching OAuth metadata from {well_known}")
-        r = requests.get(well_known, timeout=10)
-        r.raise_for_status()
-        md = r.json()
-        return md["authorization_endpoint"], md["token_endpoint"]
+        client = AsyncHttpClient(uri=f"{parsed.scheme}://{parsed.netloc}", token="")
+        md = asyncio.run(client.get(endpoint, deser=OAuthMetadataRFC8414))
+        return str(md.authorization_endpoint), str(md.token_endpoint)
     return None, None
 
 

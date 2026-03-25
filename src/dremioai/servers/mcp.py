@@ -18,27 +18,15 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
 from mcp.cli.claude import get_claude_config_path
-from mcp.shared.auth import OAuthMetadata
 from mcp.types import ToolAnnotations
-from pydantic import AnyHttpUrl, field_serializer
+from pydantic import AnyHttpUrl
 from pydantic.networks import AnyUrl
 
 from dremioai.metrics.registry import get_metrics_app
 from starlette.requests import Request
 from starlette.responses import Response
 
-
-class OAuthMetadataRFC8414(OAuthMetadata):
-    """RFC 8414 compliant OAuth metadata that strips trailing slash from issuer URL.
-
-    The MCP SDK's OAuthMetadata uses AnyHttpUrl for the issuer field, which adds
-    a trailing slash during serialization. RFC 8414 Section 3.2 requires the issuer
-    to exactly match the discovery URL without trailing slash.
-    """
-
-    @field_serializer("issuer")
-    def serialize_issuer(self, value: AnyHttpUrl) -> str:
-        return str(value).rstrip("/")
+from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
 
 
 from dremioai.tools import tools
@@ -125,6 +113,7 @@ class FastMCPServerWithAuthToken(FastMCP):
             """
             try:
                 import jwt
+
                 claims = jwt.decode(token, options={"verify_signature": False})
                 aud = claims.get("aud")
                 return aud[0] if isinstance(aud, list) else aud
@@ -143,7 +132,9 @@ class FastMCPServerWithAuthToken(FastMCP):
             elif settings.instance().dremio.get("extract_org_id_from_jwt"):
                 org_id = self._extract_jwt_aud(token)
 
-            if org_id is not None and settings.instance().dremio.get("extract_org_id_from_jwt"):
+            if org_id is not None and settings.instance().dremio.get(
+                "extract_org_id_from_jwt"
+            ):
                 FeatureFlagManager.set_org_id(org_id)
 
             return AccessToken(
@@ -228,7 +219,9 @@ def init(
     )
 
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
-    @mcp.custom_route("/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"])
+    @mcp.custom_route(
+        "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
+    )
     async def authorization_server_metadata(request: Request) -> Response:
         if issuer := settings.instance().dremio.auth_issuer_uri:
             auth, tok = settings.instance().dremio.auth_endpoints
