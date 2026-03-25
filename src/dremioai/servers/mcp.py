@@ -52,6 +52,7 @@ from yaml import dump
 import sys
 import uvicorn
 import threading
+import jwt
 
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
@@ -96,6 +97,7 @@ class Transports(StrEnum):
 
 class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
+        logger = log.logger("DelegatingTokenVerifier")
 
         def __init__(self):
             self._jwks_verifier = None
@@ -105,19 +107,20 @@ class FastMCPServerWithAuthToken(FastMCP):
                 self._jwks_verifier = JWKSVerifier(jwks_uri, lifespan=lifespan)
 
         @staticmethod
-        def _extract_jwt_aud(token: str) -> str | None:
+        def extract_jwt_aud(token: str) -> str | None:
             """Extract aud from a JWT without signature verification.
 
             Used only when ``jwks_uri`` is not configured but
             ``extract_org_id_from_jwt`` is enabled.
             """
             try:
-                import jwt
-
                 claims = jwt.decode(token, options={"verify_signature": False})
                 aud = claims.get("aud")
                 return aud[0] if isinstance(aud, list) else aud
-            except Exception:
+            except:
+                FastMCPServerWithAuthToken.DelegatingTokenVerifier.logger.exception(
+                    f"Failed to extract org_id from JWT: token={len(token)} bytes"
+                )
                 return None
 
         async def verify_token(self, token: str) -> AccessToken | None:
@@ -126,11 +129,13 @@ class FastMCPServerWithAuthToken(FastMCP):
                 return None
 
             expires_at = org_id = None
+            is_verified = False
             if isinstance(self._jwks_verifier, JWKSVerifier):
                 if verified := await self._jwks_verifier.verify(token):
                     expires_at, org_id = verified.exp, verified.aud
+                    is_verified = True
             elif settings.instance().dremio.get("extract_org_id_from_jwt"):
-                org_id = self._extract_jwt_aud(token)
+                org_id = self.extract_jwt_aud(token)
 
             if org_id is not None and settings.instance().dremio.get(
                 "extract_org_id_from_jwt"
@@ -140,7 +145,7 @@ class FastMCPServerWithAuthToken(FastMCP):
             return AccessToken(
                 token=token,
                 client_id="unused-client",
-                scopes=["read"],
+                scopes=["read", "jwt_verified"] if is_verified else ["read"],
                 expires_at=expires_at,
             )
 

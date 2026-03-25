@@ -10,20 +10,32 @@ import contextlib
 import functools
 import json
 import random
+import threading
 import time
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Annotated, Optional, AsyncGenerator, Callable, Any, Dict
 from urllib.parse import urlparse
 
+import jwt
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.auth import OAuthMetadata
-from typer import Typer, Option
-from rich import print as pp
 import requests
+import uvicorn
+from rich import print as pp
+from rich.table import Table
+from typer import Typer, Option
+from datetime import datetime
 
 from dremioai import log
 from dremioai.api.oauth2 import get_oauth2_tokens, OAuth2Redirect
+from dremioai.api.transport import AsyncHttpClient
+from dremioai.config import settings
+from dremioai.config.feature_flags import FeatureFlagManager
+from dremioai.config.tools import ToolType
+from dremioai.servers.mcp import FastMCPServerWithAuthToken, init, Transports
+from pydantic import BaseModel, Field
 
 
 def async_command(func: Callable) -> Callable:
@@ -62,6 +74,28 @@ def get_oauth_config(url: str) -> OAuthMetadata:
     return OAuthMetadata.model_validate(r.json())
 
 
+def _redact_value(v: Any, keep: int = 12) -> str:
+    if v is None:
+        return ""
+    s = str(v)
+    if len(s) <= keep:
+        return s
+    return f"{s[:keep]}..."
+
+
+class JWK(BaseModel):
+    kid: Optional[str] = None
+    kty: Optional[str] = None
+    alg: Optional[str] = None
+    use: Optional[str] = None
+    n: Optional[str] = None
+    e: Optional[str] = None
+
+
+class JWKS(BaseModel):
+    keys: list[JWK] = Field(default_factory=list)
+
+
 @auth.command("list")
 def list_auth(
     url: Annotated[
@@ -86,11 +120,175 @@ def check_auth(
 ) -> OAuth2Redirect:
     md = get_oauth_config(url)
     oauth = get_oauth2_tokens(
-        client_id, str(md.authorization_endpoint), str(md.token_endpoint),
-        redirect_port, redirect_path,
+        client_id,
+        str(md.authorization_endpoint),
+        str(md.token_endpoint),
+        redirect_port,
+        redirect_path,
     )
     pp(oauth.access_token)
     return oauth
+
+
+@auth.command("verify-token")
+@async_command
+async def verify_token(
+    token: Annotated[str, Option(help="Bearer token/JWT to verify")],
+    jwks_uri: Annotated[
+        Optional[str],
+        Option(
+            help="JWKS endpoint URL. When set, validates token signature+exp via JWKS."
+        ),
+    ] = None,
+    extract_org_id_from_jwt: Annotated[
+        bool,
+        Option(help="Enable JWT aud extraction path when JWKS is not configured."),
+    ] = False,
+    strict: Annotated[
+        bool,
+        Option(
+            help="Exit non-zero when --jwks-uri is set but token is not cryptographically verified."
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        Option(
+            help="Print debug diagnostics, including JWKS payload when --jwks-uri is set."
+        ),
+    ] = False,
+):
+    overrides: Dict[str, Any] = {
+        "dremio.extract_org_id_from_jwt": extract_org_id_from_jwt,
+    }
+    if jwks_uri is not None:
+        overrides["dremio.jwks_uri"] = jwks_uri
+
+    async def _run_verify(tok: str):
+        FeatureFlagManager.set_org_id(None)
+        verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
+        result = await verifier.verify_token(tok)
+        org_id = FeatureFlagManager.get_org_id() if extract_org_id_from_jwt else None
+        return result, org_id
+
+    result, org_id = await settings.run_with(
+        _run_verify,
+        overrides=overrides,
+        args=[token],
+    )
+
+    if result is None:
+        pp({"accepted": False, "verified": False, "reason": "rejected"})
+        raise SystemExit(1)
+
+    try:
+        hdr = jwt.get_unverified_header(token)
+    except Exception as e:
+        hdr = {"error": str(e)}
+
+    claims = None
+    try:
+        c = jwt.decode(token, options={"verify_signature": False})
+        claims = {k: c.get(k) for k in ("iss", "aud", "sub", "exp", "iat")}
+    except Exception as e:
+        claims = {"error": str(e)}
+
+    aud_claim = claims.get("aud") if isinstance(claims, dict) else None
+    aud_claim_value = (
+        aud_claim[0] if isinstance(aud_claim, list) and aud_claim else aud_claim
+    )
+
+    verified = "jwt_verified" in result.scopes
+    if debug:
+        jwt_tbl = Table(title="JWT Debug")
+        jwt_tbl.add_column("Field")
+        jwt_tbl.add_column("Value")
+        jwt_tbl.add_row("token_bytes", str(len(token)))
+        jwt_tbl.add_row(
+            "header.alg", str(hdr.get("alg")) if isinstance(hdr, dict) else ""
+        )
+        kid = str(hdr.get("kid"))
+        jwt_tbl.add_row("header.kid", kid)
+        jwt_tbl.add_row("claims.iss", str(claims.get("iss")))
+        jwt_tbl.add_row("claims.aud", str(claims.get("aud")))
+        jwt_tbl.add_row("claims.sub", str(claims.get("sub")))
+        if claims.get("exp"):
+            exp = str(datetime.fromtimestamp(claims.get("exp")))
+        else:
+            exp = ""
+        jwt_tbl.add_row("claims.exp", exp)
+        pp(jwt_tbl)
+
+        if jwks_uri is not None:
+            try:
+                parsed_jwks = urlparse(jwks_uri)
+                jwks_client = AsyncHttpClient(
+                    uri=f"{parsed_jwks.scheme}://{parsed_jwks.netloc}", token=""
+                )
+                jwks_endpoint = parsed_jwks.path or "/"
+                if parsed_jwks.query:
+                    jwks_endpoint = f"{jwks_endpoint}?{parsed_jwks.query}"
+                jwks: JWKS = await jwks_client.get(jwks_endpoint, deser=JWKS)
+                kid = hdr.get("kid") if isinstance(hdr, dict) else None
+                key_ids = [k.kid for k in jwks.keys if k.kid]
+                jwks_tbl = Table(title="JWKS Keys")
+                jwks_tbl.add_column("kid")
+                jwks_tbl.add_column("kty")
+                jwks_tbl.add_column("alg")
+                for k in jwks.keys:
+                    x = k.kid
+                    if k.kid == kid:
+                        x = f"[bold green]{k.kid}[/bold green]"
+                    jwks_tbl.add_row(str(x), str(k.kty), str(k.alg))
+                pp(f"JWKS URI: {jwks_uri}")
+                pp(jwks_tbl)
+                pp(
+                    f"header_kid={kid} kid_found_in_jwks={kid in key_ids if kid else False}"
+                )
+            except Exception as e:
+                pp({"debug": {"jwks_uri": jwks_uri, "jwks_fetch_error": str(e)}})
+
+    if strict and jwks_uri is not None and not verified:
+        pp(
+            {
+                "accepted": True,
+                "verified": False,
+                "reason": "strict_mode_verification_failed",
+            }
+        )
+        raise SystemExit(1)
+
+    result_tbl = Table(title="Verification Result")
+    result_tbl.add_column("Field")
+    result_tbl.add_column("Value")
+    verified_text = "[green]true[/green]" if verified else "[red]false[/red]"
+    expires_at_text = "None"
+    if result.expires_at is not None:
+        exp_dt = datetime.fromtimestamp(result.expires_at, tz=timezone.utc)
+        expired = exp_dt < datetime.now(timezone.utc)
+        expires_at_text = exp_dt.isoformat()
+        if expired:
+            expires_at_text = f"[red]{expires_at_text} (EXPIRED)[/red]"
+    org_id_text = f"[cyan]{org_id}[/cyan]" if org_id else "[dim]not found[/dim]"
+    if org_id and aud_claim_value:
+        org_aud_match_text = (
+            "[green]✓ match[/green]"
+            if str(org_id) == str(aud_claim_value)
+            else f"[red]✗ mismatch[/red] (aud={aud_claim_value})"
+        )
+    elif org_id and not aud_claim_value:
+        org_aud_match_text = "[red]✗ no aud claim[/red]"
+    else:
+        org_aud_match_text = "[dim]n/a[/dim]"
+    result_tbl.add_row("accepted", "true")
+    result_tbl.add_row("verified", verified_text)
+    result_tbl.add_row("expires_at", expires_at_text)
+    result_tbl.add_row("scopes", ", ".join(result.scopes))
+    result_tbl.add_row("client_id", str(result.client_id))
+    result_tbl.add_row("org_id", org_id_text)
+    result_tbl.add_row("org_id vs claims.aud", org_aud_match_text)
+    result_tbl.add_row("jwks_enabled", str(jwks_uri is not None).lower())
+    result_tbl.add_row("extract_org_id_from_jwt", str(extract_org_id_from_jwt).lower())
+    pp(result_tbl)
 
 
 cli = Typer(
@@ -190,11 +388,6 @@ def _extract_project_id(mcp_url: str) -> Optional[str]:
 @contextlib.contextmanager
 def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None = None):
     """Start a local MCP server configured to proxy to the given Dremio URI."""
-    import threading
-    from dremioai.config import settings
-    from dremioai.config.tools import ToolType
-    from dremioai.servers.mcp import init, Transports
-
     old = settings.instance()
     try:
         overrides = {
@@ -216,8 +409,6 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None 
         )
 
         def _run():
-            import uvicorn
-
             # Propagate settings to server thread — ContextVar doesn't
             # automatically transfer across threads, so without this the
             # server would fall back to the default config file.
@@ -232,14 +423,12 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None 
         t.start()
 
         # Wait for server to be ready
-        import time as _time
-
         for _ in range(30):
             try:
                 requests.get(f"http://127.0.0.1:{port}/healthz", timeout=1)
                 break
             except Exception:
-                _time.sleep(0.5)
+                time.sleep(0.5)
         else:
             raise RuntimeError("Local MCP server did not start in time")
 
@@ -286,7 +475,9 @@ async def run_test(
     ] = None,
     ld_expected: Annotated[
         Optional[str],
-        Option(help="Expected flag value (parsed: true/false→bool, numeric→int/float, else str)"),
+        Option(
+            help="Expected flag value (parsed: true/false→bool, numeric→int/float, else str)"
+        ),
     ] = None,
     redirect_port: Annotated[
         int, Option(help="Local port for OAuth redirect listener")
@@ -309,8 +500,15 @@ async def run_test(
             pp("[green]OK[/green]")
         else:
             pp("Using provided token, skipping OAuth..")
-        await _run_smoketests(url, token, check_annotations, check_new_contract,
-                              ld_sdk_key=ld_sdk_key, ld_flag=ld_flag, ld_expected=ld_expected)
+        await _run_smoketests(
+            url,
+            token,
+            check_annotations,
+            check_new_contract,
+            ld_sdk_key=ld_sdk_key,
+            ld_flag=ld_flag,
+            ld_expected=ld_expected,
+        )
         return
 
     # Local mode: start a local MCP server and test against it
@@ -341,8 +539,15 @@ async def run_test(
             token = a.access_token
             pp("[green]OK[/green]")
 
-        await _run_smoketests(local_url, token, check_annotations, check_new_contract,
-                              ld_sdk_key=ld_sdk_key, ld_flag=ld_flag, ld_expected=ld_expected)
+        await _run_smoketests(
+            local_url,
+            token,
+            check_annotations,
+            check_new_contract,
+            ld_sdk_key=ld_sdk_key,
+            ld_flag=ld_flag,
+            ld_expected=ld_expected,
+        )
 
 
 def _parse_flag_value(value: str) -> bool | int | float | str:
@@ -608,20 +813,19 @@ async def _run_smoketests(
         if ld_sdk_key and ld_flag:
             pp(f"Checking LD flag '{ld_flag}'..", end=" ")
 
-            from dremioai.config.feature_flags import FeatureFlagManager
-
             project_id = _extract_project_id(url)
             org_id = None
             if token:
                 try:
-                    import jwt
                     claims = jwt.decode(token, options={"verify_signature": False})
                     aud = claims.get("aud")
                     org_id = aud[0] if isinstance(aud, list) else aud
                 except Exception:
                     pass
 
-            pp(f"\n  LD context: application=mcp-server, projectId={project_id}, orgId={org_id}")
+            pp(
+                f"\n  LD context: application=mcp-server, projectId={project_id}, orgId={org_id}"
+            )
             _assert(
                 org_id is not None,
                 "JWT 'aud' claim must contain an orgId for org-based LD targeting "
@@ -633,12 +837,14 @@ async def _run_smoketests(
                 fm = FeatureFlagManager.instance()
 
                 # Wait for LD client to initialize (up to 5s)
-                import time as _time
                 for _ in range(10):
                     if fm.is_enabled():
                         break
-                    _time.sleep(0.5)
-                _assert(fm.is_enabled(), "LaunchDarkly client failed to initialize within 5s")
+                    time.sleep(0.5)
+                _assert(
+                    fm.is_enabled(),
+                    "LaunchDarkly client failed to initialize within 5s",
+                )
 
                 if project_id:
                     FeatureFlagManager.set_project_id(project_id)

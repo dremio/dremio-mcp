@@ -24,6 +24,7 @@ from ldclient.config import Config
 
 class LDContextKind(StrEnum):
     """LaunchDarkly context kinds for multi-context targeting."""
+
     APPLICATION = "application"
     PROJECT = "projectId"
     ORGANIZATION = "orgId"
@@ -38,7 +39,9 @@ class FeatureFlagManager:
     # Per-request context for LD targeting.  Set by middleware / token
     # verifier; read by _build_context().  Keeps feature_flags decoupled
     # from settings (no import needed).
-    _project_id: ClassVar[ContextVar[str | None]] = ContextVar("ld_project_id", default=None)
+    _project_id: ClassVar[ContextVar[str | None]] = ContextVar(
+        "ld_project_id", default=None
+    )
     _org_id: ClassVar[ContextVar[str | None]] = ContextVar("ld_org_id", default=None)
 
     @classmethod
@@ -46,8 +49,16 @@ class FeatureFlagManager:
         cls._project_id.set(value)
 
     @classmethod
+    def get_project_id(cls) -> str | None:
+        return cls._project_id.get()
+
+    @classmethod
     def set_org_id(cls, value: str | None) -> None:
         cls._org_id.set(value)
+
+    @classmethod
+    def get_org_id(cls) -> str | None:
+        return cls._org_id.get()
 
     def __init__(self, sdk_key: str):
         if sdk_key is not None:
@@ -105,7 +116,9 @@ class FeatureFlagManager:
 
         builder = ldclient.Context.multi_builder()
         builder.add(
-            ldclient.Context.builder("mcp-server").kind(LDContextKind.APPLICATION).build()
+            ldclient.Context.builder("mcp-server")
+            .kind(LDContextKind.APPLICATION)
+            .build()
         )
         if project_id:
             builder.add(
@@ -113,7 +126,9 @@ class FeatureFlagManager:
             )
         if org_id:
             builder.add(
-                ldclient.Context.builder(org_id).kind(LDContextKind.ORGANIZATION).build()
+                ldclient.Context.builder(org_id)
+                .kind(LDContextKind.ORGANIZATION)
+                .build()
             )
         return builder.build()
 
