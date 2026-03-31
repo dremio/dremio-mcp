@@ -230,10 +230,12 @@ def init(
     async def authorization_server_metadata(request: Request) -> Response:
         if issuer := settings.instance().dremio.auth_issuer_uri:
             auth, tok = settings.instance().dremio.auth_endpoints
+            base_url = str(request.base_url).rstrip("/")
             md = OAuthMetadataRFC8414(
                 issuer=AnyHttpUrl(issuer),
                 authorization_endpoint=auth,
                 token_endpoint=tok,
+                registration_endpoint=AnyHttpUrl(f"{base_url}/oauth/register"),
                 scopes_supported=["dremio.all", "offline_access"],
                 response_types_supported=["code"],
                 grant_types_supported=["authorization_code", "refresh_token"],
