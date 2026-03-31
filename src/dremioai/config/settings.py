@@ -319,11 +319,12 @@ class Dremio(FlagAwareModel):
         return None
 
     @property
-    def auth_endpoints(self) -> Optional[Tuple[str, str]]:
+    def auth_endpoints(self) -> Optional[Tuple[str, str, str]]:
         if issuer_uri := self.auth_issuer_uri:
             return (
                 f"{issuer_uri}/oauth/authorize",
                 f"{issuer_uri}/oauth/token",
+                f"{issuer_uri}/oauth/register",
             )
         return None
 
