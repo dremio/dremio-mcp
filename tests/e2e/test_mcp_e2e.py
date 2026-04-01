@@ -88,6 +88,29 @@ async def test_oauth_discovery_rfc8414_compliance(mock_config_dir, logging_serve
 
 
 @pytest.mark.asyncio
+async def test_oauth_metadata_includes_registration_endpoint(
+    mock_config_dir, logging_server, logging_level
+):
+    """Test that OAuth metadata includes registration_endpoint for DCR (DX-117899)."""
+    async with http_streamable_mcp_server(logging_server, logging_level) as sf:
+        async with AsyncClient() as client:
+            oauth_url = urlparse(sf.mcp_server.url)._replace(
+                path="/.well-known/oauth-authorization-server"
+            ).geturl()
+            r = await client.get(oauth_url)
+            if r.status_code == 404:
+                pytest.skip("OAuth not configured for this test environment")
+            assert r.status_code == 200
+            data = r.json()
+            assert (
+                "registration_endpoint" in data
+            ), "OAuth metadata must include registration_endpoint for DCR"
+            assert data["registration_endpoint"].endswith(
+                "/oauth/register"
+            ), f"registration_endpoint should end with /oauth/register, got: {data['registration_endpoint']}"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "engine_name",
     [

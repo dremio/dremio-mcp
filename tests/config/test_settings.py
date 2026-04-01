@@ -177,7 +177,7 @@ def test_auth_urls(
     )
     if iss_override:
         issuer = iss_override
-    auth = (f"{issuer}/oauth/authorize", f"{issuer}/oauth/token") if not error else None
+    auth = (f"{issuer}/oauth/authorize", f"{issuer}/oauth/token", f"{issuer}/oauth/register") if not error else None
     issuer = issuer if not error else None
     assert d.auth_issuer_uri == issuer
     assert d.auth_endpoints == auth
