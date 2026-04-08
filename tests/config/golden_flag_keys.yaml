@@ -10,6 +10,8 @@ flag_keys:
 - dremio.extract_org_id_from_jwt
 - dremio.jwks_cache_lifespan
 - dremio.jwks_uri
+- dremio.max_result_bytes
+- dremio.max_result_rows
 - dremio.metrics.enabled
 - dremio.metrics.port
 - dremio.wlm.engine_name

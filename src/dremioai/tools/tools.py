@@ -39,6 +39,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 
 from dremioai import log
+import json
 import re
 import functools
 
@@ -351,11 +352,18 @@ class RunSqlQuery(Tools):
 
     @secured
     @with_metrics
-    async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
+    async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]], str, bool, int]]:
         """Run a SQL query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
         If a DML query is not allowed, this will return an error.
+
+        Results are capped at max_result_rows rows (default 500) and max_result_bytes bytes
+        (default 200 KB). When truncated, the response includes 'truncated', 'total_rows',
+        'returned_rows', and 'truncation_reason' fields. To reduce result size, add LIMIT or
+        GROUP BY to your query. Configure limits via dremio.max_result_rows and
+        dremio.max_result_bytes settings (env vars DREMIOAI_DREMIO__MAX_RESULT_ROWS,
+        DREMIOAI_DREMIO__MAX_RESULT_BYTES). Set either to 0 for unlimited.
 
         Args:
         query: sql query
@@ -367,9 +375,45 @@ class RunSqlQuery(Tools):
                 "error": "Only SELECT queries are allowed. DML statements are not permitted.",
             }
         try:
-            query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
-            df = await sql.run_query(query=query, use_df=True)
-            return {"result": _df_to_json_records(df)}
+            tagged_query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            dremio_settings = settings.instance().dremio
+            max_rows = dremio_settings.get("max_result_rows")
+            if max_rows is None:
+                max_rows = 500
+            max_bytes = dremio_settings.get("max_result_bytes")
+            if max_bytes is None:
+                max_bytes = 204_800
+
+            qr = await sql.run_query_capped(query=tagged_query, max_rows=max_rows)
+            records = _df_to_json_records(qr.df)
+
+            truncation_reason = None
+            if qr.truncated:
+                truncation_reason = "row_limit"
+
+            # Enforce byte cap
+            if max_bytes > 0 and records:
+                kept = []
+                running_bytes = 0
+                for rec in records:
+                    rec_bytes = len(json.dumps(rec).encode("utf-8"))
+                    if running_bytes + rec_bytes > max_bytes:
+                        truncation_reason = "byte_limit"
+                        break
+                    kept.append(rec)
+                    running_bytes += rec_bytes
+                if truncation_reason == "byte_limit":
+                    records = kept
+
+            if truncation_reason:
+                return {
+                    "result": records,
+                    "truncated": True,
+                    "total_rows": qr.total_rows,
+                    "returned_rows": len(records),
+                    "truncation_reason": truncation_reason,
+                }
+            return {"result": records}
         except RuntimeError as e:
             return {
                 "error": str(e),
