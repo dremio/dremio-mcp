@@ -33,11 +33,9 @@ async def test_basic(mock_config_dir, logging_server, logging_level):
         ) as session:
             lts = await session.list_tools()
             tr = {t.name for t in lts.tools}
-            local_tools = {
+            assert tr == {
                 t.__name__ for t in get_tools(For=settings.instance().tools.server_mode)
             }
-            # All local tools must be present; remote AI tools may also be registered.
-            assert local_tools.issubset(tr)
 
 
 @pytest.mark.asyncio

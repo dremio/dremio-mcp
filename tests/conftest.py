@@ -162,7 +162,6 @@ def _create_logging_server(log_level="warning"):
     # Mock data for HTTP endpoints that tools will call
     mock_data = OrderedDict(
         [
-            (r"/api/v4/ai/tools$", "ai_tools/list_tools.json"),  # AI tools listing
             (r"/sql", "sql/job_submission.json"),  # SQL query submission
             (r"/job/test-job-12345$", "sql/job_status.json"),  # Job status check
             (r"/job/test-job-12345/results$", "sql/job_results.json"),  # Job results
