@@ -42,7 +42,6 @@ class OAuthMetadataRFC8414(OAuthMetadata):
 
 
 from dremioai.tools import tools
-from dremioai.api.dremio import ai_tools as dremio_ai_tools
 import os
 from typing import List, Union, Annotated, Optional, Tuple, Dict, Any
 from functools import reduce
@@ -259,80 +258,14 @@ async def _log_level_refresh_loop():
             _log.debug(f"Log level refresh failed: {e}")
 
 
-async def _register_ai_tools(mcp: FastMCP):
-    """Fetch AI tools from the Dremio REST API and register them with the MCP server.
-
-    Each remote tool is registered as a passthrough: when invoked, the handler
-    forwards the call to Dremio's ``/api/v4/ai/tools/{name}:invoke`` endpoint.
-
-    Tools whose names collide with already-registered local tools are skipped so
-    that local implementations always take precedence.
-    """
-    _log = log.logger("register_ai_tools")
-
-    try:
-        remote_tools = await dremio_ai_tools.list_tools()
-    except Exception as exc:
-        _log.warning(f"Failed to fetch AI tools from Dremio – skipping: {exc}")
-        return
-
-    if not remote_tools:
-        _log.info("No remote AI tools returned by the Dremio API")
-        return
-
-    # Snapshot locally-registered tool names so we never shadow them.
-    # list_tools() is the public read API on FastMCP.
-    existing_names = {t.name for t in await mcp.list_tools()}
-
-    registered = 0
-    for tool_def in remote_tools:
-        name = tool_def["name"]
-        description = tool_def.get("description") or name
-
-        if name in existing_names:
-            _log.debug(f"Skipping remote AI tool '{name}' – already registered locally")
-            continue
-
-        # Build a closure that captures the tool name.
-        def _make_handler(_name: str):
-            async def _handler(**kwargs) -> Dict[str, Any]:
-                """Passthrough handler for remote Dremio AI tool."""
-                return await dremio_ai_tools.invoke_tool(_name, kwargs)
-            # Give the inner function a unique, non-lambda name so that
-            # FastMCP's Tool.from_function() can derive a tool name from it.
-            _handler.__name__ = _name
-            _handler.__qualname__ = _name
-            return _handler
-
-        handler = _make_handler(name)
-
-        try:
-            mcp.add_tool(
-                handler,
-                name=name,
-                description=description,
-                annotations=ToolAnnotations(readOnlyHint=True),
-            )
-            registered += 1
-            _log.debug(f"Registered remote AI tool: {name}")
-        except Exception as exc:
-            _log.warning(f"Failed to register remote AI tool '{name}': {exc}")
-
-    _log.info(f"Registered {registered} remote AI tool(s) from Dremio")
-
-
 @contextlib.asynccontextmanager
 async def _server_lifespan(app: FastMCP):
     """Lifespan context manager that runs background tasks alongside the server."""
-    # Register remote AI tools in the background so that server startup is
-    # never blocked (or prevented) by a slow/unreachable Dremio endpoint.
-    ai_tools_task = asyncio.create_task(_register_ai_tools(app))
-    log_task = asyncio.create_task(_log_level_refresh_loop())
+    task = asyncio.create_task(_log_level_refresh_loop())
     try:
         yield
     finally:
-        ai_tools_task.cancel()
-        log_task.cancel()
+        task.cancel()
 
 
 def run_with_metrics_server(
