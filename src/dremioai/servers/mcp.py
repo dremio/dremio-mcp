@@ -42,6 +42,7 @@ class OAuthMetadataRFC8414(OAuthMetadata):
 
 
 from dremioai.tools import tools
+from dremioai.api.dremio import ai_tools as dremio_ai_tools
 import os
 from typing import List, Union, Annotated, Optional, Tuple, Dict, Any
 from functools import reduce
@@ -258,9 +259,83 @@ async def _log_level_refresh_loop():
             _log.debug(f"Log level refresh failed: {e}")
 
 
+async def _register_ai_tools(mcp: FastMCP):
+    """Fetch AI tools from the Dremio REST API and register them with the MCP server.
+
+    Each remote tool is registered as a passthrough: when invoked, the handler
+    forwards the call to Dremio's ``/api/v4/ai/tools/{name}:invoke`` endpoint.
+
+    Tools whose names collide with already-registered local tools are skipped so
+    that local implementations always take precedence.
+    """
+    from mcp.server.fastmcp.tools.base import Tool as MCPToolObj
+    from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata, ArgModelBase
+    from pydantic import ConfigDict
+
+    _log = log.logger("register_ai_tools")
+
+    try:
+        remote_tools = await dremio_ai_tools.list_tools()
+    except Exception as exc:
+        _log.warning(f"Failed to fetch AI tools from Dremio – skipping: {exc}")
+        return
+
+    if not remote_tools:
+        _log.info("No remote AI tools returned by the Dremio API")
+        return
+
+    # A permissive arg model that accepts and passes through any fields.
+    class _PassthroughArgModel(ArgModelBase):
+        model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+
+        def model_dump_one_level(self):
+            result = super().model_dump_one_level()
+            if self.__pydantic_extra__:
+                result.update(self.__pydantic_extra__)
+            return result
+
+    passthrough_metadata = FuncMetadata(arg_model=_PassthroughArgModel)
+
+    registered = 0
+    for tool_def in remote_tools:
+        name = tool_def["name"]
+        description = tool_def.get("description") or name
+        input_schema = tool_def.get("input_schema", {"type": "object"})
+
+        # Do not shadow locally-registered tools.
+        if mcp._tool_manager.get_tool(name) is not None:
+            _log.debug(f"Skipping remote AI tool '{name}' – already registered locally")
+            continue
+
+        # Build a closure that captures the tool name.
+        async def _make_handler(_name: str):
+            async def _handler(**kwargs: Any) -> Dict[str, Any]:
+                return await dremio_ai_tools.invoke_tool(_name, kwargs)
+            return _handler
+
+        handler = await _make_handler(name)
+
+        tool_obj = MCPToolObj(
+            fn=handler,
+            name=name,
+            description=description,
+            parameters=input_schema,
+            fn_metadata=passthrough_metadata,
+            is_async=True,
+            context_kwarg=None,
+            annotations=ToolAnnotations(readOnlyHint=True),
+        )
+        mcp._tool_manager._tools[name] = tool_obj
+        registered += 1
+        _log.debug(f"Registered remote AI tool: {name}")
+
+    _log.info(f"Registered {registered} remote AI tool(s) from Dremio")
+
+
 @contextlib.asynccontextmanager
 async def _server_lifespan(app: FastMCP):
     """Lifespan context manager that runs background tasks alongside the server."""
+    await _register_ai_tools(app)
     task = asyncio.create_task(_log_level_refresh_loop())
     try:
         yield
