@@ -268,10 +268,6 @@ async def _register_ai_tools(mcp: FastMCP):
     Tools whose names collide with already-registered local tools are skipped so
     that local implementations always take precedence.
     """
-    from mcp.server.fastmcp.tools.base import Tool as MCPToolObj
-    from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata, ArgModelBase
-    from pydantic import ConfigDict
-
     _log = log.logger("register_ai_tools")
 
     try:
@@ -284,50 +280,43 @@ async def _register_ai_tools(mcp: FastMCP):
         _log.info("No remote AI tools returned by the Dremio API")
         return
 
-    # A permissive arg model that accepts and passes through any fields.
-    class _PassthroughArgModel(ArgModelBase):
-        model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
-
-        def model_dump_one_level(self):
-            result = super().model_dump_one_level()
-            if self.__pydantic_extra__:
-                result.update(self.__pydantic_extra__)
-            return result
-
-    passthrough_metadata = FuncMetadata(arg_model=_PassthroughArgModel)
+    # Snapshot locally-registered tool names so we never shadow them.
+    # list_tools() is the public read API on FastMCP.
+    existing_names = {t.name for t in await mcp.list_tools()}
 
     registered = 0
     for tool_def in remote_tools:
         name = tool_def["name"]
         description = tool_def.get("description") or name
-        input_schema = tool_def.get("input_schema", {"type": "object"})
 
-        # Do not shadow locally-registered tools.
-        if mcp._tool_manager.get_tool(name) is not None:
+        if name in existing_names:
             _log.debug(f"Skipping remote AI tool '{name}' – already registered locally")
             continue
 
         # Build a closure that captures the tool name.
-        async def _make_handler(_name: str):
-            async def _handler(**kwargs: Any) -> Dict[str, Any]:
+        def _make_handler(_name: str):
+            async def _handler(**kwargs) -> Dict[str, Any]:
+                """Passthrough handler for remote Dremio AI tool."""
                 return await dremio_ai_tools.invoke_tool(_name, kwargs)
+            # Give the inner function a unique, non-lambda name so that
+            # FastMCP's Tool.from_function() can derive a tool name from it.
+            _handler.__name__ = _name
+            _handler.__qualname__ = _name
             return _handler
 
-        handler = await _make_handler(name)
+        handler = _make_handler(name)
 
-        tool_obj = MCPToolObj(
-            fn=handler,
-            name=name,
-            description=description,
-            parameters=input_schema,
-            fn_metadata=passthrough_metadata,
-            is_async=True,
-            context_kwarg=None,
-            annotations=ToolAnnotations(readOnlyHint=True),
-        )
-        mcp._tool_manager._tools[name] = tool_obj
-        registered += 1
-        _log.debug(f"Registered remote AI tool: {name}")
+        try:
+            mcp.add_tool(
+                handler,
+                name=name,
+                description=description,
+                annotations=ToolAnnotations(readOnlyHint=True),
+            )
+            registered += 1
+            _log.debug(f"Registered remote AI tool: {name}")
+        except Exception as exc:
+            _log.warning(f"Failed to register remote AI tool '{name}': {exc}")
 
     _log.info(f"Registered {registered} remote AI tool(s) from Dremio")
 
@@ -335,12 +324,15 @@ async def _register_ai_tools(mcp: FastMCP):
 @contextlib.asynccontextmanager
 async def _server_lifespan(app: FastMCP):
     """Lifespan context manager that runs background tasks alongside the server."""
-    await _register_ai_tools(app)
-    task = asyncio.create_task(_log_level_refresh_loop())
+    # Register remote AI tools in the background so that server startup is
+    # never blocked (or prevented) by a slow/unreachable Dremio endpoint.
+    ai_tools_task = asyncio.create_task(_register_ai_tools(app))
+    log_task = asyncio.create_task(_log_level_refresh_loop())
     try:
         yield
     finally:
-        task.cancel()
+        ai_tools_task.cancel()
+        log_task.cancel()
 
 
 def run_with_metrics_server(

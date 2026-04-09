@@ -24,7 +24,9 @@ class AiTool(BaseModel):
 
     name: str
     description: Optional[str] = None
-    input_schema: Dict[str, Any] = Field(alias="inputSchema")
+    input_schema: Dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object"}, alias="inputSchema"
+    )
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
