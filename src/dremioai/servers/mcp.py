@@ -298,7 +298,7 @@ def _make_remote_handler(tool_name: str, description: str, input_schema: Dict[st
 
             if isinstance((token := get_access_token()), AccessToken):
                 overrides["dremio.pat"] = token.token
-        except (ImportError, LookupError):
+        except (ImportError, LookupError, AttributeError):
             pass
 
         if project_id := tools.ProjectIdMiddleware.get_project_id():
@@ -315,7 +315,14 @@ def _make_remote_handler(tool_name: str, description: str, input_schema: Dict[st
         invocation_counter.labels(project_id=pid, tool=tool_name).inc()
 
         async def _invoke():
-            return await ai_tools.invoke_tool(tool_name, kwargs)
+            result = await ai_tools.invoke_tool(tool_name, kwargs)
+            # invoke_tool returns response.model_dump(exclude_none=True),
+            # which yields {} for void tools (result=None, error=None).
+            # Return a minimal success indicator so the caller doesn't
+            # silently receive an empty dict.
+            if not result:
+                return {"result": None}
+            return result
 
         with invocation_duration.labels(project_id=pid, tool=tool_name).time():
             if overrides:
