@@ -145,3 +145,162 @@ class TestSimpleFastMCPServer:
                     print(f"GetSchemaOfTable failed: {e}")
 
             print("Completed basic tool invocation tests")
+
+
+class TestRemoteToolRegistration:
+    """Tests for dynamic registration of remote tools from Dremio's Java-side registry"""
+
+    @contextmanager
+    def mock_settings_for_remote_tools(self, enable_remote_tools: bool = True):
+        """Create mock settings with remote tools enabled/disabled"""
+        try:
+            old = settings.instance()
+            settings._settings.set(
+                settings.Settings.model_validate(
+                    {
+                        "dremio": {
+                            "uri": "https://test-dremio-uri.com",
+                            "pat": "test-pat",
+                            "project_id": uuid.uuid4(),
+                            "enable_search": True,
+                        },
+                        "tools": {
+                            "server_mode": ToolType.FOR_DATA_PATTERNS,
+                            "enable_remote_tools": enable_remote_tools,
+                        },
+                    }
+                )
+            )
+            yield settings.instance()
+        finally:
+            settings._settings.set(old)
+
+    @pytest.mark.asyncio
+    async def test_remote_tools_registered_on_lifespan(self):
+        """Remote tools should be dynamically registered during server lifespan"""
+        fake_remote_tools = [
+            {
+                "name": "JavaTool1",
+                "description": "A tool from Java",
+                "input_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
+            },
+            {
+                "name": "JavaTool2",
+                "description": "Another Java tool",
+                "input_schema": {"type": "object"},
+            },
+        ]
+
+        with self.mock_settings_for_remote_tools(enable_remote_tools=True):
+            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+
+            with patch(
+                "dremioai.servers.mcp.ai_tools.list_tools",
+                new_callable=AsyncMock,
+                return_value=fake_remote_tools,
+            ):
+                await mcp_server._register_remote_tools(server)
+
+            tools_list = await server.list_tools()
+            tool_names = {t.name for t in tools_list}
+            assert "JavaTool1" in tool_names
+            assert "JavaTool2" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_remote_tools_soft_fail_on_error(self):
+        """If list_tools() fails, server should continue with only static tools"""
+        with self.mock_settings_for_remote_tools(enable_remote_tools=True):
+            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+
+            static_tools_before = {t.name for t in await server.list_tools()}
+
+            with patch(
+                "dremioai.servers.mcp.ai_tools.list_tools",
+                new_callable=AsyncMock,
+                side_effect=Exception("Dremio unreachable"),
+            ):
+                # Should not raise
+                await mcp_server._register_remote_tools(server)
+
+            static_tools_after = {t.name for t in await server.list_tools()}
+            assert static_tools_before == static_tools_after
+
+    @pytest.mark.asyncio
+    async def test_remote_tools_skip_naming_conflicts(self):
+        """Remote tools that conflict with static tool names should be skipped"""
+        # Use a real static tool name to create a conflict
+        static_tool_names = {t.__name__ for t in get_tools(For=ToolType.FOR_DATA_PATTERNS)}
+        conflicting_name = next(iter(static_tool_names))
+
+        fake_remote_tools = [
+            {
+                "name": conflicting_name,
+                "description": "This conflicts with a static tool",
+                "input_schema": {"type": "object"},
+            },
+            {
+                "name": "UniqueJavaTool",
+                "description": "No conflict",
+                "input_schema": {"type": "object"},
+            },
+        ]
+
+        with self.mock_settings_for_remote_tools(enable_remote_tools=True):
+            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+
+            with patch(
+                "dremioai.servers.mcp.ai_tools.list_tools",
+                new_callable=AsyncMock,
+                return_value=fake_remote_tools,
+            ):
+                await mcp_server._register_remote_tools(server)
+
+            tool_names = {t.name for t in await server.list_tools()}
+            # Conflicting name should still be there (the static one), unique one added
+            assert conflicting_name in tool_names
+            assert "UniqueJavaTool" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_remote_tools_not_registered_when_disabled(self):
+        """When enable_remote_tools is False, no remote tools should be registered"""
+        with self.mock_settings_for_remote_tools(enable_remote_tools=False):
+            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+
+            static_tools = {t.name for t in await server.list_tools()}
+
+            # Lifespan should skip registration
+            async with mcp_server._server_lifespan(server):
+                pass
+
+            tools_after = {t.name for t in await server.list_tools()}
+            assert static_tools == tools_after
+
+    @pytest.mark.asyncio
+    async def test_remote_tool_invocation_proxies_to_invoke_tool(self):
+        """Invoking a registered remote tool should call ai_tools.invoke_tool"""
+        fake_remote_tools = [
+            {
+                "name": "RemoteEcho",
+                "description": "Echoes input",
+                "input_schema": {"type": "object", "properties": {"msg": {"type": "string"}}},
+            },
+        ]
+
+        with self.mock_settings_for_remote_tools(enable_remote_tools=True):
+            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+
+            with patch(
+                "dremioai.servers.mcp.ai_tools.list_tools",
+                new_callable=AsyncMock,
+                return_value=fake_remote_tools,
+            ):
+                await mcp_server._register_remote_tools(server)
+
+            with patch(
+                "dremioai.servers.mcp.ai_tools.invoke_tool",
+                new_callable=AsyncMock,
+                return_value={"result": "hello"},
+            ) as mock_invoke:
+                result = await server.call_tool("RemoteEcho", {"msg": "hello"})
+                assert result is not None
+                mock_invoke.assert_called_once_with("RemoteEcho", {"msg": "hello"})

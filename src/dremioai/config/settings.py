@@ -130,6 +130,10 @@ class Tools(BaseModel):
     server_mode: Annotated[
         Optional[Union[ToolType, int, str]], AfterValidator(_resolve_tools_settings)
     ] = Field(default=ToolType.FOR_SELF)
+    enable_remote_tools: Optional[bool] = Field(
+        default=False,
+        description="Enable dynamic registration of remote tools from Dremio's Java-side tool registry",
+    )
     model_config = ConfigDict(validate_assignment=True, use_enum_values=True)
 
     @field_serializer("server_mode")
