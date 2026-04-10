@@ -54,6 +54,7 @@ class MockJWTIssuer:
         self._pending_codes: dict[str, dict] = {}
         # refresh_token -> {sub, aud, client_id}
         self._refresh_tokens: dict[str, dict] = {}
+        logger.info(f"MockJWTIssuer initialised: issuer={self._issuer_url}, expiry={default_expiry}s")
 
     def issue_token(
         self,
@@ -70,17 +71,22 @@ class MockJWTIssuer:
             "iat": now,
             "scopes": scopes or ["read"],
         }
-        return pyjwt.encode(payload, self._secret, algorithm="HS256")
+        token = pyjwt.encode(payload, self._secret, algorithm="HS256")
+        logger.info(f"Issued mock JWT: sub={sub}, aud={aud}, expires_in={self._default_expiry}s")
+        return token
 
     def verify_token(self, token: str) -> Optional[dict]:
         try:
-            return pyjwt.decode(
+            claims = pyjwt.decode(
                 token,
                 self._secret,
                 algorithms=["HS256"],
                 options={"verify_aud": False},
             )
+            logger.info(f"Mock JWT verified: sub={claims.get('sub')}")
+            return claims
         except pyjwt.PyJWTError:
+            logger.info("Mock JWT verification failed")
             return None
 
     def issue_authorization_code(
@@ -99,11 +105,13 @@ class MockJWTIssuer:
             "sub": "mock-user",
             "aud": "mock-audience",
         }
+        logger.info(f"Issued authorization code for client_id={client_id}, redirect_uri={redirect_uri}")
         return code
 
     def exchange_code(self, code: str, code_verifier: str) -> Optional[dict]:
         params = self._pending_codes.pop(code, None)
         if params is None:
+            logger.info(f"Code exchange failed: unknown code")
             return None
 
         # Validate PKCE S256
@@ -111,8 +119,10 @@ class MockJWTIssuer:
             digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
             expected = urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
             if expected != params["code_challenge"]:
+                logger.info(f"Code exchange failed: PKCE verification failed for client_id={params['client_id']}")
                 return None
 
+        logger.info(f"Exchanging authorization code for client_id={params['client_id']}")
         access_token = self.issue_token(sub=params["sub"], aud=params["aud"])
         refresh_token = secrets.token_hex(32)
         self._refresh_tokens[refresh_token] = {
@@ -130,8 +140,10 @@ class MockJWTIssuer:
     def refresh(self, refresh_token: str) -> Optional[dict]:
         params = self._refresh_tokens.get(refresh_token)
         if params is None:
+            logger.info("Refresh token exchange failed: unknown token")
             return None
 
+        logger.info(f"Refreshing token for client_id={params['client_id']}")
         access_token = self.issue_token(sub=params["sub"], aud=params["aud"])
         new_refresh = secrets.token_hex(32)
         self._refresh_tokens[new_refresh] = params
@@ -149,13 +161,17 @@ class MockTokenVerifier(TokenVerifier):
 
     def __init__(self, issuer: MockJWTIssuer):
         self._issuer = issuer
+        logger.info("MockTokenVerifier initialised")
 
     async def verify_token(self, token: str) -> Optional[AccessToken]:
         if not token:
+            logger.info("MockTokenVerifier: empty token")
             return None
         claims = self._issuer.verify_token(token)
         if claims is None:
+            logger.info("MockTokenVerifier: token rejected")
             return None
+        logger.info(f"MockTokenVerifier: token accepted for sub={claims.get('sub')}")
         return AccessToken(
             token=token,
             client_id="mock-client",
@@ -176,10 +192,12 @@ async def mock_register(request: Request) -> Response:
     except Exception:
         body = {}
     client_id = f"mock-{uuid4()}"
+    client_name = body.get("client_name", "mock-client")
+    logger.info(f"mock_register: client_name={client_name}, client_id={client_id}")
     return JSONResponse(
         {
             "client_id": client_id,
-            "client_name": body.get("client_name", "mock-client"),
+            "client_name": client_name,
             "redirect_uris": body.get("redirect_uris", []),
             "grant_types": body.get("grant_types", ["authorization_code"]),
             "response_types": body.get("response_types", ["code"]),
@@ -197,6 +215,8 @@ async def mock_authorize(request: Request, issuer: MockJWTIssuer) -> Response:
     code_challenge = params.get("code_challenge", "")
     code_challenge_method = params.get("code_challenge_method", "S256")
 
+    logger.info(f"mock_authorize: client_id={client_id}, redirect_uri={redirect_uri}")
+
     code = issuer.issue_authorization_code(
         client_id=client_id,
         redirect_uri=redirect_uri,
@@ -206,6 +226,7 @@ async def mock_authorize(request: Request, issuer: MockJWTIssuer) -> Response:
 
     sep = "&" if "?" in redirect_uri else "?"
     location = f"{redirect_uri}{sep}{urlencode({'code': code, 'state': state})}"
+    logger.info(f"mock_authorize: redirecting to {redirect_uri}")
     return RedirectResponse(url=location, status_code=302)
 
 
@@ -217,28 +238,35 @@ async def mock_token(request: Request, issuer: MockJWTIssuer) -> Response:
         body = {}
 
     grant_type = body.get("grant_type")
+    logger.info(f"mock_token: grant_type={grant_type}")
 
     if grant_type == "authorization_code":
         code = body.get("code", "")
         code_verifier = body.get("code_verifier", "")
         result = issuer.exchange_code(code, code_verifier)
         if result is None:
+            logger.info("mock_token: authorization_code exchange failed")
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        logger.info("mock_token: authorization_code exchange succeeded")
         return JSONResponse(result)
 
     if grant_type == "refresh_token":
         rt = body.get("refresh_token", "")
         result = issuer.refresh(rt)
         if result is None:
+            logger.info("mock_token: refresh_token exchange failed")
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        logger.info("mock_token: refresh_token exchange succeeded")
         return JSONResponse(result)
 
+    logger.info(f"mock_token: unsupported grant_type={grant_type}")
     return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
 
 
 def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
     """Register mock OAuth endpoints on the FastMCP instance."""
     base_url = issuer._issuer_url
+    logger.info(f"Registering mock OAuth routes at {base_url}")
 
     @mcp.custom_route("/oauth/register", methods=["POST"])
     async def _register(request: Request) -> Response:
