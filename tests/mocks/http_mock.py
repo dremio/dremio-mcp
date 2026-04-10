@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, TextIO, List, Coroutine, Callable
 from unittest.mock import MagicMock
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientResponseError
 from collections import OrderedDict
 
 from starlette.applications import Starlette
@@ -56,9 +56,14 @@ class MockResponse:
         return json.loads(self.data)
 
     def raise_for_status(self):
-        """Mock raise_for_status - only raises if status >= 400"""
+        """Mock raise_for_status - raises ClientResponseError if status >= 400"""
         if self.status >= 400:
-            raise Exception(f"HTTP {self.status}")
+            raise ClientResponseError(
+                request_info=self.request_info,
+                history=(),
+                status=self.status,
+                message=f"HTTP {self.status}",
+            )
 
     @property
     def content(self):
@@ -114,7 +119,7 @@ class HttpMockFramework:
             raise FileNotFoundError(f"Mock data file not found: {file_path}")
 
         with open(file_path, "r") as f:
-            self.mock_responses[endpoint] = f.read()
+            self.mock_responses[endpoint] = (f.read(), 200)
 
         return self
 
@@ -136,14 +141,9 @@ class HttpMockFramework:
 
     def _get_mock_response(self, url: str, method: str = "GET") -> MockResponse:
         """Get mock response for a URL"""
-        for endpoint, data in self.mock_responses.items():
-            if isinstance(data, tuple):
-                body, status = data
-                if re.search(endpoint, url):
-                    return MockResponse(body, status=status)
-            else:
-                if re.search(endpoint, url):
-                    return MockResponse(data)
+        for endpoint, (body, status) in self.mock_responses.items():
+            if re.search(endpoint, url):
+                return MockResponse(body, status=status)
 
         # Default response if no mock found
         return MockResponse('{"error": "No mock data found"}', status=404)

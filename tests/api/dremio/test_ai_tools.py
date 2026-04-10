@@ -136,7 +136,8 @@ async def test_list_tools_http_error(mock_settings_instance):
         mock.add_mock_response(r"/api/v4/ai/tools$", {"error": "Unauthorized"}, status=401)
         with pytest.raises(AiToolError) as exc_info:
             await list_tools()
-        assert "401" in str(exc_info.value) or exc_info.value.status == 401
+        assert exc_info.value.status == 401
+        assert "401" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -146,7 +147,8 @@ async def test_invoke_tool_http_error(mock_settings_instance):
         mock.add_mock_response(r"/api/v4/ai/tools/runSql:invoke$", {"error": "Internal Server Error"}, status=500)
         with pytest.raises(AiToolError) as exc_info:
             await invoke_tool("runSql", {"sqlText": "SELECT 1"})
-        assert "500" in str(exc_info.value) or exc_info.value.status == 500
+        assert exc_info.value.status == 500
+        assert "500" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
