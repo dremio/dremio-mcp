@@ -256,7 +256,7 @@ def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
     @mcp.custom_route(
         "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
     )
-    async def _metadata(request: Request) -> Response:
+    async def _metadata(_request: Request) -> Response:
         md = OAuthMetadataRFC8414(
             issuer=AnyHttpUrl(base_url),
             authorization_endpoint=f"{base_url}/oauth/authorize",

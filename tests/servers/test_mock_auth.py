@@ -19,9 +19,7 @@ import time
 from base64 import urlsafe_b64encode
 from urllib.parse import parse_qs, urlparse
 
-import jwt as pyjwt
 import pytest
-import pytest_asyncio
 
 from dremioai.servers.mock_auth import (
     MockJWTIssuer,
@@ -83,6 +81,7 @@ class TestMockJWTIssuer:
         issuer = MockJWTIssuer("http://localhost:8080")
         token = issuer.issue_token()
         claims = issuer.verify_token(token)
+        assert claims is not None
         assert claims["sub"] == "mock-user"
         assert claims["aud"] == "mock-audience"
         assert claims["scopes"] == ["read"]
@@ -107,6 +106,7 @@ class TestMockJWTIssuer:
         issuer = MockJWTIssuer("http://localhost:8080/")
         token = issuer.issue_token()
         claims = issuer.verify_token(token)
+        assert claims is not None
         assert claims["iss"] == "http://localhost:8080"
 
     def test_full_pkce_flow(self):
@@ -170,6 +170,7 @@ class TestMockJWTIssuer:
             code_challenge=challenge,
         )
         tokens = issuer.exchange_code(code, verifier)
+        assert tokens is not None
         refresh_token = tokens["refresh_token"]
 
         result = issuer.refresh(refresh_token)
@@ -325,6 +326,7 @@ class TestMockRouteHandlers:
             code_challenge=challenge,
         )
         tokens = issuer.exchange_code(code, verifier)
+        assert tokens is not None
 
         request = _FakeRequest(
             form_data={
