@@ -298,7 +298,7 @@ def _make_remote_handler(tool_name: str, description: str, input_schema: Dict[st
 
             if isinstance((token := get_access_token()), AccessToken):
                 overrides["dremio.pat"] = token.token
-        except Exception:
+        except (ImportError, LookupError):
             pass
 
         if project_id := tools.ProjectIdMiddleware.get_project_id():
@@ -331,19 +331,37 @@ def _make_remote_handler(tool_name: str, description: str, input_schema: Dict[st
     return _handler_impl
 
 
+_REMOTE_TOOLS_DISCOVERY_TIMEOUT = 30  # seconds
+
+
 async def _register_remote_tools(mcp: FastMCP):
     """Dynamically register tools from Dremio's Java-side tool registry.
 
     - Soft-fails: if list_tools() errors (e.g. Dremio unreachable), the server
       continues with only static tools.
+    - Applies a timeout to the discovery call so an unreachable Dremio instance
+      does not stall server startup indefinitely.
     - Skips naming conflicts: any remote tool whose name matches an already-
       registered static Python tool is ignored (with a warning).
     - Applies auth passthrough (PAT / project-id) and Prometheus metrics to
       each proxied handler.
+
+    Note: tools are fetched **once** at server startup.  If the Java-side
+    registry changes (tools added / removed / signatures updated) the MCP
+    server must be restarted to pick up the changes.
     """
     _log = log.logger("remote_tools")
     try:
-        remote_tools = await ai_tools.list_tools()
+        remote_tools = await asyncio.wait_for(
+            ai_tools.list_tools(),
+            timeout=_REMOTE_TOOLS_DISCOVERY_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        _log.warning(
+            f"Remote tool discovery timed out after "
+            f"{_REMOTE_TOOLS_DISCOVERY_TIMEOUT}s — continuing with static tools only"
+        )
+        return
     except Exception as e:
         _log.warning(
             f"Failed to discover remote tools from Dremio — "

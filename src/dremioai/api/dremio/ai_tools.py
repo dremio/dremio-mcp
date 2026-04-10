@@ -54,7 +54,22 @@ class InvokeToolResponse(BaseModel):
 
     @property
     def succeeded(self) -> bool:
+        """True when there is a result and no error.
+
+        Note: a Dremio 200 with an empty body (e.g. a void tool) will yield
+        ``result=None, error=None``.  Use :pyattr:`is_empty` to distinguish
+        this from a real failure.
+        """
         return self.error is None and self.result is not None
+
+    @property
+    def is_empty(self) -> bool:
+        """True when the response carries neither a result nor an error.
+
+        This can happen when Dremio returns a 200 with an empty body for a
+        void tool.  Callers may choose to treat this as a successful no-op.
+        """
+        return self.result is None and self.error is None
 
 
 async def list_tools() -> List[Dict[str, Any]]:

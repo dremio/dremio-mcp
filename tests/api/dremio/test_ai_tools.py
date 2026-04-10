@@ -125,6 +125,19 @@ def test_invoke_tool_response_empty():
     assert resp.succeeded is False
     assert resp.result is None
     assert resp.error is None
+    assert resp.is_empty is True
+
+
+def test_invoke_tool_response_is_empty_false_when_result():
+    """is_empty should be False when a result is present."""
+    resp = InvokeToolResponse.model_validate({"result": {"sql": "SELECT 1"}})
+    assert resp.is_empty is False
+
+
+def test_invoke_tool_response_is_empty_false_when_error():
+    """is_empty should be False when an error is present."""
+    resp = InvokeToolResponse.model_validate({"error": "Tool not found"})
+    assert resp.is_empty is False
 
 
 # --- HTTP error scenario tests ---

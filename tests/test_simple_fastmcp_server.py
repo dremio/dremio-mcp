@@ -276,6 +276,58 @@ class TestRemoteToolRegistration:
             assert static_tools == tools_after
 
     @pytest.mark.asyncio
+    async def test_remote_tools_registered_via_lifespan_when_enabled(self):
+        """When enable_remote_tools is True, _server_lifespan should call _register_remote_tools"""
+        fake_remote_tools = [
+            {
+                "name": "LifespanTool",
+                "description": "Tool registered via lifespan",
+                "input_schema": {"type": "object"},
+            },
+        ]
+
+        with self.mock_settings_for_remote_tools(enable_remote_tools=True):
+            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+
+            static_tools = {t.name for t in await server.list_tools()}
+            assert "LifespanTool" not in static_tools
+
+            with patch(
+                "dremioai.servers.mcp.ai_tools.list_tools",
+                new_callable=AsyncMock,
+                return_value=fake_remote_tools,
+            ):
+                async with mcp_server._server_lifespan(server):
+                    tools_during = {t.name for t in await server.list_tools()}
+                    assert "LifespanTool" in tools_during
+
+    @pytest.mark.asyncio
+    async def test_remote_tools_timeout_on_unreachable_dremio(self):
+        """If list_tools() hangs, _register_remote_tools should time out and soft-fail"""
+        import asyncio
+
+        async def _hang_forever():
+            await asyncio.sleep(3600)  # simulate unreachable Dremio
+
+        with self.mock_settings_for_remote_tools(enable_remote_tools=True):
+            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            static_tools_before = {t.name for t in await server.list_tools()}
+
+            with patch(
+                "dremioai.servers.mcp.ai_tools.list_tools",
+                new_callable=AsyncMock,
+                side_effect=_hang_forever,
+            ), patch.object(
+                mcp_server,
+                "_REMOTE_TOOLS_DISCOVERY_TIMEOUT",
+                0.1,  # very short timeout for test
+            ):
+                await mcp_server._register_remote_tools(server)
+
+            static_tools_after = {t.name for t in await server.list_tools()}
+            assert static_tools_before == static_tools_after
+
+    @pytest.mark.asyncio
     async def test_remote_tool_invocation_proxies_to_invoke_tool(self):
         """Invoking a registered remote tool should call ai_tools.invoke_tool"""
         fake_remote_tools = [
