@@ -17,6 +17,7 @@
 import pytest
 from dremioai.api.dremio.ai_tools import (
     AiTool,
+    AiToolError,
     InvokeToolResponse,
     list_tools,
     invoke_tool,
@@ -116,3 +117,43 @@ def test_invoke_tool_response_failed():
     assert resp.succeeded is False
     assert resp.result is None
     assert resp.error == "Tool not found"
+
+
+def test_invoke_tool_response_empty():
+    """An empty response (no result, no error) should not be considered succeeded."""
+    resp = InvokeToolResponse.model_validate({})
+    assert resp.succeeded is False
+    assert resp.result is None
+    assert resp.error is None
+
+
+# --- HTTP error scenario tests ---
+
+@pytest.mark.asyncio
+async def test_list_tools_http_error(mock_settings_instance):
+    """list_tools should raise AiToolError on HTTP 4xx/5xx."""
+    with HttpMockFramework() as mock:
+        mock.add_mock_response(r"/api/v4/ai/tools$", {"error": "Unauthorized"}, status=401)
+        with pytest.raises(AiToolError) as exc_info:
+            await list_tools()
+        assert "401" in str(exc_info.value) or exc_info.value.status == 401
+
+
+@pytest.mark.asyncio
+async def test_invoke_tool_http_error(mock_settings_instance):
+    """invoke_tool should raise AiToolError on HTTP 500."""
+    with HttpMockFramework() as mock:
+        mock.add_mock_response(r"/api/v4/ai/tools/runSql:invoke$", {"error": "Internal Server Error"}, status=500)
+        with pytest.raises(AiToolError) as exc_info:
+            await invoke_tool("runSql", {"sqlText": "SELECT 1"})
+        assert "500" in str(exc_info.value) or exc_info.value.status == 500
+
+
+@pytest.mark.asyncio
+async def test_invoke_tool_url_encodes_name(mock_settings_instance):
+    """tool_name with special characters should be URL-encoded."""
+    with HttpMockFramework() as mock:
+        # The encoded name "my%2Ftool" should appear in the URL
+        mock.add_mock_response(r"/api/v4/ai/tools/my%2Ftool:invoke$", {"result": "ok", "error": None})
+        result = await invoke_tool("my/tool", {})
+    assert result.get("result") == "ok"

@@ -119,7 +119,7 @@ class HttpMockFramework:
         return self
 
     def add_mock_response(
-        self, endpoint: str, response_data: Union[str, Dict]
+        self, endpoint: str, response_data: Union[str, Dict], status: int = 200
     ) -> "HttpMockFramework":
         """
         Add a mock response directly without loading from file
@@ -127,17 +127,23 @@ class HttpMockFramework:
         Args:
             endpoint: The API endpoint to mock
             response_data: The response data (string or dict that will be JSON serialized)
+            status: HTTP status code for the response (default: 200)
         """
         if isinstance(response_data, dict):
             response_data = json.dumps(response_data)
-        self.mock_responses[endpoint] = response_data
+        self.mock_responses[endpoint] = (response_data, status)
         return self
 
     def _get_mock_response(self, url: str, method: str = "GET") -> MockResponse:
         """Get mock response for a URL"""
         for endpoint, data in self.mock_responses.items():
-            if re.search(endpoint, url):
-                return MockResponse(data)
+            if isinstance(data, tuple):
+                body, status = data
+                if re.search(endpoint, url):
+                    return MockResponse(body, status=status)
+            else:
+                if re.search(endpoint, url):
+                    return MockResponse(data)
 
         # Default response if no mock found
         return MockResponse('{"error": "No mock data found"}', status=404)

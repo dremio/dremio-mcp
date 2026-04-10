@@ -16,8 +16,21 @@
 
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, List, Optional, Any
+from urllib.parse import quote
 
+from aiohttp import ClientResponseError
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
+from dremioai.log import logger
+
+log = logger(__name__)
+
+
+class AiToolError(Exception):
+    """Domain-specific error for AI tool API failures."""
+
+    def __init__(self, message: str, status: Optional[int] = None):
+        self.status = status
+        super().__init__(message)
 
 
 class AiTool(BaseModel):
@@ -41,23 +54,46 @@ class InvokeToolResponse(BaseModel):
 
     @property
     def succeeded(self) -> bool:
-        return self.error is None
+        return self.error is None and self.result is not None
 
 
 async def list_tools() -> List[Dict[str, Any]]:
-    client = AsyncHttpClient()
-    response: ListToolsResponse = await client.get(
-        "/api/v4/ai/tools",
-        deser=ListToolsResponse,
-    )
-    return [t.model_dump(by_alias=False) for t in response.tools]
+    try:
+        client = AsyncHttpClient()
+        response: ListToolsResponse = await client.get(
+            "/api/v4/ai/tools",
+            deser=ListToolsResponse,
+        )
+        return [t.model_dump(by_alias=False) for t in response.tools]
+    except ClientResponseError as e:
+        log.error(f"Failed to list AI tools: HTTP {e.status} {e.message}")
+        raise AiToolError(
+            f"Failed to list AI tools: HTTP {e.status} {e.message}",
+            status=e.status,
+        ) from e
+    except Exception as e:
+        log.error(f"Failed to list AI tools: {e}")
+        raise AiToolError(f"Failed to list AI tools: {e}") from e
 
 
 async def invoke_tool(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    client = AsyncHttpClient()
-    response: InvokeToolResponse = await client.post(
-        f"/api/v4/ai/tools/{tool_name}:invoke",
-        body={"args": args},
-        deser=InvokeToolResponse,
-    )
-    return response.model_dump(exclude_none=True)
+    safe_name = quote(tool_name, safe="")
+    try:
+        client = AsyncHttpClient()
+        response: InvokeToolResponse = await client.post(
+            f"/api/v4/ai/tools/{safe_name}:invoke",
+            body={"args": args},
+            deser=InvokeToolResponse,
+        )
+        return response.model_dump(exclude_none=True)
+    except ClientResponseError as e:
+        log.error(
+            f"Failed to invoke AI tool '{tool_name}': HTTP {e.status} {e.message}"
+        )
+        raise AiToolError(
+            f"Failed to invoke AI tool '{tool_name}': HTTP {e.status} {e.message}",
+            status=e.status,
+        ) from e
+    except Exception as e:
+        log.error(f"Failed to invoke AI tool '{tool_name}': {e}")
+        raise AiToolError(f"Failed to invoke AI tool '{tool_name}': {e}") from e
