@@ -92,11 +92,13 @@ class JWKSVerifier:
                 return await loop.run_in_executor(None, self._verify, token)
             except Exception:
                 logger.warning(
-                    "JWKS verification failed after cache refresh", exc_info=True
+                    "JWKS verification failed after cache refresh",
+                    jwks_uri=self._jwks_uri,
+                    exc_info=True,
                 )
                 return None
         except ExpiredSignatureError:
-            logger.warning("Token expired")
+            logger.warning("Token expired", jwks_uri=self._jwks_uri)
             return VerifiedClaims(exp=0)
         except MissingCryptographyError:
             logger.error(

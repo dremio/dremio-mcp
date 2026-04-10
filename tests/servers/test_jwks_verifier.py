@@ -26,7 +26,7 @@ import jwt as pyjwt
 from jwt import PyJWKClient, PyJWKClientError, ExpiredSignatureError
 
 from dremioai.servers.jwks_verifier import JWKSVerifier, VerifiedClaims
-from dremioai.servers.mcp import _make_logged_invoke, RequireAuthWithWWWAuthenticateMiddleware
+from dremioai.servers.mcp import make_logged_invoke, RequireAuthWithWWWAuthenticateMiddleware
 
 JWKS_DECODE = "dremioai.servers.jwks_verifier.pyjwt.decode"
 
@@ -238,14 +238,14 @@ class TestDispatchWarning:
 
 
 class TestMakeLoggedInvoke:
-    """Tests for _make_logged_invoke WARNING logging on tool exceptions."""
+    """Tests for make_logged_invoke WARNING logging on tool exceptions."""
 
     @pytest.mark.asyncio
     async def test_logs_warning_on_exception(self, caplog):
         async def failing_fn():
             raise ValueError("something went wrong")
 
-        wrapped = _make_logged_invoke("my_tool", failing_fn)
+        wrapped = make_logged_invoke("my_tool", failing_fn)
         with caplog.at_level(logging.WARNING):
             with pytest.raises(ValueError):
                 await wrapped()
@@ -260,7 +260,7 @@ class TestMakeLoggedInvoke:
         async def ok_fn():
             return "ok"
 
-        wrapped = _make_logged_invoke("good_tool", ok_fn)
+        wrapped = make_logged_invoke("good_tool", ok_fn)
         with caplog.at_level(logging.WARNING):
             result = await wrapped()
         assert result == "ok"

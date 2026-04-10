@@ -88,6 +88,8 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
                 "Unauthorized request rejected",
                 path=request.url.path,
                 client=client_host,
+                project_id=ProjectIdMiddleware.get_project_id(),
+                endpoint=str(settings.instance().dremio.uri),
             )
             # Return 401 with WWW-Authenticate header
             return StarletteResponse(
@@ -147,7 +149,9 @@ class FastMCPServerWithAuthToken(FastMCP):
                     is_verified = True
                 else:
                     log.logger("verify_token").info(
-                        "JWKS verify() returned None — token expiry not enforced, forwarding to Dremio"
+                        "JWKS verify() returned None — token expiry not enforced, forwarding to Dremio",
+                        project_id=ProjectIdMiddleware.get_project_id(),
+                        endpoint=str(settings.instance().dremio.uri),
                     )
             elif settings.instance().dremio.get("extract_org_id_from_jwt"):
                 org_id = self.extract_jwt_aud(token)
@@ -187,7 +191,7 @@ class FastMCPServerWithAuthToken(FastMCP):
         self.support_project_id_endpoints = False
 
 
-def _make_logged_invoke(tool_name: str, fn):
+def make_logged_invoke(tool_name: str, fn):
     _log = log.logger("tool_invoke")
 
     @wraps(fn)
@@ -231,7 +235,7 @@ def init(
         tool_instance = tool()
         is_sql_tool = tool is tools.RunSqlQuery
         mcp.add_tool(
-            _make_logged_invoke(tool.__name__, tool_instance.invoke),
+            make_logged_invoke(tool.__name__, tool_instance.invoke),
             name=tool.__name__,
             description=tool_instance.invoke.__doc__,
             annotations=ToolAnnotations(
