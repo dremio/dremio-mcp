@@ -96,7 +96,7 @@ class JWKSVerifier:
                 )
                 return None
         except ExpiredSignatureError:
-            logger.debug("Token expired")
+            logger.warning("Token expired")
             return VerifiedClaims(exp=0)
         except MissingCryptographyError:
             logger.error(

@@ -32,7 +32,7 @@ from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
 from dremioai.tools import tools
 import os
 from typing import List, Union, Annotated, Optional, Tuple, Dict, Any
-from functools import reduce
+from functools import reduce, wraps
 from operator import ior
 from pathlib import Path
 from dremioai import log
@@ -64,6 +64,8 @@ from starlette.responses import Response as StarletteResponse
 from dremioai.tools.tools import ProjectIdMiddleware
 from dremioai.servers.jwks_verifier import JWKSVerifier
 
+_TOKEN_EXPIRY_BUFFER_SECONDS = 60
+
 
 class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
     """
@@ -72,6 +74,8 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
     so that request.user is available.
     """
 
+    logger = log.logger("RequireAuthWithWWWAuthenticateMiddleware")
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         # Check if user is authenticated (request.user is available after AuthenticationMiddleware)
         if (
@@ -79,6 +83,12 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
             or not request.user.is_authenticated
             and request.url.path.startswith("/mcp")
         ):
+            client_host = request.client.host if request.client else "unknown"
+            self.logger.warning(
+                "Unauthorized request rejected",
+                path=request.url.path,
+                client=client_host,
+            )
             # Return 401 with WWW-Authenticate header
             return StarletteResponse(
                 content="Unauthorized",
@@ -132,8 +142,13 @@ class FastMCPServerWithAuthToken(FastMCP):
             is_verified = False
             if isinstance(self._jwks_verifier, JWKSVerifier):
                 if verified := await self._jwks_verifier.verify(token):
-                    expires_at, org_id = verified.exp, verified.aud
+                    expires_at = (verified.exp - _TOKEN_EXPIRY_BUFFER_SECONDS) if verified.exp is not None else None
+                    org_id = verified.aud
                     is_verified = True
+                else:
+                    log.logger("verify_token").info(
+                        "JWKS verify() returned None — token expiry not enforced, forwarding to Dremio"
+                    )
             elif settings.instance().dremio.get("extract_org_id_from_jwt"):
                 org_id = self.extract_jwt_aud(token)
 
@@ -172,6 +187,24 @@ class FastMCPServerWithAuthToken(FastMCP):
         self.support_project_id_endpoints = False
 
 
+def _make_logged_invoke(tool_name: str, fn):
+    _log = log.logger("tool_invoke")
+
+    @wraps(fn)
+    async def _wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as exc:
+            _log.warning(
+                "Tool invocation raised an exception",
+                tool=tool_name,
+                error=str(exc),
+            )
+            raise
+
+    return _wrapper
+
+
 def init(
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
     transport: Transports = Transports.stdio,
@@ -198,7 +231,7 @@ def init(
         tool_instance = tool()
         is_sql_tool = tool is tools.RunSqlQuery
         mcp.add_tool(
-            tool_instance.invoke,
+            _make_logged_invoke(tool.__name__, tool_instance.invoke),
             name=tool.__name__,
             description=tool_instance.invoke.__doc__,
             annotations=ToolAnnotations(
