@@ -25,7 +25,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import jwt as pyjwt
 from jwt import PyJWKClient, PyJWKClientError, ExpiredSignatureError
 
-from dremioai.servers.jwks_verifier import JWKSVerifier, VerifiedClaims
+from dremioai.servers.jwks_verifier import JWKSVerifier, VerifiedClaims, TokenExpiredError
 from dremioai.servers.mcp import make_logged_invoke, RequireAuthWithWWWAuthenticateMiddleware
 
 JWKS_DECODE = "dremioai.servers.jwks_verifier.pyjwt.decode"
@@ -70,11 +70,11 @@ class TestJWKSVerifier:
         assert result.aud == "org-a"
 
     @pytest.mark.asyncio
-    async def test_expired_token_returns_exp_zero(self, verifier, mock_key):
+    async def test_expired_token_raises_token_expired_error(self, verifier, mock_key):
         with patch.object(PyJWKClient, "get_signing_key_from_jwt", return_value=mock_key), \
              patch(JWKS_DECODE, side_effect=ExpiredSignatureError("expired")):
-            result = await verifier.verify("t")
-        assert result == VerifiedClaims(exp=0)
+            with pytest.raises(TokenExpiredError):
+                await verifier.verify("t")
 
     @pytest.mark.asyncio
     async def test_jwks_fetch_error_returns_none(self, verifier):
@@ -173,13 +173,12 @@ class TestTokenExpiryBuffer:
         assert result.expires_at is None
 
     @pytest.mark.asyncio
-    async def test_buffer_sentinel_exp_zero_is_rejected(self):
-        """Token with exp=0 (sentinel for expired) should become -60 after buffer."""
-        claims = VerifiedClaims(exp=0, aud="org-4")
-        verifier = self._make_verifier_with_jwks(claims)
+    async def test_expired_token_causes_verify_token_to_return_none(self):
+        """When JWKSVerifier.verify() raises TokenExpiredError, verify_token() returns None."""
+        verifier = self._make_verifier_with_jwks(VerifiedClaims(exp=9999, aud="org-4"))
+        verifier._jwks_verifier.verify = AsyncMock(side_effect=TokenExpiredError())
         result = await verifier.verify_token("test-token")
-        assert result is not None
-        assert result.expires_at == -60
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_no_warning_on_happy_path(self, caplog):

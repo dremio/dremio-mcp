@@ -62,7 +62,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response as StarletteResponse
 
 from dremioai.tools.tools import ProjectIdMiddleware
-from dremioai.servers.jwks_verifier import JWKSVerifier
+from dremioai.servers.jwks_verifier import JWKSVerifier, TokenExpiredError
 
 _TOKEN_EXPIRY_BUFFER_SECONDS = 60
 
@@ -143,7 +143,16 @@ class FastMCPServerWithAuthToken(FastMCP):
             expires_at = org_id = None
             is_verified = False
             if isinstance(self._jwks_verifier, JWKSVerifier):
-                if verified := await self._jwks_verifier.verify(token):
+                try:
+                    verified = await self._jwks_verifier.verify(token)
+                except TokenExpiredError:
+                    log.logger("verify_token").warning(
+                        "Token rejected — JWT has expired",
+                        project_id=ProjectIdMiddleware.get_project_id(),
+                        endpoint=str(settings.instance().dremio.uri),
+                    )
+                    return None
+                if verified:
                     expires_at = (verified.exp - _TOKEN_EXPIRY_BUFFER_SECONDS) if verified.exp is not None else None
                     org_id = verified.aud
                     is_verified = True

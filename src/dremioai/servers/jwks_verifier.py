@@ -38,6 +38,16 @@ logger = log.logger(__name__)
 _DEFAULT_JWKS_CACHE_LIFESPAN = 3600  # 1 hour in seconds
 
 
+class TokenExpiredError(Exception):
+    """Raised by JWKSVerifier.verify() when the JWT token has expired.
+
+    Callers should catch this to return an unauthenticated response (HTTP 401)
+    rather than forwarding the expired token to downstream services.
+    """
+
+    pass
+
+
 @dataclass
 class VerifiedClaims:
     """Subset of JWT claims extracted after signature verification."""
@@ -99,7 +109,7 @@ class JWKSVerifier:
                 return None
         except ExpiredSignatureError:
             logger.warning("Token expired", jwks_uri=self._jwks_uri)
-            return VerifiedClaims(exp=0)
+            raise TokenExpiredError()
         except MissingCryptographyError:
             logger.error(
                 "JWT verification requires cryptography support (install PyJWT[crypto] / cryptography)"
