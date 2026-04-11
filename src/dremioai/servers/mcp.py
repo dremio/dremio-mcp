@@ -64,7 +64,6 @@ from starlette.responses import Response as StarletteResponse
 from dremioai.tools.tools import ProjectIdMiddleware
 from dremioai.servers.jwks_verifier import JWKSVerifier, TokenExpiredError
 
-_TOKEN_EXPIRY_BUFFER_SECONDS = 60
 
 
 class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
@@ -141,7 +140,6 @@ class FastMCPServerWithAuthToken(FastMCP):
                 return None
 
             expires_at = org_id = None
-            is_verified = False
             if isinstance(self._jwks_verifier, JWKSVerifier):
                 try:
                     verified = await self._jwks_verifier.verify(token)
@@ -153,9 +151,13 @@ class FastMCPServerWithAuthToken(FastMCP):
                     )
                     return None
                 if verified:
-                    expires_at = (verified.exp - _TOKEN_EXPIRY_BUFFER_SECONDS) if verified.exp is not None else None
+                    buffer = settings.instance().dremio.get("jwks_token_expiry_buffer_secs") or 60
+                    # Subtract the buffer so BearerAuthBackend's
+                    # `if auth_info.expires_at and expires_at < time.time()` guard
+                    # fires this many seconds before Auth0 considers the token expired,
+                    # giving the client's OAuth refresh flow a clean window.
+                    expires_at = (verified.exp - buffer) if verified.exp is not None else None
                     org_id = verified.aud
-                    is_verified = True
                 else:
                     log.logger("verify_token").info(
                         "JWKS verify() returned None — token expiry not enforced, forwarding to Dremio",
@@ -173,7 +175,7 @@ class FastMCPServerWithAuthToken(FastMCP):
             return AccessToken(
                 token=token,
                 client_id="unused-client",
-                scopes=["read", "jwt_verified"] if is_verified else ["read"],
+                scopes=["read"],
                 expires_at=expires_at,
             )
 

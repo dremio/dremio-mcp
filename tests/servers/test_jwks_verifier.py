@@ -134,6 +134,7 @@ class TestTokenExpiryBuffer:
         self._mock_dremio.get.side_effect = lambda k: {
             "jwks_uri": "https://example.com/.well-known/jwks.json",
             "jwks_cache_lifespan": 3600,
+            "jwks_token_expiry_buffer_secs": 60,
         }.get(k)
 
         with patch.object(PyJWKClient, "__init__", return_value=None):
