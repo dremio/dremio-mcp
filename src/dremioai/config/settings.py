@@ -264,7 +264,7 @@ class Dremio(FlagAwareModel):
         default=3600,
         description="How long (seconds) to cache JWKS keys before refetching. Default: 3600 (1 hour).",
     )
-    jwks_token_expiry_buffer_secs: Optional[int] = Field(
+    jwks_token_expiry_buffer_secs: int = Field(
         default=60,
         description="Seconds to subtract from the JWT exp claim before passing it to AccessToken. "
         "The MCP server rejects the token this many seconds before Auth0 considers it expired, "

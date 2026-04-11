@@ -151,7 +151,7 @@ class FastMCPServerWithAuthToken(FastMCP):
                     )
                     return None
                 if verified:
-                    buffer = settings.instance().dremio.get("jwks_token_expiry_buffer_secs") or 60
+                    buffer = settings.instance().dremio.get("jwks_token_expiry_buffer_secs")
                     # Subtract the buffer so BearerAuthBackend's
                     # `if auth_info.expires_at and expires_at < time.time()` guard
                     # fires this many seconds before Auth0 considers the token expired,
