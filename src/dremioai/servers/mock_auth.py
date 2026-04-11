@@ -284,12 +284,18 @@ def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
     @mcp.custom_route(
         "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
     )
-    async def _metadata(_request: Request) -> Response:
+    async def _metadata(request: Request) -> Response:
+        # Derive base URL from the incoming request so metadata works
+        # behind ngrok, tunnels, and reverse proxies.
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+        request_base = f"{scheme}://{host}".rstrip("/")
+        logger.info(f"mock_metadata: using base_url={request_base}")
         md = OAuthMetadataRFC8414(
-            issuer=AnyHttpUrl(base_url),
-            authorization_endpoint=f"{base_url}/oauth/authorize",
-            token_endpoint=f"{base_url}/oauth/token",
-            registration_endpoint=AnyHttpUrl(f"{base_url}/oauth/register"),
+            issuer=AnyHttpUrl(request_base),
+            authorization_endpoint=f"{request_base}/oauth/authorize",
+            token_endpoint=f"{request_base}/oauth/token",
+            registration_endpoint=AnyHttpUrl(f"{request_base}/oauth/register"),
             scopes_supported=["read", "offline_access"],
             response_types_supported=["code"],
             grant_types_supported=["authorization_code", "refresh_token"],
