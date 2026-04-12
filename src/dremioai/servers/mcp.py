@@ -171,8 +171,8 @@ class FastMCPServerWithAuthToken(FastMCP):
                         )
                         return None
                 else:
-                    self.logger.info(
-                        "JWKS verify() returned None — token expiry not enforced, forwarding to Dremio",
+                    self.logger.warning(
+                        "JWKS verify() returned None — rejecting token to force reauth",
                         project_id=ProjectIdMiddleware.get_project_id(),
                     )
                     return None

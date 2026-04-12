@@ -222,13 +222,13 @@ class TestTokenExpiryBuffer:
 
     @pytest.mark.asyncio
     async def test_degradation_returns_none_when_jwks_returns_none(self, caplog):
-        """When JWKSVerifier.verify() returns None, verify_token() returns None."""
+        """When JWKSVerifier.verify() returns None, verify_token() returns None and logs WARNING."""
         verifier = self._make_verifier_with_jwks(None)
-        with caplog.at_level(logging.INFO):
+        with caplog.at_level(logging.WARNING):
             result = await verifier.verify_token("test-token")
         assert result is None
-        info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
-        assert any("JWKS verify" in msg for msg in info_messages)
+        warning_messages = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("JWKS verify" in msg for msg in warning_messages)
 
 
 class TestDispatchWarning:
