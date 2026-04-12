@@ -60,14 +60,30 @@ class TestJWKSVerifier:
         with patch.object(PyJWKClient, "get_signing_key_from_jwt", return_value=mock_key), \
              patch(JWKS_DECODE, return_value=_claims(exp=future_exp, aud="org-123")):
             result = await verifier.verify("t")
-        assert result == VerifiedClaims(exp=future_exp, aud="org-123")
+        assert result == VerifiedClaims(exp=future_exp, org_id="org-123", user_id="test-user")
+
+    @pytest.mark.asyncio
+    async def test_user_id_extracted_from_sub(self, verifier, mock_key):
+        future_exp = int(time.time()) + 3600
+        with patch.object(PyJWKClient, "get_signing_key_from_jwt", return_value=mock_key), \
+             patch(JWKS_DECODE, return_value=_claims(exp=future_exp, aud="org-123")):
+            result = await verifier.verify("t")
+        assert result.user_id == "test-user"
 
     @pytest.mark.asyncio
     async def test_aud_list_extracts_first(self, verifier, mock_key):
         with patch.object(PyJWKClient, "get_signing_key_from_jwt", return_value=mock_key), \
              patch(JWKS_DECODE, return_value=_claims(exp=9999999999, aud=["org-a", "org-b"])):
             result = await verifier.verify("t")
-        assert result.aud == "org-a"
+        assert result.org_id == "org-a"
+
+    @pytest.mark.asyncio
+    async def test_sub_list_extracts_first(self, verifier, mock_key):
+        claims = {"sub": ["user-1", "user-2"], "exp": 9999999999}
+        with patch.object(PyJWKClient, "get_signing_key_from_jwt", return_value=mock_key), \
+             patch(JWKS_DECODE, return_value=claims):
+            result = await verifier.verify("t")
+        assert result.user_id == "user-1"
 
     @pytest.mark.asyncio
     async def test_expired_token_raises_token_expired_error(self, verifier, mock_key):
@@ -95,7 +111,7 @@ class TestJWKSVerifier:
                           side_effect=[pyjwt.InvalidKeyError("kid not found"), mock_key]), \
              patch(JWKS_DECODE, return_value=_claims(exp=future_exp, aud="org-456")):
             result = await verifier.verify("t")
-        assert result == VerifiedClaims(exp=future_exp, aud="org-456")
+        assert result == VerifiedClaims(exp=future_exp, org_id="org-456", user_id="test-user")
 
     @pytest.mark.asyncio
     async def test_no_exp_claim(self, verifier, mock_key):
@@ -103,7 +119,7 @@ class TestJWKSVerifier:
              patch(JWKS_DECODE, return_value=_claims(aud="org-789")):
             result = await verifier.verify("t")
         assert result.exp is None
-        assert result.aud == "org-789"
+        assert result.org_id == "org-789"
 
     def test_custom_lifespan(self):
         with patch.object(PyJWKClient, "__init__", return_value=None):
@@ -146,19 +162,18 @@ class TestTokenExpiryBuffer:
 
     @pytest.mark.asyncio
     async def test_buffer_token_at_exp_minus_59_is_rejected(self):
-        """Token with exp=now+59 should have expires_at in the past after -60 buffer."""
+        """Token with exp=now+59: after -60 buffer expires_at is in the past, rejected."""
         now = int(time.time())
-        claims = VerifiedClaims(exp=now + 59, aud="org-1")
+        claims = VerifiedClaims(exp=now + 59, org_id="org-1")
         verifier = self._make_verifier_with_jwks(claims)
         result = await verifier.verify_token("test-token")
-        assert result is not None
-        assert result.expires_at < int(time.time())
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_buffer_token_at_exp_plus_61_passes(self):
-        """Token with exp=now+121 should have expires_at in the future after -60 buffer."""
+        """Token with exp=now+121: after -60 buffer expires_at is in the future, accepted."""
         now = int(time.time())
-        claims = VerifiedClaims(exp=now + 121, aud="org-2")
+        claims = VerifiedClaims(exp=now + 121, org_id="org-2")
         verifier = self._make_verifier_with_jwks(claims)
         result = await verifier.verify_token("test-token")
         assert result is not None
@@ -167,7 +182,7 @@ class TestTokenExpiryBuffer:
     @pytest.mark.asyncio
     async def test_buffer_token_with_none_exp_passes_through(self):
         """Token with exp=None should pass through without buffer adjustment."""
-        claims = VerifiedClaims(exp=None, aud="org-3")
+        claims = VerifiedClaims(exp=None, org_id="org-3")
         verifier = self._make_verifier_with_jwks(claims)
         result = await verifier.verify_token("test-token")
         assert result is not None
@@ -176,16 +191,29 @@ class TestTokenExpiryBuffer:
     @pytest.mark.asyncio
     async def test_expired_token_causes_verify_token_to_return_none(self):
         """When JWKSVerifier.verify() raises TokenExpiredError, verify_token() returns None."""
-        verifier = self._make_verifier_with_jwks(VerifiedClaims(exp=9999, aud="org-4"))
+        verifier = self._make_verifier_with_jwks(VerifiedClaims(exp=9999, org_id="org-4"))
         verifier._jwks_verifier.verify = AsyncMock(side_effect=TokenExpiredError())
         result = await verifier.verify_token("test-token")
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_buffer_early_return_logs_warning(self, caplog):
+        """Token past expiry buffer window: verify_token() returns None and logs WARNING."""
+        now = int(time.time())
+        # exp=now+59 → expires_at=now-1 → past, early return
+        claims = VerifiedClaims(exp=now + 59, org_id="org-5", user_id="user-x")
+        verifier = self._make_verifier_with_jwks(claims)
+        with caplog.at_level(logging.WARNING):
+            result = await verifier.verify_token("test-token")
+        assert result is None
+        warning_messages = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("expiry buffer" in msg for msg in warning_messages)
+
+    @pytest.mark.asyncio
     async def test_no_warning_on_happy_path(self, caplog):
         """Valid future token should not produce WARNING logs."""
         now = int(time.time())
-        claims = VerifiedClaims(exp=now + 3600, aud="org-5")
+        claims = VerifiedClaims(exp=now + 3600, org_id="org-6")
         verifier = self._make_verifier_with_jwks(claims)
         with caplog.at_level(logging.WARNING):
             await verifier.verify_token("test-token")
@@ -193,13 +221,12 @@ class TestTokenExpiryBuffer:
         assert len(warning_messages) == 0
 
     @pytest.mark.asyncio
-    async def test_degradation_logs_info_when_jwks_returns_none(self, caplog):
-        """When JWKSVerifier.verify() returns None, an INFO log should mention JWKS."""
+    async def test_degradation_returns_none_when_jwks_returns_none(self, caplog):
+        """When JWKSVerifier.verify() returns None, verify_token() returns None."""
         verifier = self._make_verifier_with_jwks(None)
         with caplog.at_level(logging.INFO):
             result = await verifier.verify_token("test-token")
-        assert result is not None
-        assert "jwt_verified" not in result.scopes
+        assert result is None
         info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
         assert any("JWKS verify" in msg for msg in info_messages)
 

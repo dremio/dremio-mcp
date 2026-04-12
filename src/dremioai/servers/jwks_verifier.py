@@ -26,11 +26,12 @@ or verification error (e.g. key rotation).
 
 import asyncio
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import jwt as pyjwt
-from jwt import PyJWKClient, PyJWKClientError, ExpiredSignatureError
+from jwt import ExpiredSignatureError, PyJWKClient, PyJWKClientError
 from jwt.exceptions import MissingCryptographyError
+
 from dremioai import log
 
 logger = log.logger(__name__)
@@ -53,7 +54,8 @@ class VerifiedClaims:
     """Subset of JWT claims extracted after signature verification."""
 
     exp: Optional[int] = None
-    aud: Optional[str] = None
+    org_id: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 class JWKSVerifier:
@@ -131,10 +133,15 @@ class JWKSVerifier:
                 "verify_exp": True,
             },
         )
-        aud = claims.get("aud")
-        if isinstance(aud, list):
-            aud = aud[0] if aud else None
+
+        def flatten_get(claims: Dict[str, Any], key: str) -> Any:
+            if (v := claims.get(key)) is not None and isinstance(v, List):
+                return v[0] if v else None
+            else:
+                return v
+
         return VerifiedClaims(
-            exp=claims.get("exp"),
-            aud=aud,
+            exp=flatten_get(claims, "exp"),
+            org_id=flatten_get(claims, "aud"),
+            user_id=flatten_get(claims, "sub"),
         )
