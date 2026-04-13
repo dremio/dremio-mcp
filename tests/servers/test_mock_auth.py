@@ -186,6 +186,24 @@ class TestMockJWTIssuer:
         result2 = issuer.refresh(result["refresh_token"])
         assert result2 is not None
 
+    def test_refresh_token_expiry(self):
+        # refresh_token_expiry=-1 means already expired
+        issuer = MockJWTIssuer(
+            "http://localhost:8080", refresh_token_expiry=-1
+        )
+        verifier, challenge = _pkce_pair()
+
+        code = issuer.issue_authorization_code(
+            client_id="client-1",
+            redirect_uri="http://localhost/callback",
+            code_challenge=challenge,
+        )
+        tokens = issuer.exchange_code(code, verifier)
+        assert tokens is not None
+
+        # Refresh should fail because refresh token is already expired
+        assert issuer.refresh(tokens["refresh_token"]) is None
+
     def test_refresh_invalid_token(self):
         issuer = MockJWTIssuer("http://localhost:8080")
         assert issuer.refresh("nonexistent") is None

@@ -253,6 +253,8 @@ def init(
     host: str = "127.0.0.1",
     support_project_id_endpoints: bool = False,
     mock: bool = False,
+    mock_token_expiry: int = 3600,
+    mock_refresh_token_expiry: int = 86400,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
@@ -277,7 +279,11 @@ def init(
         )
 
         issuer_url = f"http://{host}:{port}" if port else f"http://{host}"
-        mock_issuer = MockJWTIssuer(issuer_url=issuer_url)
+        mock_issuer = MockJWTIssuer(
+            issuer_url=issuer_url,
+            default_expiry=mock_token_expiry,
+            refresh_token_expiry=mock_refresh_token_expiry,
+        )
         if isinstance(mcp, FastMCPServerWithAuthToken):
             mcp._mock_token_verifier = MockTokenVerifier(mock_issuer)
         register_mock_routes(mcp, mock_issuer)
@@ -459,6 +465,14 @@ def main(
         Optional[bool],
         Option(help="Run in mock mode for client sanity testing"),
     ] = False,
+    mock_token_expiry: Annotated[
+        Optional[int],
+        Option(help="Mock mode: access token expiry in seconds"),
+    ] = 3600,
+    mock_refresh_token_expiry: Annotated[
+        Optional[int],
+        Option(help="Mock mode: refresh token expiry in seconds"),
+    ] = 86400,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -498,6 +512,8 @@ def main(
         host=host,
         support_project_id_endpoints=True,
         mock=mock,
+        mock_token_expiry=mock_token_expiry,
+        mock_refresh_token_expiry=mock_refresh_token_expiry,
     )
 
     # Create metrics server based on configuration

@@ -46,15 +46,24 @@ logger = log.logger(__name__)
 class MockJWTIssuer:
     """Self-contained HS256 JWT issuer for mock mode."""
 
-    def __init__(self, issuer_url: str, default_expiry: int = 3600):
+    def __init__(
+        self,
+        issuer_url: str,
+        default_expiry: int = 3600,
+        refresh_token_expiry: int = 86400,
+    ):
         self._secret = secrets.token_hex(32)
         self._issuer_url = issuer_url.rstrip("/")
         self._default_expiry = default_expiry
+        self._refresh_token_expiry = refresh_token_expiry
         # code -> {client_id, redirect_uri, code_challenge, code_challenge_method, sub, aud}
         self._pending_codes: dict[str, dict] = {}
-        # refresh_token -> {sub, aud, client_id}
+        # refresh_token -> {sub, aud, client_id, issued_at}
         self._refresh_tokens: dict[str, dict] = {}
-        logger.info(f"MockJWTIssuer initialised: issuer={self._issuer_url}, expiry={default_expiry}s")
+        logger.info(
+            f"MockJWTIssuer initialised: issuer={self._issuer_url}, "
+            f"token_expiry={default_expiry}s, refresh_token_expiry={refresh_token_expiry}s"
+        )
 
     def issue_token(
         self,
@@ -129,6 +138,7 @@ class MockJWTIssuer:
             "sub": params["sub"],
             "aud": params["aud"],
             "client_id": params["client_id"],
+            "issued_at": int(time.time()),
         }
         return {
             "access_token": access_token,
@@ -143,10 +153,19 @@ class MockJWTIssuer:
             logger.info("Refresh token exchange failed: unknown token")
             return None
 
+        issued_at = params.get("issued_at", 0)
+        if int(time.time()) - issued_at > self._refresh_token_expiry:
+            logger.info(f"Refresh token expired for client_id={params['client_id']}")
+            del self._refresh_tokens[refresh_token]
+            return None
+
         logger.info(f"Refreshing token for client_id={params['client_id']}")
         access_token = self.issue_token(sub=params["sub"], aud=params["aud"])
         new_refresh = secrets.token_hex(32)
-        self._refresh_tokens[new_refresh] = params
+        self._refresh_tokens[new_refresh] = {
+            **params,
+            "issued_at": int(time.time()),
+        }
         del self._refresh_tokens[refresh_token]
         return {
             "access_token": access_token,
