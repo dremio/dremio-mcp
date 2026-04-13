@@ -9,6 +9,7 @@ flag_keys:
 - dremio.enable_search
 - dremio.extract_org_id_from_jwt
 - dremio.jwks_cache_lifespan
+- dremio.jwks_token_expiry_buffer_secs
 - dremio.jwks_uri
 - dremio.metrics.enabled
 - dremio.metrics.port
