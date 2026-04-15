@@ -280,7 +280,7 @@ def make_logged_invoke(tool_name: str, fn):
     return _wrapper
 
 
-async def _discover_dynamic_tools_handler() -> str:
+async def _discover_dynamic_tools_handler():
     """Discover additional tools available from the Dremio server.
     Call this tool to get a list of dynamically available tools with their
     names, descriptions, and input schemas."""
@@ -319,7 +319,7 @@ async def _discover_dynamic_tools_handler() -> str:
         )
 
 
-async def _call_dynamic_tool_handler(tool_name: str, tool_arguments: str) -> str:
+async def _call_dynamic_tool_handler(tool_name: str, tool_arguments: str):
     """Invoke a dynamically discovered tool on the Dremio server."""
     _log = log.logger("call_dynamic_tool")
 
