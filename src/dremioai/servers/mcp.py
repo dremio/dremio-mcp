@@ -319,14 +319,17 @@ async def _discover_dynamic_tools_handler():
         )
 
 
-async def _call_dynamic_tool_handler(tool_name: str, tool_arguments: str):
+async def _call_dynamic_tool_handler(tool_name: str, tool_arguments: Union[str, dict]):
     """Invoke a dynamically discovered tool on the Dremio server."""
     _log = log.logger("call_dynamic_tool")
 
-    try:
-        args = json.loads(tool_arguments)
-    except json.JSONDecodeError as exc:
-        return f"Invalid JSON in tool_arguments: {exc}"
+    if isinstance(tool_arguments, dict):
+        args = tool_arguments
+    else:
+        try:
+            args = json.loads(tool_arguments)
+        except json.JSONDecodeError as exc:
+            return f"Invalid JSON in tool_arguments: {exc}"
 
     overrides = {}
     try:
