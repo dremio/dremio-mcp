@@ -91,10 +91,11 @@ class TestSimpleFastMCPServer:
 
             # Test RunSqlQuery tool with proper mocking
             with patch(
-                "dremioai.api.dremio.sql.run_query", new_callable=AsyncMock
+                "dremioai.api.dremio.sql.run_query_capped", new_callable=AsyncMock
             ) as mock_run_query:
+                from dremioai.api.dremio.sql import QueryResult
                 mock_df = pd.DataFrame([{"test_column": 1}])
-                mock_run_query.return_value = mock_df
+                mock_run_query.return_value = QueryResult(df=mock_df, total_rows=1, returned_rows=1)
 
                 # Call the tool
                 result = await fastmcp_server.call_tool(

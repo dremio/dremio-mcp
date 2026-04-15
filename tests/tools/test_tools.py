@@ -14,9 +14,13 @@
 #  limitations under the License.
 #
 
+import json
 import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
+import pandas as pd
 from dremioai.tools import tools
 from dremioai.config import settings
+from dremioai.api.dremio.sql import QueryResult
 from typing import Dict, Union
 from contextlib import contextmanager
 
@@ -479,3 +483,121 @@ def test_tool_decorators():
             pp("Actual:")
             pp(actual)
             assert False
+
+
+# -- RunSqlQuery.invoke() tests ------------------------------------------------
+
+def _mock_dremio_settings(max_rows=500, max_bytes=204_800, allow_dml=False):
+    s = MagicMock()
+    s.dremio.get.side_effect = lambda key: {
+        "max_result_rows": max_rows,
+        "max_result_bytes": max_bytes,
+        "allow_dml": allow_dml,
+    }.get(key)
+    s.dremio.project_id = None
+    return s
+
+
+@pytest.mark.asyncio
+async def test_invoke_no_truncation():
+    """When results fit within both limits, response has only 'result' key."""
+    df = pd.DataFrame({"col": ["a", "b"]})
+    qr = QueryResult(df=df, total_rows=2, returned_rows=2)
+
+    with (
+        patch("dremioai.tools.tools.settings") as mock_s,
+        patch("dremioai.tools.tools.sql") as mock_sql,
+    ):
+        mock_s.instance.return_value = _mock_dremio_settings()
+        mock_sql.run_query_capped = AsyncMock(return_value=qr)
+
+        instance = tools.RunSqlQuery()
+        result = await instance.invoke.__wrapped__(instance, "SELECT 1")
+
+    assert "result" in result
+    assert "truncated" not in result
+    assert len(result["result"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_invoke_row_limit_hit():
+    """Row limit triggers truncation metadata with reason 'row_limit'."""
+    df = pd.DataFrame({"col": [str(i) for i in range(10)]})
+    qr = QueryResult(df=df, total_rows=100, returned_rows=10)
+
+    with (
+        patch("dremioai.tools.tools.settings") as mock_s,
+        patch("dremioai.tools.tools.sql") as mock_sql,
+    ):
+        mock_s.instance.return_value = _mock_dremio_settings(max_rows=10)
+        mock_sql.run_query_capped = AsyncMock(return_value=qr)
+
+        instance = tools.RunSqlQuery()
+        result = await instance.invoke.__wrapped__(instance, "SELECT 1")
+
+    assert result["truncated"] is True
+    assert result["truncation_reason"] == "row_limit"
+    assert result["total_rows"] == 100
+    assert result["returned_rows"] == 10
+
+
+@pytest.mark.asyncio
+async def test_invoke_byte_limit_hit():
+    """Byte limit fires mid-result, reason is 'byte_limit'."""
+    # Each record is ~20+ bytes as JSON; set a very small byte budget
+    df = pd.DataFrame({"col": ["x" * 50 for _ in range(10)]})
+    qr = QueryResult(df=df, total_rows=10, returned_rows=10)
+
+    with (
+        patch("dremioai.tools.tools.settings") as mock_s,
+        patch("dremioai.tools.tools.sql") as mock_sql,
+    ):
+        mock_s.instance.return_value = _mock_dremio_settings(max_rows=500, max_bytes=100)
+        mock_sql.run_query_capped = AsyncMock(return_value=qr)
+
+        instance = tools.RunSqlQuery()
+        result = await instance.invoke.__wrapped__(instance, "SELECT 1")
+
+    assert result["truncated"] is True
+    assert result["truncation_reason"] == "byte_limit"
+    assert len(result["result"]) < 10
+
+
+@pytest.mark.asyncio
+async def test_invoke_both_limits_zero():
+    """max_rows=0 and max_bytes=0 => no truncation, all rows returned."""
+    df = pd.DataFrame({"col": [str(i) for i in range(20)]})
+    qr = QueryResult(df=df, total_rows=20, returned_rows=20)
+
+    with (
+        patch("dremioai.tools.tools.settings") as mock_s,
+        patch("dremioai.tools.tools.sql") as mock_sql,
+    ):
+        mock_s.instance.return_value = _mock_dremio_settings(max_rows=0, max_bytes=0)
+        mock_sql.run_query_capped = AsyncMock(return_value=qr)
+
+        instance = tools.RunSqlQuery()
+        result = await instance.invoke.__wrapped__(instance, "SELECT 1")
+
+    assert "truncated" not in result
+    assert len(result["result"]) == 20
+
+
+@pytest.mark.asyncio
+async def test_invoke_settings_override():
+    """Verify correct max_rows is passed to run_query_capped from settings."""
+    df = pd.DataFrame({"col": ["a"]})
+    qr = QueryResult(df=df, total_rows=1, returned_rows=1)
+
+    with (
+        patch("dremioai.tools.tools.settings") as mock_s,
+        patch("dremioai.tools.tools.sql") as mock_sql,
+    ):
+        mock_s.instance.return_value = _mock_dremio_settings(max_rows=42)
+        mock_sql.run_query_capped = AsyncMock(return_value=qr)
+
+        instance = tools.RunSqlQuery()
+        await instance.invoke.__wrapped__(instance, "SELECT 1")
+
+        call_kwargs = mock_sql.run_query_capped.call_args
+        assert call_kwargs.kwargs.get("max_rows") == 42

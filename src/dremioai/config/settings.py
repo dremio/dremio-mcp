@@ -272,6 +272,14 @@ class Dremio(FlagAwareModel):
         "Settable via LaunchDarkly. Default: 60.",
     )
     wlm: Optional[Wlm] = None
+    max_result_rows: Optional[int] = Field(
+        default=500,
+        description="Maximum number of rows returned by RunSqlQuery. Use 0 for unlimited.",
+    )
+    max_result_bytes: Optional[int] = Field(
+        default=204_800,
+        description="Maximum UTF-8 byte size of RunSqlQuery results. Enforced after row cap. Use 0 for unlimited.",
+    )
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
 
