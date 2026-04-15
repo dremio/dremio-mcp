@@ -60,6 +60,8 @@ from json import load, dump as jdump
 from shutil import which
 import asyncio
 import contextlib
+import inspect
+import json
 import logging
 import os
 import sys
@@ -79,7 +81,7 @@ import uvicorn
 from click import Choice
 from mcp.cli.claude import get_claude_config_path
 from mcp.server.auth.json_response import PydanticJSONResponse
-from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.fastmcp import FastMCP
@@ -104,6 +106,7 @@ from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
 from dremioai.config import settings
 from dremioai.config.feature_flags import FeatureFlagManager
 from dremioai.metrics.registry import get_metrics_app
+from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
 from dremioai.servers.jwks_verifier import JWKSVerifier, TokenExpiredError
 from dremioai.tools import tools
 from dremioai.tools.tools import ProjectIdMiddleware
@@ -277,6 +280,88 @@ def make_logged_invoke(tool_name: str, fn):
     return _wrapper
 
 
+async def _discover_dynamic_tools_handler() -> str:
+    """Discover additional tools available from the Dremio server.
+    Call this tool to get a list of dynamically available tools with their
+    names, descriptions, and input schemas."""
+    _log = log.logger("discover_dynamic_tools")
+    overrides = {}
+    try:
+        if isinstance((token := get_access_token()), AccessToken):
+            overrides["dremio.pat"] = token.token
+    except (ImportError, LookupError, AttributeError):
+        pass
+    if project_id := tools.ProjectIdMiddleware.get_project_id():
+        overrides["dremio.project_id"] = project_id
+
+    pid = None
+    if dremio := settings.instance().dremio:
+        pid = dremio.project_id
+    invocation_counter.labels(project_id=pid, tool="discover_dynamic_tools").inc()
+
+    async def _invoke():
+        return await ai_tools.list_tools()
+
+    try:
+        with invocation_duration.labels(
+            project_id=pid, tool="discover_dynamic_tools"
+        ).time():
+            if overrides:
+                result = await settings.run_with(_invoke, overrides, [], {})
+            else:
+                result = await _invoke()
+        return json.dumps(result)
+    except Exception as exc:
+        _log.warning(f"Failed to discover dynamic tools from Dremio: {exc}")
+        return (
+            f"Failed to discover dynamic tools from Dremio: {exc}. "
+            "The Dremio instance may be unreachable or may not support dynamic tools."
+        )
+
+
+async def _call_dynamic_tool_handler(tool_name: str, tool_arguments: str) -> str:
+    """Invoke a dynamically discovered tool on the Dremio server."""
+    _log = log.logger("call_dynamic_tool")
+
+    try:
+        args = json.loads(tool_arguments)
+    except json.JSONDecodeError as exc:
+        return f"Invalid JSON in tool_arguments: {exc}"
+
+    overrides = {}
+    try:
+        if isinstance((token := get_access_token()), AccessToken):
+            overrides["dremio.pat"] = token.token
+    except (ImportError, LookupError, AttributeError):
+        pass
+    if project_id := tools.ProjectIdMiddleware.get_project_id():
+        overrides["dremio.project_id"] = project_id
+
+    pid = None
+    if dremio := settings.instance().dremio:
+        pid = dremio.project_id
+    invocation_counter.labels(project_id=pid, tool=f"call_dynamic_tool:{tool_name}").inc()
+
+    async def _invoke():
+        result = await ai_tools.invoke_tool(tool_name, args)
+        if not result:
+            return {"result": None}
+        return result
+
+    try:
+        with invocation_duration.labels(
+            project_id=pid, tool=f"call_dynamic_tool:{tool_name}"
+        ).time():
+            if overrides:
+                result = await settings.run_with(_invoke, overrides, [], {})
+            else:
+                result = await _invoke()
+        return json.dumps(result)
+    except Exception as exc:
+        _log.warning(f"Failed to invoke dynamic tool '{tool_name}': {exc}")
+        return f"Failed to invoke dynamic tool '{tool_name}': {exc}"
+
+
 def init(
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
     transport: Transports = Transports.stdio,
@@ -310,6 +395,24 @@ def init(
                 readOnlyHint=not (is_sql_tool and allow_dml),
                 destructiveHint=bool(is_sql_tool and allow_dml),
             ),
+        )
+
+    if settings.instance().tools and settings.instance().tools.enable_remote_tools:
+        mcp.add_tool(
+            make_logged_invoke(
+                "discover_dynamic_tools", _discover_dynamic_tools_handler
+            ),
+            name="discover_dynamic_tools",
+            description=_discover_dynamic_tools_handler.__doc__,
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+        mcp.add_tool(
+            make_logged_invoke(
+                "call_dynamic_tool", _call_dynamic_tool_handler
+            ),
+            name="call_dynamic_tool",
+            description=_call_dynamic_tool_handler.__doc__,
+            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
         )
 
     for resource in tools.get_resources(For=mode):
@@ -399,163 +502,9 @@ async def _log_level_refresh_loop():
             _log.debug(f"Log level refresh failed: {e}")
 
 
-def _make_remote_handler(tool_name: str, description: str, input_schema: Dict[str, Any]):
-    import inspect
-
-    # Map JSON schema types to Python annotations
-    _JSON_TYPE_MAP = {
-        "string": str,
-        "integer": int,
-        "number": float,
-        "boolean": bool,
-        "array": list,
-        "object": dict,
-    }
-
-    properties = input_schema.get("properties", {})
-    required = set(input_schema.get("required", []))
-
-    # Build inspect.Parameter list from schema properties
-    params = []
-    for pname, pdef in properties.items():
-        annotation = _JSON_TYPE_MAP.get(pdef.get("type", "string"), Any)
-        default = inspect.Parameter.empty if pname in required else None
-        params.append(
-            inspect.Parameter(
-                pname,
-                inspect.Parameter.KEYWORD_ONLY,
-                default=default,
-                annotation=annotation,
-            )
-        )
-
-    # The actual implementation that proxies to invoke_tool
-    async def _handler_impl(**kwargs):
-        overrides = {}
-        try:
-            from mcp.server.auth.middleware.auth_context import get_access_token
-            from mcp.server.auth.provider import AccessToken
-
-            if isinstance((token := get_access_token()), AccessToken):
-                overrides["dremio.pat"] = token.token
-        except (ImportError, LookupError, AttributeError):
-            pass
-
-        if project_id := tools.ProjectIdMiddleware.get_project_id():
-            overrides["dremio.project_id"] = project_id
-
-        from dremioai.metrics.tool_metrics import (
-            invocation_counter,
-            invocation_duration,
-        )
-
-        pid = None
-        if dremio := settings.instance().dremio:
-            pid = dremio.project_id
-        invocation_counter.labels(project_id=pid, tool=tool_name).inc()
-
-        async def _invoke():
-            result = await ai_tools.invoke_tool(tool_name, kwargs)
-            # invoke_tool returns response.model_dump(exclude_none=True),
-            # which yields {} for void tools (result=None, error=None).
-            # Return a minimal success indicator so the caller doesn't
-            # silently receive an empty dict.
-            if not result:
-                return {"result": None}
-            return result
-
-        with invocation_duration.labels(project_id=pid, tool=tool_name).time():
-            if overrides:
-                return await settings.run_with(_invoke, overrides, [], {})
-            return await _invoke()
-
-    # Replace the signature so FastMCP sees proper parameters
-    _handler_impl.__signature__ = inspect.Signature(params)
-    _handler_impl.__doc__ = description
-    _handler_impl.__name__ = tool_name
-    _handler_impl.__qualname__ = tool_name
-
-    return _handler_impl
-
-
-_REMOTE_TOOLS_DISCOVERY_TIMEOUT = 30  # seconds
-
-
-async def _register_remote_tools(mcp: FastMCP):
-    """Dynamically register tools from Dremio's Java-side tool registry.
-
-    - Soft-fails: if list_tools() errors (e.g. Dremio unreachable), the server
-      continues with only static tools.
-    - Applies a timeout to the discovery call so an unreachable Dremio instance
-      does not stall server startup indefinitely.
-    - Skips naming conflicts: any remote tool whose name matches an already-
-      registered static Python tool is ignored (with a warning).
-    - Applies auth passthrough (PAT / project-id) and Prometheus metrics to
-      each proxied handler.
-
-    Note: tools are fetched **once** at server startup.  If the Java-side
-    registry changes (tools added / removed / signatures updated) the MCP
-    server must be restarted to pick up the changes.
-    """
-    _log = log.logger("remote_tools")
-    try:
-        remote_tools = await asyncio.wait_for(
-            ai_tools.list_tools(),
-            timeout=_REMOTE_TOOLS_DISCOVERY_TIMEOUT,
-        )
-    except asyncio.TimeoutError:
-        _log.warning(
-            f"Remote tool discovery timed out after "
-            f"{_REMOTE_TOOLS_DISCOVERY_TIMEOUT}s — continuing with static tools only"
-        )
-        return
-    except Exception as e:
-        _log.warning(
-            f"Failed to discover remote tools from Dremio — "
-            f"continuing with static tools only: {e}"
-        )
-        return
-
-    # Collect names of already-registered static tools
-    existing_tools = {t.name for t in await mcp.list_tools()}
-
-    registered = 0
-    for tool_def in remote_tools:
-        name = tool_def["name"]
-        if name in existing_tools:
-            _log.warning(
-                f"Remote tool '{name}' conflicts with an existing static tool — skipping"
-            )
-            continue
-
-        description = tool_def.get("description", name)
-
-        # Build a proxy handler with auth passthrough and metrics.
-        handler = _make_remote_handler(
-            name,
-            description,
-            tool_def.get("input_schema", {"type": "object"}),
-        )
-        mcp.add_tool(
-            handler,
-            name=name,
-            description=description,
-        )
-        registered += 1
-
-    _log.info(f"Registered {registered} remote tool(s) from Dremio")
-
-
 @contextlib.asynccontextmanager
 async def _server_lifespan(app: FastMCP):
     """Lifespan context manager that runs background tasks alongside the server."""
-    # Dynamically register remote tools if enabled
-    if (
-        settings.instance().tools
-        and settings.instance().tools.enable_remote_tools
-    ):
-        await _register_remote_tools(app)
-
     task = asyncio.create_task(_log_level_refresh_loop())
     try:
         yield
