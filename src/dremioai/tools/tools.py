@@ -57,6 +57,7 @@ from sqlglot import expressions
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
+from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
 
@@ -149,6 +150,7 @@ class ProjectIdMiddleware(BaseHTTPMiddleware):
         )
         if m := ProjectIdMiddleware.pat.search(request.url.path):
             ProjectIdMiddleware.project_id_context.set(m.group(1))
+            FeatureFlagManager.set_project_id(m.group(1))
         else:
             ProjectIdMiddleware.logger.debug(
                 f"Path {request.url.path} ({request.url!r}) doesn't match"
@@ -350,12 +352,13 @@ class RunSqlQuery(Tools):
     @secured
     @with_metrics
     async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
-        """Run a SELECT sql query on the Dremio cluster and return the results.
-        Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes
-        You are premitted to run only SELECT queries. No DML statements are allowed.
+        """Run a SQL query on the Dremio cluster and return the results.
+        Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
+        DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
+        If a DML query is not allowed, this will return an error.
 
         Args:
-            query: sql query
+        query: sql query
         """
         try:
             RunSqlQuery.ensure_query_allowed(query)

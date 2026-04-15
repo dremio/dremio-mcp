@@ -47,7 +47,9 @@ def _make_settings(launchdarkly=None, **dremio_overrides):
 def _make_mock_ld_client(flag_values: dict):
     mock_client = MagicMock()
     mock_client.is_initialized.return_value = True
-    mock_client.variation.side_effect = lambda key, ctx, default: flag_values.get(key, default)
+    mock_client.variation.side_effect = lambda key, ctx, default: flag_values.get(
+        key, default
+    )
     return mock_client
 
 
@@ -66,10 +68,13 @@ def test_ffm_initialization_with_sdk_key(mock_ldclient):
     assert mgr.is_enabled() is True
 
 
-@pytest.mark.parametrize("flags,key,default,expected", [
-    pytest.param({"my_flag": True}, "my_flag", False, True, id="found"),
-    pytest.param({}, "unknown_flag", "fallback", "fallback", id="not_found"),
-])
+@pytest.mark.parametrize(
+    "flags,key,default,expected",
+    [
+        pytest.param({"my_flag": True}, "my_flag", False, True, id="found"),
+        pytest.param({}, "unknown_flag", "fallback", "fallback", id="not_found"),
+    ],
+)
 @patch("dremioai.config.feature_flags.ldclient")
 def test_ffm_get_flag(mock_ldclient, flags, key, default, expected):
     mock_ldclient.get.return_value = _make_mock_ld_client(flags)
@@ -148,11 +153,14 @@ def test_get_returns_project_id_property():
     assert cfg.dremio.get("project_id") == pid
 
 
-@pytest.mark.parametrize("accessor,field", [
-    pytest.param(lambda c: c.dremio, "nonexistent", id="dremio"),
-    pytest.param(lambda c: c, "bogus", id="settings"),
-    pytest.param(lambda c: c.dremio.api, "missing", id="submodel"),
-])
+@pytest.mark.parametrize(
+    "accessor,field",
+    [
+        pytest.param(lambda c: c.dremio, "nonexistent", id="dremio"),
+        pytest.param(lambda c: c, "bogus", id="settings"),
+        pytest.param(lambda c: c.dremio.api, "missing", id="submodel"),
+    ],
+)
 def test_get_raises_attribute_error(accessor, field):
     cfg = _make_settings()
     with pytest.raises(AttributeError):
@@ -162,29 +170,62 @@ def test_get_raises_attribute_error(accessor, field):
 # -- Flag prefix propagation --------------------------------------------------
 
 
-@pytest.mark.parametrize("accessor,expected,overrides", [
-    pytest.param(lambda c: c.dremio, "dremio", {}, id="dremio"),
-    pytest.param(lambda c: c.dremio.api, "dremio.api", {}, id="api"),
-    pytest.param(lambda c: c.dremio.api.http_retry, "dremio.api.http_retry", {}, id="http_retry"),
-    pytest.param(lambda c: c.dremio.wlm, "dremio.wlm", {"wlm": {"engine_name": "test"}}, id="wlm"),
-    pytest.param(lambda c: c.dremio.metrics, "dremio.metrics", {"metrics": {"enabled": True, "port": 9091}}, id="metrics"),
-])
+@pytest.mark.parametrize(
+    "accessor,expected,overrides",
+    [
+        pytest.param(lambda c: c.dremio, "dremio", {}, id="dremio"),
+        pytest.param(lambda c: c.dremio.api, "dremio.api", {}, id="api"),
+        pytest.param(
+            lambda c: c.dremio.api.http_retry,
+            "dremio.api.http_retry",
+            {},
+            id="http_retry",
+        ),
+        pytest.param(
+            lambda c: c.dremio.wlm,
+            "dremio.wlm",
+            {"wlm": {"engine_name": "test"}},
+            id="wlm",
+        ),
+        pytest.param(
+            lambda c: c.dremio.metrics,
+            "dremio.metrics",
+            {"metrics": {"enabled": True, "port": 9091}},
+            id="metrics",
+        ),
+    ],
+)
 def test_flag_prefix_propagation(accessor, expected, overrides):
     cfg = _make_settings(**overrides)
     assert accessor(cfg)._flag_prefix == expected
 
 
-
 # -- FlagAwareMixin.get() with LD overrides -----------------------------------
 
 
-@pytest.mark.parametrize("flag_key,flag_val,field,config_val,expected", [
-    pytest.param("dremio.allow_dml", True, "allow_dml", False, True, id="allow_dml_on"),
-    pytest.param("dremio.enable_search", True, "enable_search", False, True, id="enable_search_on"),
-    pytest.param("dremio.allow_dml", False, "allow_dml", True, False, id="allow_dml_off"),
-])
+@pytest.mark.parametrize(
+    "flag_key,flag_val,field,config_val,expected",
+    [
+        pytest.param(
+            "dremio.allow_dml", True, "allow_dml", False, True, id="allow_dml_on"
+        ),
+        pytest.param(
+            "dremio.enable_search",
+            True,
+            "enable_search",
+            False,
+            True,
+            id="enable_search_on",
+        ),
+        pytest.param(
+            "dremio.allow_dml", False, "allow_dml", True, False, id="allow_dml_off"
+        ),
+    ],
+)
 @patch("dremioai.config.feature_flags.ldclient")
-def test_ld_overrides_dremio_field(mock_ldclient, flag_key, flag_val, field, config_val, expected):
+def test_ld_overrides_dremio_field(
+    mock_ldclient, flag_key, flag_val, field, config_val, expected
+):
     mock_client = _make_mock_ld_client({flag_key: flag_val})
     mock_ldclient.get.return_value = mock_client
 
@@ -215,14 +256,51 @@ def test_get_without_ld_returns_field_default():
 # -- LD overrides on nested sub-models ----------------------------------------
 
 
-@pytest.mark.parametrize("flag_key,flag_val,accessor,field,extra,expected", [
-    pytest.param("dremio.api.polling_interval", 5.0, lambda c: c.dremio.api, "polling_interval", {}, 5.0, id="api_polling"),
-    pytest.param("dremio.api.http_retry.max_retries", 50, lambda c: c.dremio.api.http_retry, "max_retries", {}, 50, id="http_retry"),
-    pytest.param("dremio.metrics.enabled", False, lambda c: c.dremio.metrics, "enabled", {"metrics": {"enabled": True, "port": 9091}}, False, id="metrics"),
-    pytest.param("dremio.wlm.engine_name", "override-engine", lambda c: c.dremio.wlm, "engine_name", {"wlm": {"engine_name": "default-engine"}}, "override-engine", id="wlm"),
-])
+@pytest.mark.parametrize(
+    "flag_key,flag_val,accessor,field,extra,expected",
+    [
+        pytest.param(
+            "dremio.api.polling_interval",
+            5.0,
+            lambda c: c.dremio.api,
+            "polling_interval",
+            {},
+            5.0,
+            id="api_polling",
+        ),
+        pytest.param(
+            "dremio.api.http_retry.max_retries",
+            50,
+            lambda c: c.dremio.api.http_retry,
+            "max_retries",
+            {},
+            50,
+            id="http_retry",
+        ),
+        pytest.param(
+            "dremio.metrics.enabled",
+            False,
+            lambda c: c.dremio.metrics,
+            "enabled",
+            {"metrics": {"enabled": True, "port": 9091}},
+            False,
+            id="metrics",
+        ),
+        pytest.param(
+            "dremio.wlm.engine_name",
+            "override-engine",
+            lambda c: c.dremio.wlm,
+            "engine_name",
+            {"wlm": {"engine_name": "default-engine"}},
+            "override-engine",
+            id="wlm",
+        ),
+    ],
+)
 @patch("dremioai.config.feature_flags.ldclient")
-def test_ld_overrides_submodel(mock_ldclient, flag_key, flag_val, accessor, field, extra, expected):
+def test_ld_overrides_submodel(
+    mock_ldclient, flag_key, flag_val, accessor, field, extra, expected
+):
     mock_client = _make_mock_ld_client({flag_key: flag_val})
     mock_ldclient.get.return_value = mock_client
 
@@ -245,10 +323,12 @@ def test_ld_submodel_falls_back_when_flag_not_in_ld(mock_ldclient):
 
 @patch("dremioai.config.feature_flags.ldclient")
 def test_ld_overrides_both_dremio_flags(mock_ldclient):
-    mock_client = _make_mock_ld_client({
-        "dremio.allow_dml": True,
-        "dremio.enable_search": True,
-    })
+    mock_client = _make_mock_ld_client(
+        {
+            "dremio.allow_dml": True,
+            "dremio.enable_search": True,
+        }
+    )
     mock_ldclient.get.return_value = mock_client
 
     cfg = _make_settings(
@@ -262,10 +342,12 @@ def test_ld_overrides_both_dremio_flags(mock_ldclient):
 
 @patch("dremioai.config.feature_flags.ldclient")
 def test_ld_mixed_dremio_and_submodel_overrides(mock_ldclient):
-    mock_client = _make_mock_ld_client({
-        "dremio.allow_dml": True,
-        "dremio.api.polling_interval": 10.0,
-    })
+    mock_client = _make_mock_ld_client(
+        {
+            "dremio.allow_dml": True,
+            "dremio.api.polling_interval": 10.0,
+        }
+    )
     mock_ldclient.get.return_value = mock_client
 
     cfg = _make_settings(
@@ -293,11 +375,14 @@ def test_ld_partial_override_one_flag_only(mock_ldclient):
 # -- LaunchDarkly config model -------------------------------------------------
 
 
-@pytest.mark.parametrize("ld_config,expected", [
-    pytest.param(None, False, id="default"),
-    pytest.param({}, False, id="no_sdk_key"),
-    pytest.param({"sdk_key": "test-key"}, True, id="with_sdk_key"),
-])
+@pytest.mark.parametrize(
+    "ld_config,expected",
+    [
+        pytest.param(None, False, id="default"),
+        pytest.param({}, False, id="no_sdk_key"),
+        pytest.param({"sdk_key": "test-key"}, True, id="with_sdk_key"),
+    ],
+)
 def test_ld_enabled_state(ld_config, expected):
     cfg = _make_settings(launchdarkly=ld_config)
     assert cfg.launchdarkly.enabled is expected
@@ -314,12 +399,14 @@ def test_ld_sdk_key_from_file(tmp_path):
 def test_ld_sdk_key_from_env(monkeypatch):
     monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", "env-sdk-key")
 
-    cfg = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
+    cfg = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+            }
         }
-    })
+    )
     assert cfg.launchdarkly.sdk_key == "env-sdk-key"
 
 
@@ -480,9 +567,9 @@ def test_flag_keys_match_golden():
     golden_path = Path(__file__).parent / "golden_flag_keys.yaml"
     golden = safe_load(golden_path.read_text())["flag_keys"]
     actual = settings.collect_flag_keys(settings.Settings)
-    assert actual == golden, (
-        "Flag keys changed! If intentional, run: uv run python scripts/generate_flag_keys.py --write"
-    )
+    assert (
+        actual == golden
+    ), "Flag keys changed! If intentional, run: uv run python scripts/generate_flag_keys.py --write"
 
 
 # -- Periodic log level refresh -----------------------------------------------
@@ -491,7 +578,10 @@ def test_flag_keys_match_golden():
 @pytest.mark.asyncio
 async def test_log_level_refresh_updates_level():
     """Periodic refresh picks up LD log_level changes and updates logging."""
-    from dremioai.servers.mcp import _log_level_refresh_loop, _LOG_LEVEL_REFRESH_INTERVAL
+    from dremioai.servers.mcp import (
+        _log_level_refresh_loop,
+        _LOG_LEVEL_REFRESH_INTERVAL,
+    )
     from dremioai import log
 
     _make_settings()
@@ -531,8 +621,10 @@ async def test_log_level_refresh_no_change_when_same():
 
     _make_settings()
 
-    with patch("dremioai.servers.mcp._LOG_LEVEL_REFRESH_INTERVAL", 0), \
-         patch.object(log, "set_level") as mock_set_level:
+    with (
+        patch("dremioai.servers.mcp._LOG_LEVEL_REFRESH_INTERVAL", 0),
+        patch.object(log, "set_level") as mock_set_level,
+    ):
         task = asyncio.create_task(_log_level_refresh_loop())
         await asyncio.sleep(0.05)
         task.cancel()
@@ -543,3 +635,170 @@ async def test_log_level_refresh_no_change_when_same():
 
     # log_level defaults to INFO, which is already the current level
     mock_set_level.assert_not_called()
+
+
+# -- _build_context -----------------------------------------------------------
+
+
+def test_build_context_no_project_no_org():
+    """Without project/org, falls back to single 'mcp-server' context."""
+    mgr = FeatureFlagManager(None)
+    ctx = mgr._build_context()
+    assert ctx.key == "mcp-server"
+    assert ctx.multiple is False
+
+
+def test_build_context_with_project_id():
+    """With project_id, builds a multi-context including projectId kind."""
+    from dremioai.config.feature_flags import LDContextKind
+
+    pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    FeatureFlagManager.set_project_id(pid)
+    try:
+        mgr = FeatureFlagManager(None)
+        ctx = mgr._build_context()
+        assert ctx.multiple is True
+        assert ctx.get_individual_context(LDContextKind.PROJECT) is not None
+        assert ctx.get_individual_context(LDContextKind.PROJECT).key == pid
+        assert ctx.get_individual_context(LDContextKind.APPLICATION).key == "mcp-server"
+    finally:
+        FeatureFlagManager.set_project_id(None)
+
+
+def test_build_context_with_org_id():
+    """With org_id, builds a multi-context including orgId kind."""
+    from dremioai.config.feature_flags import LDContextKind
+
+    FeatureFlagManager.set_org_id("org-456")
+    try:
+        mgr = FeatureFlagManager(None)
+        ctx = mgr._build_context()
+        assert ctx.multiple is True
+        assert ctx.get_individual_context(LDContextKind.ORGANIZATION) is not None
+        assert ctx.get_individual_context(LDContextKind.ORGANIZATION).key == "org-456"
+    finally:
+        FeatureFlagManager.set_org_id(None)
+
+
+def test_build_context_with_both():
+    """With both project_id and org_id, builds a 3-kind multi-context."""
+    from dremioai.config.feature_flags import LDContextKind
+
+    pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    FeatureFlagManager.set_project_id(pid)
+    FeatureFlagManager.set_org_id("org-789")
+    try:
+        mgr = FeatureFlagManager(None)
+        ctx = mgr._build_context()
+        assert ctx.multiple is True
+        assert ctx.get_individual_context(LDContextKind.APPLICATION).key == "mcp-server"
+        assert ctx.get_individual_context(LDContextKind.PROJECT).key == pid
+        assert ctx.get_individual_context(LDContextKind.ORGANIZATION).key == "org-789"
+    finally:
+        FeatureFlagManager.set_project_id(None)
+        FeatureFlagManager.set_org_id(None)
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_build_context_passed_to_variation(mock_ldclient):
+    """get_flag passes the built context to LD variation call."""
+    mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
+    mock_ldclient.get.return_value = mock_client
+    # Keep real Context accessible for _build_context
+    import ldclient as real_ldclient
+
+    mock_ldclient.Context = real_ldclient.Context
+
+    pid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    FeatureFlagManager.set_project_id(pid)
+    try:
+        _make_settings(launchdarkly={"sdk_key": "test-key"})
+        mgr = FeatureFlagManager.instance()
+        mgr.get_flag("dremio.allow_dml", False)
+        # Verify variation was called with a multi-context, not the old single context
+        call_args = mock_client.variation.call_args
+        ctx = call_args[0][1]
+        assert ctx.multiple is True
+    finally:
+        FeatureFlagManager.set_project_id(None)
+
+
+# -- JWT aud extraction --------------------------------------------------------
+
+
+def test_extract_jwt_aud():
+    """DelegatingTokenVerifier extracts aud from a JWT payload."""
+    import base64, json
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    header = (
+        base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps({"sub": "user-1", "aud": "org-abc-123"}).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
+    sig = "fakesig"
+    token = f"{header}.{payload}.{sig}"
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier.extract_jwt_aud(token)
+    assert result == "org-abc-123"
+
+
+def test_extract_jwt_aud_list():
+    """Extracts first element when aud is a list."""
+    import base64, json
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    header = (
+        base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps({"sub": "user-1", "aud": ["org-first", "org-second"]}).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
+    token = f"{header}.{payload}.fakesig"
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier.extract_jwt_aud(token)
+    assert result == "org-first"
+
+
+def test_extract_jwt_aud_missing():
+    """Returns None when aud claim is missing."""
+    import base64, json
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    header = (
+        base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"sub": "user-1"}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    token = f"{header}.{payload}.fakesig"
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier.extract_jwt_aud(token)
+    assert result is None
+
+
+def test_extract_jwt_aud_opaque_token():
+    """Returns None for non-JWT (opaque) tokens."""
+    from dremioai.servers.mcp import FastMCPServerWithAuthToken
+
+    result = FastMCPServerWithAuthToken.DelegatingTokenVerifier.extract_jwt_aud(
+        "opaque-token-abc123"
+    )
+    assert result is None

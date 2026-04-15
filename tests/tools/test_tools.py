@@ -137,6 +137,11 @@ SELECT * FROM employee_hierarchy ORDER BY level, name;""",
         "comment": "Recursive CTE for hierarchical data traversal",
     },
     {
+        "sql": "CREATE TABLE \"temp\".tbl AS SELECT 1;",
+        "allowed": False,
+        "comment": "Simple CREATE TABLE AS SELECT query",
+    },
+    {
         "sql": "INSERT INTO users (name, email, age, active) VALUES ('John Doe', 'john@example.com', 30, true);",
         "allowed": False,
         "comment": "Simple INSERT statement with single row",

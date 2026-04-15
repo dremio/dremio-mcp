@@ -60,18 +60,52 @@ from json import load, dump as jdump
 from shutil import which
 import asyncio
 import contextlib
-from yaml import dump
+import logging
+import os
 import sys
-import uvicorn
 import threading
+import time
+from enum import StrEnum, auto
+from functools import reduce, wraps
+from json import dump as jdump
+from json import load
+from operator import ior
+from pathlib import Path
+from shutil import which
+from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
 
+import jwt
+import uvicorn
+from click import Choice
+from mcp.cli.claude import get_claude_config_path
+from mcp.server.auth.json_response import PydanticJSONResponse
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.prompts import Prompt
+from mcp.server.fastmcp.resources import FunctionResource
+from mcp.types import ToolAnnotations
+from pydantic import AnyHttpUrl
+from pydantic.networks import AnyUrl
+from rich import console, table
+from rich import print as pp
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import Response
 from starlette.responses import Response as StarletteResponse
+from typer import Argument, BadParameter, Option, Typer
+from yaml import dump
 
+from dremioai import log
+from dremioai.api.oauth2 import get_oauth2_tokens
+from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
+from dremioai.config import settings
+from dremioai.config.feature_flags import FeatureFlagManager
+from dremioai.metrics.registry import get_metrics_app
+from dremioai.servers.jwks_verifier import JWKSVerifier, TokenExpiredError
+from dremioai.tools import tools
 from dremioai.tools.tools import ProjectIdMiddleware
 
 
@@ -82,6 +116,8 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
     so that request.user is available.
     """
 
+    logger = log.logger("RequireAuthWithWWWAuthenticateMiddleware")
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         # Check if user is authenticated (request.user is available after AuthenticationMiddleware)
         if (
@@ -89,6 +125,14 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
             or not request.user.is_authenticated
             and request.url.path.startswith("/mcp")
         ):
+            client_host = request.client.host if request.client else "unknown"
+            self.logger.warning(
+                "Unauthorized request rejected",
+                path=request.url.path,
+                client=client_host,
+                project_id=ProjectIdMiddleware.get_project_id(),
+                endpoint=str(settings.instance().dremio.uri),
+            )
             # Return 401 with WWW-Authenticate header
             return StarletteResponse(
                 content="Unauthorized",
@@ -107,16 +151,90 @@ class Transports(StrEnum):
 
 class FastMCPServerWithAuthToken(FastMCP):
     class DelegatingTokenVerifier(TokenVerifier):
-        async def verify_token(self, token: str) -> AccessToken | None:
-            if token:
-                return AccessToken(
-                    token=token,  # Include the token itself
-                    client_id="unused-client",
-                    scopes=["read"],
+        logger = log.logger("DelegatingTokenVerifier")
+
+        def __init__(self):
+            self._jwks_verifier = None
+            dremio = settings.instance().dremio
+            if jwks_uri := dremio.get("jwks_uri"):
+                lifespan = dremio.get("jwks_cache_lifespan") or 3600
+                self._jwks_verifier = JWKSVerifier(jwks_uri, lifespan=lifespan)
+
+        @staticmethod
+        def extract_jwt_aud(token: str) -> str | None:
+            """Extract aud from a JWT without signature verification.
+
+            Used only when ``jwks_uri`` is not configured but
+            ``extract_org_id_from_jwt`` is enabled.
+            """
+            try:
+                claims = jwt.decode(token, options={"verify_signature": False})
+                aud = claims.get("aud")
+                return aud[0] if isinstance(aud, list) else aud
+            except:
+                FastMCPServerWithAuthToken.DelegatingTokenVerifier.logger.exception(
+                    f"Failed to extract org_id from JWT: token={len(token)} bytes"
                 )
-            else:
-                log.logger("verify_token").info(f"Token not provided")
                 return None
+
+        async def verify_token(self, token: str) -> AccessToken | None:
+            if not token:
+                self.logger.info("Token not provided")
+                return None
+
+            expires_at = org_id = user_id = None
+            if isinstance(self._jwks_verifier, JWKSVerifier):
+                try:
+                    verified = await self._jwks_verifier.verify(token)
+                except TokenExpiredError:
+                    self.logger.warning(
+                        "Token rejected — JWT has expired",
+                        project_id=ProjectIdMiddleware.get_project_id(),
+                    )
+                    return None
+                if verified:
+                    buffer = settings.instance().dremio.get(
+                        "jwks_token_expiry_buffer_secs"
+                    )
+                    # Subtract the buffer so BearerAuthBackend's
+                    # `if auth_info.expires_at and expires_at < time.time()` guard
+                    # fires this many seconds before Auth0 considers the token expired,
+                    # giving the client's OAuth refresh flow a clean window.
+                    expires_at = (
+                        (verified.exp - buffer) if verified.exp is not None else None
+                    )
+                    org_id = verified.org_id
+                    user_id = verified.user_id
+                    # The actual expiry guard runs in BearerAuthBackend, but we
+                    # return None early here so we can log the rejection with
+                    # context (project_id, user_id) before it disappears silently.
+                    if expires_at is not None and expires_at < int(time.time()):
+                        self.logger.warning(
+                            "Token rejected — past expiry buffer window",
+                            project_id=ProjectIdMiddleware.get_project_id(),
+                            user_id=user_id,
+                        )
+                        return None
+                else:
+                    self.logger.warning(
+                        "JWKS verify() returned None — rejecting token to force reauth",
+                        project_id=ProjectIdMiddleware.get_project_id(),
+                    )
+                    return None
+            elif settings.instance().dremio.get("extract_org_id_from_jwt"):
+                org_id = self.extract_jwt_aud(token)
+
+            if org_id is not None and settings.instance().dremio.get(
+                "extract_org_id_from_jwt"
+            ):
+                FeatureFlagManager.set_org_id(org_id)
+
+            return AccessToken(
+                token=token,
+                client_id=user_id or "unknown",
+                scopes=["read"],
+                expires_at=expires_at,
+            )
 
     def streamable_http_app(self):
         token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
@@ -139,6 +257,24 @@ class FastMCPServerWithAuthToken(FastMCP):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.support_project_id_endpoints = False
+
+
+def make_logged_invoke(tool_name: str, fn):
+    _log = log.logger("tool_invoke")
+
+    @wraps(fn)
+    async def _wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as exc:
+            _log.warning(
+                "Tool invocation raised an exception",
+                tool=tool_name,
+                error=str(exc),
+            )
+            raise
+
+    return _wrapper
 
 
 def init(
@@ -167,7 +303,7 @@ def init(
         tool_instance = tool()
         is_sql_tool = tool is tools.RunSqlQuery
         mcp.add_tool(
-            tool_instance.invoke,
+            make_logged_invoke(tool.__name__, tool_instance.invoke),
             name=tool.__name__,
             description=tool_instance.invoke.__doc__,
             annotations=ToolAnnotations(
@@ -193,13 +329,17 @@ def init(
     )
 
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+    @mcp.custom_route(
+        "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
+    )
     async def authorization_server_metadata(request: Request) -> Response:
         if issuer := settings.instance().dremio.auth_issuer_uri:
-            auth, tok = settings.instance().dremio.auth_endpoints
+            auth, tok, reg = settings.instance().dremio.auth_endpoints
             md = OAuthMetadataRFC8414(
                 issuer=AnyHttpUrl(issuer),
                 authorization_endpoint=auth,
                 token_endpoint=tok,
+                registration_endpoint=AnyHttpUrl(reg),
                 scopes_supported=["dremio.all", "offline_access"],
                 response_types_supported=["code"],
                 grant_types_supported=["authorization_code", "refresh_token"],
@@ -628,7 +768,7 @@ def create_default_config(
     uri: Annotated[
         str,
         Option(
-            help=f"The Dremio URL or shorthand for Dremio Cloud regions ({ ','.join(settings.DremioCloudUri)})"
+            help=f"The Dremio URL or shorthand for Dremio Cloud regions ({','.join(settings.DremioCloudUri)})"
         ),
     ],
     pat: Annotated[

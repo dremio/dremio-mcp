@@ -26,7 +26,7 @@ from pydantic import (
     field_serializer,
     AliasChoices,
 )
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
 from typing import (
     Optional,
     Union,
@@ -44,7 +44,7 @@ from typing import (
 from dremioai.config.tools import ToolType
 from enum import auto, StrEnum
 from pathlib import Path
-from yaml import safe_load, add_representer, dump
+from yaml import add_representer, dump
 from functools import reduce
 from operator import ior
 from shutil import which
@@ -252,7 +252,29 @@ class Dremio(FlagAwareModel):
     )
     oauth2: Optional[OAuth2] = None
     allow_dml: Optional[bool] = Field(default=False)
+    extract_org_id_from_jwt: Optional[bool] = Field(
+        default=False,
+        description="Extract org ID from JWT aud claim for LD context targeting",
+    )
     auth_issuer_uri_override: Optional[str] = None
+    jwks_uri: Optional[str] = Field(
+        default=None,
+        description="JWKS endpoint URL for JWT signature verification and expiry checking. "
+        "When set, the MCP server validates token expiry before tool execution "
+        "so expired tokens trigger HTTP 401 and the client's OAuth refresh flow. "
+        "Example: https://your-auth0-tenant.auth0.com/.well-known/jwks.json",
+    )
+    jwks_cache_lifespan: Optional[int] = Field(
+        default=3600,
+        description="How long (seconds) to cache JWKS keys before refetching. Default: 3600 (1 hour).",
+    )
+    jwks_token_expiry_buffer_secs: int = Field(
+        default=60,
+        description="Seconds to subtract from the JWT exp claim before passing it to AccessToken. "
+        "The MCP server rejects the token this many seconds before Auth0 considers it expired, "
+        "giving the client's OAuth refresh flow a clean window ahead of downstream API failures. "
+        "Settable via LaunchDarkly. Default: 60.",
+    )
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
@@ -308,11 +330,12 @@ class Dremio(FlagAwareModel):
         return None
 
     @property
-    def auth_endpoints(self) -> Optional[Tuple[str, str]]:
+    def auth_endpoints(self) -> Optional[Tuple[str, str, str]]:
         if issuer_uri := self.auth_issuer_uri:
             return (
                 f"{issuer_uri}/oauth/authorize",
                 f"{issuer_uri}/oauth/token",
+                f"{issuer_uri}/oauth/register",
             )
         return None
 
@@ -400,6 +423,23 @@ class Settings(FlagAwareMixin, BaseSettings):
         validate_assignment=True,
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            YamlConfigSettingsSource(settings_cls, yaml_file=_yaml_file),
+            file_secret_settings,
+        )
+
     def model_post_init(self, __context):
         _propagate_flag_prefixes(self, "")
         if self.launchdarkly and self.launchdarkly.sdk_key:
@@ -459,6 +499,10 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
     return sorted(keys)
 
 
+# Module-level holder so configure() can pass the YAML path to the Settings constructor
+_yaml_file: Path | None = None
+
+
 _settings: ContextVar[Settings] = ContextVar("settings", default=None)
 
 
@@ -498,9 +542,9 @@ def configure(cfg: Union[str, Path] = None, force=False) -> ContextVar[Settings]
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.touch()
 
-    with cfg.open() as f:
-        s = safe_load(f)
-        _settings.set(Settings.model_validate(s if s else {}))
+    global _yaml_file
+    _yaml_file = cfg
+    _settings.set(Settings())
 
     return _settings
 
