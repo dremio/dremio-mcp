@@ -192,7 +192,10 @@ class FastMCPServerWithAuthToken(FastMCP):
             )
 
     def streamable_http_app(self):
-        token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
+        if self._mock_token_verifier is not None:
+            token_verifier = self._mock_token_verifier
+        else:
+            token_verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
         app = super().streamable_http_app()
         app.add_middleware(RequireAuthWithWWWAuthenticateMiddleware)
         app.add_middleware(AuthContextMiddleware)
@@ -212,6 +215,17 @@ class FastMCPServerWithAuthToken(FastMCP):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.support_project_id_endpoints = False
+        self._mock_token_verifier = None
+
+
+def _make_mock_invoke(tool_class_name: str, original_doc: str):
+    """Create a mock invoke function that returns a canned response."""
+
+    async def mock_invoke(**kwargs):
+        return {"mock": True, "tool": tool_class_name, "result": []}
+
+    mock_invoke.__doc__ = original_doc
+    return mock_invoke
 
 
 def make_logged_invoke(tool_name: str, fn):
@@ -238,10 +252,13 @@ def init(
     port: int = None,
     host: str = "127.0.0.1",
     support_project_id_endpoints: bool = False,
+    mock: bool = False,
+    mock_token_expiry: int = 3600,
+    mock_refresh_token_expiry: int = 86400,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
-        f"Initializing MCP server with mode={mode}, class={mcp_cls.__name__}"
+        f"Initializing MCP server with mode={mode}, mock={mock}, class={mcp_cls.__name__}"
     )
     opts = {"log_level": "DEBUG", "debug": True, "lifespan": _server_lifespan}
     if port is not None:
@@ -252,13 +269,38 @@ def init(
     mcp = mcp_cls("Dremio", **opts)
     if transport == Transports.streamable_http and support_project_id_endpoints:
         mcp.support_project_id_endpoints = support_project_id_endpoints
+
+    # In mock mode, set up mock OAuth issuer and token verifier
+    if mock:
+        from dremioai.servers.mock_auth import (
+            MockJWTIssuer,
+            MockTokenVerifier,
+            register_mock_routes,
+        )
+
+        issuer_url = f"http://{host}:{port}" if port else f"http://{host}"
+        mock_issuer = MockJWTIssuer(
+            issuer_url=issuer_url,
+            default_expiry=mock_token_expiry,
+            refresh_token_expiry=mock_refresh_token_expiry,
+        )
+        if isinstance(mcp, FastMCPServerWithAuthToken):
+            mcp._mock_token_verifier = MockTokenVerifier(mock_issuer)
+        register_mock_routes(mcp, mock_issuer)
+
     mode = reduce(ior, mode) if mode is not None else None
-    allow_dml = settings.instance().dremio.get("allow_dml")
+    allow_dml = settings.instance().dremio.get("allow_dml") if not mock else False
     for tool in tools.get_tools(For=mode):
         tool_instance = tool()
         is_sql_tool = tool is tools.RunSqlQuery
+        if mock:
+            invoke_fn = _make_mock_invoke(
+                tool.__name__, tool_instance.invoke.__doc__
+            )
+        else:
+            invoke_fn = tool_instance.invoke
         mcp.add_tool(
-            make_logged_invoke(tool.__name__, tool_instance.invoke),
+            invoke_fn if mock else make_logged_invoke(tool.__name__, tool_instance.invoke),
             name=tool.__name__,
             description=tool_instance.invoke.__doc__,
             annotations=ToolAnnotations(
@@ -283,26 +325,28 @@ def init(
         Prompt.from_function(tools.system_prompt, "System Prompt", "System Prompt")
     )
 
-    @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
-    @mcp.custom_route(
-        "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
-    )
-    async def authorization_server_metadata(request: Request) -> Response:
-        if issuer := settings.instance().dremio.auth_issuer_uri:
-            auth, tok, reg = settings.instance().dremio.auth_endpoints
-            md = OAuthMetadataRFC8414(
-                issuer=AnyHttpUrl(issuer),
-                authorization_endpoint=auth,
-                token_endpoint=tok,
-                registration_endpoint=AnyHttpUrl(reg),
-                scopes_supported=["dremio.all", "offline_access"],
-                response_types_supported=["code"],
-                grant_types_supported=["authorization_code", "refresh_token"],
-                code_challenge_methods_supported=["S256"],
-                token_endpoint_auth_methods_supported=["none"],
-            )
-            return PydanticJSONResponse(md)
-        return Response(status_code=404)
+    if not mock:
+
+        @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+        @mcp.custom_route(
+            "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
+        )
+        async def authorization_server_metadata(request: Request) -> Response:
+            if issuer := settings.instance().dremio.auth_issuer_uri:
+                auth, tok, reg = settings.instance().dremio.auth_endpoints
+                md = OAuthMetadataRFC8414(
+                    issuer=AnyHttpUrl(issuer),
+                    authorization_endpoint=auth,
+                    token_endpoint=tok,
+                    registration_endpoint=AnyHttpUrl(reg),
+                    scopes_supported=["dremio.all", "offline_access"],
+                    response_types_supported=["code"],
+                    grant_types_supported=["authorization_code", "refresh_token"],
+                    code_challenge_methods_supported=["S256"],
+                    token_endpoint_auth_methods_supported=["none"],
+                )
+                return PydanticJSONResponse(md)
+            return Response(status_code=404)
 
     @mcp.custom_route("/healthz", methods=["GET"])
     async def health_check(_request: Request) -> Response:
@@ -417,41 +461,71 @@ def main(
         Optional[str],
         Option(help="Where uvicorn listens for requests"),
     ] = "127.0.0.1",
+    mock: Annotated[
+        Optional[bool],
+        Option(help="Run in mock mode for client sanity testing"),
+    ] = False,
+    mock_token_expiry: Annotated[
+        Optional[int],
+        Option(help="Mock mode: access token expiry in seconds"),
+    ] = 3600,
+    mock_refresh_token_expiry: Annotated[
+        Optional[int],
+        Option(help="Mock mode: refresh token expiry in seconds"),
+    ] = 86400,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
-    if enable_streaming_http:
-        transport = Transports.streamable_http
-    else:
-        transport = Transports.stdio
 
-    cfg = settings.configure(config_file).get()
-    dremio = settings.instance().dremio
-    if (
-        dremio.oauth_supported
-        and dremio.oauth_configured
-        and (dremio.oauth2.has_expired or dremio.pat is None)
-    ):
-        oauth = get_oauth2_tokens()
-        oauth.update_settings()
+    if mock:
+        transport = Transports.streamable_http
+        # In mock mode, create a minimal settings instance — no Dremio config needed
+        settings._settings.set(
+            settings.Settings.model_validate(
+                {
+                    "dremio": {
+                        "uri": "http://localhost:9047",
+                        "pat": "mock-pat",
+                    }
+                }
+            )
+        )
+    else:
+        if enable_streaming_http:
+            transport = Transports.streamable_http
+        else:
+            transport = Transports.stdio
+        cfg = settings.configure(config_file).get()
+        dremio = settings.instance().dremio
+        if (
+            dremio.oauth_supported
+            and dremio.oauth_configured
+            and (dremio.oauth2.has_expired or dremio.pat is None)
+        ):
+            oauth = get_oauth2_tokens()
+            oauth.update_settings()
 
     app = init(
-        mode=cfg.tools.server_mode,
+        mode=settings.instance().tools.server_mode,
         transport=transport,
         port=port,
         host=host,
         support_project_id_endpoints=True,
+        mock=mock,
+        mock_token_expiry=mock_token_expiry,
+        mock_refresh_token_expiry=mock_refresh_token_expiry,
     )
 
     # Create metrics server based on configuration
     metrics_server = None
     if (
-        settings.instance().dremio.prometheus_metrics_enabled
+        not mock
+        and settings.instance().dremio.prometheus_metrics_enabled
         and settings.instance().dremio.prometheus_metrics_port is not None
     ):
         metrics_server = create_metrics_server(
             host=host,
-            port=dremio.prometheus_metrics_port,
+            port=settings.instance().dremio.prometheus_metrics_port,
             log_level=log_level,
         )
 
