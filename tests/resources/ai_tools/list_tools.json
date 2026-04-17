@@ -1,0 +1,32 @@
+{
+  "tools": [
+    {
+      "name": "runSql",
+      "description": "runSql",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sqlText": { "type": "string" }
+        },
+        "required": ["sqlText"]
+      }
+    },
+    {
+      "name": "getTableOrViewSchema",
+      "description": "getTableOrViewSchema",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "array", "items": { "type": "string" } },
+          "includeExtendedInformation": { "type": "boolean" }
+        },
+        "required": ["path", "includeExtendedInformation"]
+      }
+    },
+    {
+      "name": "listEngines",
+      "description": "listEngines",
+      "inputSchema": { "type": "object" }
+    }
+  ]
+}

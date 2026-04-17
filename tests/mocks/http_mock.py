@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, TextIO, List, Coroutine, Callable
 from unittest.mock import MagicMock
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientResponseError
 from collections import OrderedDict
 
 from starlette.applications import Starlette
@@ -56,9 +56,14 @@ class MockResponse:
         return json.loads(self.data)
 
     def raise_for_status(self):
-        """Mock raise_for_status - only raises if status >= 400"""
+        """Mock raise_for_status - raises ClientResponseError if status >= 400"""
         if self.status >= 400:
-            raise Exception(f"HTTP {self.status}")
+            raise ClientResponseError(
+                request_info=self.request_info,
+                history=(),
+                status=self.status,
+                message=f"HTTP {self.status}",
+            )
 
     @property
     def content(self):
@@ -114,12 +119,12 @@ class HttpMockFramework:
             raise FileNotFoundError(f"Mock data file not found: {file_path}")
 
         with open(file_path, "r") as f:
-            self.mock_responses[endpoint] = f.read()
+            self.mock_responses[endpoint] = (f.read(), 200)
 
         return self
 
     def add_mock_response(
-        self, endpoint: str, response_data: Union[str, Dict]
+        self, endpoint: str, response_data: Union[str, Dict], status: int = 200
     ) -> "HttpMockFramework":
         """
         Add a mock response directly without loading from file
@@ -127,17 +132,18 @@ class HttpMockFramework:
         Args:
             endpoint: The API endpoint to mock
             response_data: The response data (string or dict that will be JSON serialized)
+            status: HTTP status code for the response (default: 200)
         """
         if isinstance(response_data, dict):
             response_data = json.dumps(response_data)
-        self.mock_responses[endpoint] = response_data
+        self.mock_responses[endpoint] = (response_data, status)
         return self
 
     def _get_mock_response(self, url: str, method: str = "GET") -> MockResponse:
         """Get mock response for a URL"""
-        for endpoint, data in self.mock_responses.items():
+        for endpoint, (body, status) in self.mock_responses.items():
             if re.search(endpoint, url):
-                return MockResponse(data)
+                return MockResponse(body, status=status)
 
         # Default response if no mock found
         return MockResponse('{"error": "No mock data found"}', status=404)
