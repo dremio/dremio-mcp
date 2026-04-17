@@ -44,7 +44,7 @@ import functools
 
 import pandas as pd
 import numpy as np
-from dremioai.api.dremio import sql, usage, search
+from dremioai.api.dremio import sql, usage, search, ai_tools
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.api.prometheus import vm
@@ -52,6 +52,7 @@ from dremioai.api.dremio.catalog import get_schema, get_lineage, get_description
 from dremioai.api.util import run_in_parallel
 from csv import reader
 from io import StringIO
+import json
 from sqlglot import parse_one
 from sqlglot import expressions
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -213,6 +214,7 @@ def _get_class_var_hints(tool: Tools, name: str) -> bool:
 
 get_for = lambda tool: _get_class_var_hints(tool, "For")
 get_project_id_required = lambda tool: _get_class_var_hints(tool, "project_id_required")
+get_requires_remote_tools = lambda tool: _get_class_var_hints(tool, "requires_remote_tools")
 
 
 def is_tool_for(
@@ -223,6 +225,11 @@ def is_tool_for(
 
     if project_id_required := get_project_id_required(tool):
         if dremio is not None and dremio.project_id is None:
+            return False
+
+    if get_requires_remote_tools(tool):
+        tool_settings = settings.instance().tools
+        if not (tool_settings and tool_settings.enable_remote_tools):
             return False
 
     if (For := get_for(tool)) is not None:
@@ -535,6 +542,58 @@ class SearchTableAndViews(Tools):
         )
         res = pd.concat(res)
         return {"results": res.to_dict(orient="records")}
+
+
+class DiscoverDynamicTools(Tools):
+    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
+    requires_remote_tools: ClassVar[Annotated[bool, True]]
+
+    @secured
+    @with_metrics
+    async def invoke(self) -> str:
+        """Discover additional tools available from the Dremio server.
+        Call this tool to get a list of dynamically available tools with their
+        names, descriptions, and input schemas."""
+        try:
+            result = await ai_tools.list_tools()
+            return json.dumps(result)
+        except Exception as exc:
+            logger.warning(f"Failed to discover dynamic tools from Dremio: {exc}")
+            return (
+                f"Failed to discover dynamic tools from Dremio: {exc}. "
+                "The Dremio instance may be unreachable or may not support dynamic tools."
+            )
+
+
+class CallDynamicTool(Tools):
+    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
+    requires_remote_tools: ClassVar[Annotated[bool, True]]
+
+    @secured
+    @with_metrics
+    async def invoke(self, tool_name: str, tool_arguments: Union[str, dict]) -> str:
+        """Invoke a dynamically discovered tool on the Dremio server.
+
+        Args:
+            tool_name: The name of the tool to invoke, as returned by DiscoverDynamicTools.
+            tool_arguments: The arguments to pass to the tool, either as a JSON string or a dict.
+        """
+        if isinstance(tool_arguments, dict):
+            args = tool_arguments
+        else:
+            try:
+                args = json.loads(tool_arguments)
+            except json.JSONDecodeError as exc:
+                return f"Invalid JSON in tool_arguments: {exc}"
+
+        try:
+            result = await ai_tools.invoke_tool(tool_name, args)
+            if not result:
+                return json.dumps({"result": None})
+            return json.dumps(result)
+        except Exception as exc:
+            logger.warning(f"Failed to invoke dynamic tool '{tool_name}': {exc}")
+            return f"Failed to invoke dynamic tool '{tool_name}': {exc}"
 
 
 def _subclasses(cls):

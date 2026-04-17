@@ -42,7 +42,6 @@ class OAuthMetadataRFC8414(OAuthMetadata):
 
 
 from dremioai.tools import tools
-from dremioai.api.dremio import ai_tools
 import os
 from typing import List, Union, Annotated, Optional, Tuple, Dict, Any
 from functools import reduce
@@ -280,91 +279,6 @@ def make_logged_invoke(tool_name: str, fn):
     return _wrapper
 
 
-async def _discover_dynamic_tools_handler():
-    """Discover additional tools available from the Dremio server.
-    Call this tool to get a list of dynamically available tools with their
-    names, descriptions, and input schemas."""
-    _log = log.logger("discover_dynamic_tools")
-    overrides = {}
-    try:
-        if isinstance((token := get_access_token()), AccessToken):
-            overrides["dremio.pat"] = token.token
-    except (ImportError, LookupError, AttributeError):
-        pass
-    if project_id := tools.ProjectIdMiddleware.get_project_id():
-        overrides["dremio.project_id"] = project_id
-
-    pid = None
-    if dremio := settings.instance().dremio:
-        pid = dremio.project_id
-    invocation_counter.labels(project_id=pid, tool="discover_dynamic_tools").inc()
-
-    async def _invoke():
-        return await ai_tools.list_tools()
-
-    try:
-        with invocation_duration.labels(
-            project_id=pid, tool="discover_dynamic_tools"
-        ).time():
-            if overrides:
-                result = await settings.run_with(_invoke, overrides, [], {})
-            else:
-                result = await _invoke()
-        return json.dumps(result)
-    except Exception as exc:
-        _log.warning(f"Failed to discover dynamic tools from Dremio: {exc}")
-        return (
-            f"Failed to discover dynamic tools from Dremio: {exc}. "
-            "The Dremio instance may be unreachable or may not support dynamic tools."
-        )
-
-
-async def _call_dynamic_tool_handler(tool_name: str, tool_arguments: Union[str, dict]):
-    """Invoke a dynamically discovered tool on the Dremio server."""
-    _log = log.logger("call_dynamic_tool")
-
-    if isinstance(tool_arguments, dict):
-        args = tool_arguments
-    else:
-        try:
-            args = json.loads(tool_arguments)
-        except json.JSONDecodeError as exc:
-            return f"Invalid JSON in tool_arguments: {exc}"
-
-    overrides = {}
-    try:
-        if isinstance((token := get_access_token()), AccessToken):
-            overrides["dremio.pat"] = token.token
-    except (ImportError, LookupError, AttributeError):
-        pass
-    if project_id := tools.ProjectIdMiddleware.get_project_id():
-        overrides["dremio.project_id"] = project_id
-
-    pid = None
-    if dremio := settings.instance().dremio:
-        pid = dremio.project_id
-    invocation_counter.labels(project_id=pid, tool=f"call_dynamic_tool:{tool_name}").inc()
-
-    async def _invoke():
-        result = await ai_tools.invoke_tool(tool_name, args)
-        if not result:
-            return {"result": None}
-        return result
-
-    try:
-        with invocation_duration.labels(
-            project_id=pid, tool=f"call_dynamic_tool:{tool_name}"
-        ).time():
-            if overrides:
-                result = await settings.run_with(_invoke, overrides, [], {})
-            else:
-                result = await _invoke()
-        return json.dumps(result)
-    except Exception as exc:
-        _log.warning(f"Failed to invoke dynamic tool '{tool_name}': {exc}")
-        return f"Failed to invoke dynamic tool '{tool_name}': {exc}"
-
-
 def init(
     mode: Union[tools.ToolType, List[tools.ToolType]] = None,
     transport: Transports = Transports.stdio,
@@ -398,24 +312,6 @@ def init(
                 readOnlyHint=not (is_sql_tool and allow_dml),
                 destructiveHint=bool(is_sql_tool and allow_dml),
             ),
-        )
-
-    if settings.instance().tools and settings.instance().tools.enable_remote_tools:
-        mcp.add_tool(
-            make_logged_invoke(
-                "discover_dynamic_tools", _discover_dynamic_tools_handler
-            ),
-            name="discover_dynamic_tools",
-            description=_discover_dynamic_tools_handler.__doc__,
-            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
-        )
-        mcp.add_tool(
-            make_logged_invoke(
-                "call_dynamic_tool", _call_dynamic_tool_handler
-            ),
-            name="call_dynamic_tool",
-            description=_call_dynamic_tool_handler.__doc__,
-            annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
         )
 
     for resource in tools.get_resources(For=mode):
