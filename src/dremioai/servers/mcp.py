@@ -13,54 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-from mcp.server.auth.json_response import PydanticJSONResponse
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.prompts import Prompt
-from mcp.server.fastmcp.resources import FunctionResource
-from mcp.cli.claude import get_claude_config_path
-from mcp.shared.auth import OAuthMetadata
-from mcp.types import ToolAnnotations
-from pydantic import AnyHttpUrl, field_serializer
-from pydantic.networks import AnyUrl
-
-from dremioai.metrics.registry import get_metrics_app
-from starlette.requests import Request
-from starlette.responses import Response
-
-
-class OAuthMetadataRFC8414(OAuthMetadata):
-    """RFC 8414 compliant OAuth metadata that strips trailing slash from issuer URL.
-
-    The MCP SDK's OAuthMetadata uses AnyHttpUrl for the issuer field, which adds
-    a trailing slash during serialization. RFC 8414 Section 3.2 requires the issuer
-    to exactly match the discovery URL without trailing slash.
-    """
-
-    @field_serializer("issuer")
-    def serialize_issuer(self, value: AnyHttpUrl) -> str:
-        return str(value).rstrip("/")
-
-
-from dremioai.tools import tools
-import os
-from typing import List, Union, Annotated, Optional, Tuple, Dict, Any
-from functools import reduce
-from operator import ior
-from pathlib import Path
-from dremioai import log
-from typer import Typer, Option, Argument, BadParameter
-from rich import console, table, print as pp
-from click import Choice
-import logging
-from dremioai.config import settings
-from dremioai.api.oauth2 import get_oauth2_tokens
-from enum import StrEnum, auto
-from json import load, dump as jdump
-from shutil import which
 import asyncio
 import contextlib
-import inspect
-import json
 import logging
 import os
 import sys

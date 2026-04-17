@@ -545,7 +545,7 @@ class SearchTableAndViews(Tools):
 
 
 class DiscoverDynamicTools(Tools):
-    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
+    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
     requires_remote_tools: ClassVar[Annotated[bool, True]]
 
     @secured
@@ -566,7 +566,7 @@ class DiscoverDynamicTools(Tools):
 
 
 class CallDynamicTool(Tools):
-    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
+    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
     requires_remote_tools: ClassVar[Annotated[bool, True]]
 
     @secured

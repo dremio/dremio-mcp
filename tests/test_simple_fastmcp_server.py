@@ -183,8 +183,8 @@ class TestDynamicTools:
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
             tool_names = {t.name for t in await server.list_tools()}
-            assert "discover_dynamic_tools" in tool_names
-            assert "call_dynamic_tool" in tool_names
+            assert "DiscoverDynamicTools" in tool_names
+            assert "CallDynamicTool" in tool_names
 
     @pytest.mark.asyncio
     async def test_meta_tools_not_registered_when_disabled(self):
@@ -192,12 +192,12 @@ class TestDynamicTools:
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=False):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
             tool_names = {t.name for t in await server.list_tools()}
-            assert "discover_dynamic_tools" not in tool_names
-            assert "call_dynamic_tool" not in tool_names
+            assert "DiscoverDynamicTools" not in tool_names
+            assert "CallDynamicTool" not in tool_names
 
     @pytest.mark.asyncio
     async def test_discover_returns_tool_list(self):
-        """discover_dynamic_tools should return JSON list of tools from Dremio"""
+        """DiscoverDynamicTools should return JSON list of tools from Dremio"""
         fake_remote_tools = [
             {
                 "name": "JavaTool1",
@@ -215,49 +215,49 @@ class TestDynamicTools:
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
 
             with patch(
-                "dremioai.servers.mcp.ai_tools.list_tools",
+                "dremioai.tools.tools.ai_tools.list_tools",
                 new_callable=AsyncMock,
                 return_value=fake_remote_tools,
             ):
-                result = await server.call_tool("discover_dynamic_tools", {})
+                result = await server.call_tool("DiscoverDynamicTools", {})
 
             assert result is not None
-            parsed = json.loads(result[0].text)
+            parsed = json.loads(result[0][0].text)
             names = {t["name"] for t in parsed}
             assert "JavaTool1" in names
             assert "JavaTool2" in names
 
     @pytest.mark.asyncio
     async def test_discover_returns_error_on_dremio_failure(self):
-        """discover_dynamic_tools should return an error string when Dremio is unreachable"""
+        """DiscoverDynamicTools should return an error string when Dremio is unreachable"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
 
             with patch(
-                "dremioai.servers.mcp.ai_tools.list_tools",
+                "dremioai.tools.tools.ai_tools.list_tools",
                 new_callable=AsyncMock,
                 side_effect=Exception("Dremio unreachable"),
             ):
-                result = await server.call_tool("discover_dynamic_tools", {})
+                result = await server.call_tool("DiscoverDynamicTools", {})
 
             assert result is not None
-            text = result[0].text
+            text = result[0][0].text
             assert "Failed to discover dynamic tools" in text
             assert "Dremio unreachable" in text
 
     @pytest.mark.asyncio
     async def test_call_dynamic_tool_proxies_to_invoke_tool(self):
-        """call_dynamic_tool should proxy to ai_tools.invoke_tool with correct args"""
+        """CallDynamicTool should proxy to ai_tools.invoke_tool with correct args"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
 
             with patch(
-                "dremioai.servers.mcp.ai_tools.invoke_tool",
+                "dremioai.tools.tools.ai_tools.invoke_tool",
                 new_callable=AsyncMock,
                 return_value={"result": "hello"},
             ) as mock_invoke:
                 result = await server.call_tool(
-                    "call_dynamic_tool",
+                    "CallDynamicTool",
                     {
                         "tool_name": "RemoteEcho",
                         "tool_arguments": json.dumps({"msg": "hello"}),
@@ -268,40 +268,40 @@ class TestDynamicTools:
 
     @pytest.mark.asyncio
     async def test_call_dynamic_tool_returns_error_on_failure(self):
-        """call_dynamic_tool should return an error string when invoke fails"""
+        """CallDynamicTool should return an error string when invoke fails"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
 
             with patch(
-                "dremioai.servers.mcp.ai_tools.invoke_tool",
+                "dremioai.tools.tools.ai_tools.invoke_tool",
                 new_callable=AsyncMock,
                 side_effect=AiToolError("HTTP 500 Internal Server Error", status=500),
             ):
                 result = await server.call_tool(
-                    "call_dynamic_tool",
+                    "CallDynamicTool",
                     {
                         "tool_name": "BrokenTool",
                         "tool_arguments": json.dumps({"x": 1}),
                     },
                 )
 
-            text = result[0].text
+            text = result[0][0].text
             assert "Failed to invoke dynamic tool" in text
             assert "BrokenTool" in text
 
     @pytest.mark.asyncio
     async def test_call_dynamic_tool_with_invalid_json(self):
-        """call_dynamic_tool should return a graceful error for non-JSON arguments"""
+        """CallDynamicTool should return a graceful error for non-JSON arguments"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
 
             result = await server.call_tool(
-                "call_dynamic_tool",
+                "CallDynamicTool",
                 {
                     "tool_name": "SomeTool",
                     "tool_arguments": "not valid json {{{",
                 },
             )
 
-            text = result[0].text
+            text = result[0][0].text
             assert "Invalid JSON" in text
