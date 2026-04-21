@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 from mcp.server.fastmcp.utilities.func_metadata import func_metadata
 from dremioai.config import settings
 from dremioai.tools.tools import GetUsefulSystemTableNames, GetSchemaOfTable, RunSqlQuery
+from dremioai.api.dremio.sql import QueryResult
 
 
 async def mock_mcp_validate_tool_output(tool, *args, **kwargs):
@@ -82,8 +83,9 @@ async def test_run_sql_query_json_safe_output():
         ]
     )
 
-    with patch("dremioai.tools.tools.sql.run_query", new_callable=AsyncMock) as mock_run_query:
-        mock_run_query.return_value = df
+    qr = QueryResult(df=df, total_rows=len(df), returned_rows=len(df))
+    with patch("dremioai.tools.tools.sql.run_query_capped", new_callable=AsyncMock) as mock_run_query_capped:
+        mock_run_query_capped.return_value = qr
         token = settings._settings.set(
             settings.Settings.model_validate({"dremio": {"uri": "https://test"}})
         )

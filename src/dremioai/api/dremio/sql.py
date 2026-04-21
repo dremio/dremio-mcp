@@ -16,6 +16,7 @@
 
 from pydantic import BaseModel, Field
 from typing import List, Dict, Union, Optional, Any
+from dataclasses import dataclass
 
 from enum import auto
 from datetime import datetime
@@ -251,3 +252,88 @@ async def run_query(
         deser=QuerySubmission,
     )
     return await get_results(project_id, qs, use_df=use_df, client=client)
+
+
+@dataclass
+class QueryResult:
+    df: pd.DataFrame
+    total_rows: int
+    returned_rows: int
+
+    @property
+    def truncated(self) -> bool:
+        return self.returned_rows < self.total_rows
+
+
+async def run_query_capped(
+    query: Union[Query, str], max_rows: int = 500
+) -> QueryResult:
+    """Submit a query and fetch at most *max_rows* rows (0 = unlimited).
+
+    Returns a ``QueryResult`` with the DataFrame, total row count from the
+    job, the number of rows actually fetched, and a ``truncated`` flag.
+    """
+    client = AsyncHttpClient()
+    if not isinstance(query, Query):
+        engine_name = (
+            settings.instance().dremio.wlm.engine_name
+            if settings.instance().dremio.wlm is not None
+            else None
+        )
+        query = Query(sql=query, engineName=engine_name)
+
+    project_id = settings.instance().dremio.project_id
+    endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
+    qs: QuerySubmission = await client.post(
+        f"{endpoint}/sql",
+        body=query.model_dump(by_alias=True, exclude_none=True),
+        deser=QuerySubmission,
+    )
+
+    delay = settings.instance().dremio.api.polling_interval
+    job: Job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)
+    while not job.done:
+        await asyncio.sleep(delay)
+        job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)
+
+    if not job.succeeded:
+        emsg = (
+            job.error_message
+            if job.error_message
+            else (
+                job.cancellation_reason
+                if job.job_state == JobState.CANCELED
+                else "Unknown error"
+            )
+        )
+        raise RuntimeError(f"Job {qs.id} failed: {emsg}")
+
+    total_rows = job.row_count or 0
+    if total_rows == 0:
+        return QueryResult(df=pd.DataFrame(), total_rows=0, returned_rows=0)
+
+    fetch_rows = total_rows if max_rows == 0 else min(total_rows, max_rows)
+    page_size = min(500, fetch_rows)
+
+    results = await run_in_parallel(
+        [
+            _fetch_results(None, None, project_id, qs.id, off, page_size)
+            for off in range(0, fetch_rows, page_size)
+        ]
+    )
+    jr = JobResultsWrapper(results)
+
+    all_rows = list(itertools.chain.from_iterable(jr_page.rows for jr_page in jr))
+    # The last page may return more rows than needed; trim to fetch_rows.
+    all_rows = all_rows[:fetch_rows]
+
+    if all_rows and jr[0].result_schema:
+        columns = [rs.name for rs in jr[0].result_schema]
+        df = pd.DataFrame(data=all_rows, columns=columns)
+        for rs in jr[0].result_schema:
+            if rs.type.name == "TIMESTAMP":
+                df[rs.name] = pd.to_datetime(df[rs.name])
+    else:
+        df = pd.DataFrame(data=all_rows)
+
+    return QueryResult(df=df, total_rows=total_rows, returned_rows=len(df))
