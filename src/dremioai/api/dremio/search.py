@@ -253,10 +253,16 @@ async def get_search_results(
 
         data = [r.catalog.as_df_dict() for r in result]
         paths = [p["path"] for p in data]
+        skipped: List[Dict[str, Any]] = []
         if schemas := await get_schemas(paths, include_tags=True, flatten=True):
-            for ix, schema in enumerate(schemas):
-                data[ix]["schema"] = schema.get("schema")
+            for ix, (schema, error) in enumerate(schemas):
+                data[ix]["schema"] = schema.get("schema") if schema else None
+                if error:
+                    skipped.append({"path": paths[ix], "reason": error})
 
-        return pd.DataFrame(data=data)
+        df = pd.DataFrame(data=data)
+        if skipped:
+            df.attrs["skipped"] = skipped
+        return df
 
     return EnterpriseSearchResultsWrapper(results=result)

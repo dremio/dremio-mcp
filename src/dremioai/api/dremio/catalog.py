@@ -20,6 +20,8 @@ from datetime import datetime
 from enum import StrEnum, auto
 from functools import partial
 
+from aiohttp import ClientResponseError
+
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.api.util import UStrEnum, run_in_parallel
 from dremioai.config import settings
@@ -191,10 +193,17 @@ async def get_schemas(
     by_id: Optional[bool] = False,
     include_tags: Optional[bool] = False,
     flatten: Optional[bool] = False,
-) -> List[Dict[str, Any]]:
+) -> List[Tuple[Dict[str, Any], Optional[str]]]:
+    async def _safe_get_schema(p):
+        try:
+            return await get_schema(p, by_id, include_tags, flatten), None
+        except ClientResponseError as e:
+            return {}, f"HTTP {e.status}: {e.message}"
+        except Exception as e:
+            return {}, f"{type(e).__name__}: {e}"
 
     return await run_in_parallel(
-        [get_schema(p, by_id, include_tags, flatten) for p in dataset_path_or_ids]
+        [_safe_get_schema(p) for p in dataset_path_or_ids]
     )
 
 
@@ -219,7 +228,9 @@ async def get_descriptions(
     components = set()
     result = {}
     while True:
-        schemas = await get_schemas(dataset_path_or_ids, by_id, include_tags=True)
+        schemas = [
+            s for s, _ in await get_schemas(dataset_path_or_ids, by_id, include_tags=True) if s
+        ]
         rest = set()
         for s in schemas:
             if d := extract_description(s):
