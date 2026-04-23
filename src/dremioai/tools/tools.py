@@ -214,7 +214,6 @@ def _get_class_var_hints(tool: Tools, name: str) -> bool:
 
 get_for = lambda tool: _get_class_var_hints(tool, "For")
 get_project_id_required = lambda tool: _get_class_var_hints(tool, "project_id_required")
-get_requires_remote_tools = lambda tool: _get_class_var_hints(tool, "requires_remote_tools")
 
 
 def is_tool_for(
@@ -225,10 +224,6 @@ def is_tool_for(
 
     if project_id_required := get_project_id_required(tool):
         if dremio is not None and dremio.project_id is None:
-            return False
-
-    if get_requires_remote_tools(tool):
-        if not (dremio and dremio.enable_remote_tools):
             return False
 
     if (For := get_for(tool)) is not None:
@@ -545,7 +540,6 @@ class SearchTableAndViews(Tools):
 
 class DiscoverDynamicTools(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
-    requires_remote_tools: ClassVar[Annotated[bool, True]]
 
     @secured
     @with_metrics
@@ -553,13 +547,14 @@ class DiscoverDynamicTools(Tools):
         """Discover additional tools available from the Dremio server.
         Call this tool to get a list of dynamically available tools with their
         names, descriptions, and input schemas."""
+        if not settings.instance().dremio.get("enable_remote_tools"):
+            return "Remote tools are not enabled."
         result = await ai_tools.list_tools()
         return result.model_dump_json()
 
 
 class CallDynamicTool(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
-    requires_remote_tools: ClassVar[Annotated[bool, True]]
 
     @secured
     @with_metrics
@@ -570,6 +565,8 @@ class CallDynamicTool(Tools):
             tool_name: The name of the tool to invoke, as returned by DiscoverDynamicTools.
             tool_arguments: The arguments to pass to the tool, either as a JSON string or a dict.
         """
+        if not settings.instance().dremio.get("enable_remote_tools"):
+            return "Remote tools are not enabled."
         if isinstance(tool_arguments, str):
             try:
                 args = json.loads(tool_arguments)

@@ -187,13 +187,20 @@ class TestDynamicTools:
             assert "CallDynamicTool" in tool_names
 
     @pytest.mark.asyncio
-    async def test_meta_tools_not_registered_when_disabled(self):
-        """Meta-tools should NOT appear when enable_remote_tools is False"""
+    async def test_meta_tools_disabled_at_invocation(self):
+        """Meta-tools appear in the list but return an error when enable_remote_tools is False"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=False):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
             tool_names = {t.name for t in await server.list_tools()}
-            assert "DiscoverDynamicTools" not in tool_names
-            assert "CallDynamicTool" not in tool_names
+            assert "DiscoverDynamicTools" in tool_names
+            assert "CallDynamicTool" in tool_names
+            result = await server.call_tool("DiscoverDynamicTools", {})
+            assert "not enabled" in result[0][0].text
+            result = await server.call_tool(
+                "CallDynamicTool",
+                {"tool_name": "SomeTool", "tool_arguments": "{}"},
+            )
+            assert "not enabled" in result[0][0].text
 
     @pytest.mark.asyncio
     async def test_discover_returns_tool_list(self):
