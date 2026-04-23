@@ -108,6 +108,8 @@ async def test_create_fastmcp_server_and_register_tools():
                 "GetUsefulSystemTableNames": {},
                 "GetTableOrViewLineage": {"table_name": "test_table"},
                 "GetDescriptionOfTableOrSchema": {"name": "test_table"},
+                "DiscoverDynamicTools": {},
+                "CallDynamicTool": {"tool_name": "SomeTool", "tool_arguments": "{}"},
             }
             for tool in tools_list:
                 if (

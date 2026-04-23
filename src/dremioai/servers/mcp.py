@@ -34,7 +34,7 @@ import uvicorn
 from click import Choice
 from mcp.cli.claude import get_claude_config_path
 from mcp.server.auth.json_response import PydanticJSONResponse
-from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.fastmcp import FastMCP
@@ -59,6 +59,7 @@ from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
 from dremioai.config import settings
 from dremioai.config.feature_flags import FeatureFlagManager
 from dremioai.metrics.registry import get_metrics_app
+from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
 from dremioai.servers.jwks_verifier import JWKSVerifier, TokenExpiredError
 from dremioai.tools import tools
 from dremioai.tools.tools import ProjectIdMiddleware

@@ -6,6 +6,7 @@ flag_keys:
 - dremio.api.http_retry.max_retries
 - dremio.api.polling_interval
 - dremio.auth_issuer_uri_override
+- dremio.enable_remote_tools
 - dremio.enable_search
 - dremio.extract_org_id_from_jwt
 - dremio.jwks_cache_lifespan

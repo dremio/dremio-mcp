@@ -274,6 +274,10 @@ class Dremio(FlagAwareModel):
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
+    enable_remote_tools: Optional[bool] = Field(
+        default=False,
+        description="Enable dynamic registration of remote tools from Dremio's Java-side tool registry",
+    )
 
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):

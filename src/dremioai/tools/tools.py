@@ -44,7 +44,7 @@ import functools
 
 import pandas as pd
 import numpy as np
-from dremioai.api.dremio import sql, usage, search
+from dremioai.api.dremio import sql, usage, search, ai_tools
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.api.prometheus import vm
@@ -52,6 +52,7 @@ from dremioai.api.dremio.catalog import get_schema, get_lineage, get_description
 from dremioai.api.util import run_in_parallel
 from csv import reader
 from io import StringIO
+import json
 from sqlglot import parse_one
 from sqlglot import expressions
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -535,6 +536,47 @@ class SearchTableAndViews(Tools):
         )
         res = pd.concat(res)
         return {"results": res.to_dict(orient="records")}
+
+
+class DiscoverDynamicTools(Tools):
+    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
+
+    @secured
+    @with_metrics
+    async def invoke(self) -> str:
+        """Discover additional tools available from the Dremio server.
+        Call this tool to get a list of dynamically available tools with their
+        names, descriptions, and input schemas."""
+        if not settings.instance().dremio.get("enable_remote_tools"):
+            return "Remote tools are not enabled."
+        result = await ai_tools.list_tools()
+        return result.model_dump_json()
+
+
+class CallDynamicTool(Tools):
+    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
+
+    @secured
+    @with_metrics
+    async def invoke(self, tool_name: str, tool_arguments: Union[str, dict]) -> str:
+        """Invoke a dynamically discovered tool on the Dremio server.
+
+        Args:
+            tool_name: The name of the tool to invoke, as returned by DiscoverDynamicTools.
+            tool_arguments: The arguments to pass to the tool, either as a JSON string or a dict.
+        """
+        if not settings.instance().dremio.get("enable_remote_tools"):
+            return "Remote tools are not enabled."
+        if isinstance(tool_arguments, str):
+            try:
+                args = json.loads(tool_arguments)
+            except json.JSONDecodeError as exc:
+                return f"Invalid JSON in tool_arguments: {exc}"
+        else:
+            args = tool_arguments
+
+        result = await ai_tools.invoke_tool(tool_name, args)
+        return result.model_dump_json(exclude_none=True)
 
 
 def _subclasses(cls):
