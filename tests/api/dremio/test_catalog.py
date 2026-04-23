@@ -43,9 +43,9 @@ async def test_get_schemas_all_success():
         result = await catalog.get_schemas([["a", "b"], ["c"]])
 
     assert len(result) == 2
-    assert all(err is None for _, err in result)
-    assert result[0][0]["path"] == ["a", "b"]
-    assert result[1][0]["path"] == ["c"]
+    assert all(r.error is None for r in result)
+    assert result[0].data["path"] == ["a", "b"]
+    assert result[1].data["path"] == ["c"]
 
 
 @pytest.mark.asyncio
@@ -62,14 +62,14 @@ async def test_get_schemas_one_failure_does_not_break_others():
         result = await catalog.get_schemas(paths)
 
     assert len(result) == 3
-    assert result[0][1] is None
-    assert result[0][0]["path"] == ["ok", "one"]
-    # Failed entry: empty schema dict + HTTP error message surfaced.
-    assert result[1][0] == {}
-    assert "HTTP 400" in result[1][1]
-    assert "Bad Request" in result[1][1]
-    assert result[2][1] is None
-    assert result[2][0]["path"] == ["ok", "two"]
+    assert result[0].error is None
+    assert result[0].data["path"] == ["ok", "one"]
+    # Failed entry: no data + HTTP error surfaced + original exception preserved.
+    assert result[1].data is None
+    assert "HTTP 400" in result[1].error
+    assert "Bad Request" in result[1].error
+    assert result[2].error is None
+    assert result[2].data["path"] == ["ok", "two"]
 
 
 @pytest.mark.asyncio
@@ -82,10 +82,10 @@ async def test_get_schemas_non_http_exception_is_captured():
     with patch.object(catalog, "get_schema", side_effect=fake_get_schema):
         result = await catalog.get_schemas([["ok"], ["boom"]])
 
-    assert result[0][1] is None
-    assert result[1][0] == {}
-    assert "ValueError" in result[1][1]
-    assert "kapow" in result[1][1]
+    assert result[0].error is None
+    assert result[1].data is None
+    assert "ValueError" in result[1].error
+    assert "kapow" in result[1].error
 
 
 @pytest.mark.asyncio
@@ -143,6 +143,6 @@ async def test_get_schemas_all_failing_returns_empty_dicts_with_errors():
         result = await catalog.get_schemas([["a"], ["b"]])
 
     assert len(result) == 2
-    for schema, err in result:
-        assert schema == {}
-        assert "HTTP 404" in err
+    for r in result:
+        assert r.data is None
+        assert "HTTP 404" in r.error

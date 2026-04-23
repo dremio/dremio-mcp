@@ -18,16 +18,18 @@ from pydantic import BaseModel, Field, AfterValidator, ValidationError
 from typing import Annotated, List, Set, Tuple, Dict, AnyStr, Any, Union, Optional
 from datetime import datetime
 from enum import StrEnum, auto
-from functools import partial
+from functools import partial, reduce
+from csv import reader, excel
+from io import StringIO
 
 from aiohttp import ClientResponseError
 
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.api.util import UStrEnum, run_in_parallel
 from dremioai.config import settings
-from csv import reader, excel
-from io import StringIO
-from functools import reduce
+from dremioai import log
+
+logger = log.logger(__name__)
 
 
 class CatalogItemType(UStrEnum):
@@ -188,19 +190,32 @@ async def get_schema(
     return schema
 
 
+class SchemaResult(BaseModel):
+    """Per-path result of `get_schemas`. `data` is populated on success; `error`
+    carries a human-readable failure message when the fetch raised."""
+
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
 async def get_schemas(
     dataset_path_or_ids: List[Union[List[str], str]],
     by_id: Optional[bool] = False,
     include_tags: Optional[bool] = False,
     flatten: Optional[bool] = False,
-) -> List[Tuple[Dict[str, Any], Optional[str]]]:
-    async def _safe_get_schema(p):
+) -> List[SchemaResult]:
+    async def _safe_get_schema(p) -> SchemaResult:
         try:
-            return await get_schema(p, by_id, include_tags, flatten), None
+            data = await get_schema(p, by_id, include_tags, flatten)
+            return SchemaResult(data=data)
         except ClientResponseError as e:
-            return {}, f"HTTP {e.status}: {e.message}"
+            return SchemaResult(
+                error=f"HTTP {e.status}: {e.message}"
+            )
         except Exception as e:
-            return {}, f"{type(e).__name__}: {e}"
+            return SchemaResult(
+                error=f"{type(e).__name__}: {e}"
+            )
 
     return await run_in_parallel(
         [_safe_get_schema(p) for p in dataset_path_or_ids]
@@ -228,9 +243,14 @@ async def get_descriptions(
     components = set()
     result = {}
     while True:
-        schemas = [
-            s for s, _ in await get_schemas(dataset_path_or_ids, by_id, include_tags=True) if s
-        ]
+        results = await get_schemas(dataset_path_or_ids, by_id, include_tags=True)
+        for r in results:
+            if r.error is not None:
+                logger.info(
+                    "get_descriptions schema fetch failed",
+                    reason=r.error,
+                )
+        schemas = [r.data for r in results if r.data]
         rest = set()
         for s in schemas:
             if d := extract_description(s):

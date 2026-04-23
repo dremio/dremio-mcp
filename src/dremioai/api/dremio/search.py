@@ -21,6 +21,8 @@ from pydantic import (
     field_validator,
 )
 from typing import (
+    Any,
+    Dict,
     List,
     Union,
     Optional,
@@ -31,7 +33,10 @@ from enum import auto
 from dremioai.config import settings
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.api.dremio.catalog import get_schemas
+from dremioai import log
 import pandas as pd
+
+logger = log.logger(__name__)
 
 
 class QueryType(UStrEnum):
@@ -255,10 +260,15 @@ async def get_search_results(
         paths = [p["path"] for p in data]
         skipped: List[Dict[str, Any]] = []
         if schemas := await get_schemas(paths, include_tags=True, flatten=True):
-            for ix, (schema, error) in enumerate(schemas):
-                data[ix]["schema"] = schema.get("schema") if schema else None
-                if error:
-                    skipped.append({"path": paths[ix], "reason": error})
+            for ix, r in enumerate(schemas):
+                data[ix]["schema"] = r.data.get("schema") if r.data else None
+                if r.error:
+                    logger.info(
+                        "search_schema_fetch_failed",
+                        path=paths[ix],
+                        reason=r.error,
+                    )
+                    skipped.append({"path": paths[ix], "reason": r.error})
 
         df = pd.DataFrame(data=data)
         if skipped:
