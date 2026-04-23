@@ -203,16 +203,15 @@ async def get_schemas(
     by_id: Optional[bool] = False,
     include_tags: Optional[bool] = False,
     flatten: Optional[bool] = False,
+    throw_exception: Optional[bool] = False,
 ) -> List[SchemaResult]:
     async def _safe_get_schema(p) -> SchemaResult:
         try:
             data = await get_schema(p, by_id, include_tags, flatten)
             return SchemaResult(data=data)
-        except ClientResponseError as e:
-            return SchemaResult(
-                error=f"HTTP {e.status}: {e.message}"
-            )
         except Exception as e:
+            if throw_exception:
+                raise e
             return SchemaResult(
                 error=f"{type(e).__name__}: {e}"
             )
@@ -243,13 +242,7 @@ async def get_descriptions(
     components = set()
     result = {}
     while True:
-        results = await get_schemas(dataset_path_or_ids, by_id, include_tags=True)
-        for r in results:
-            if r.error is not None:
-                logger.info(
-                    "get_descriptions schema fetch failed",
-                    reason=r.error,
-                )
+        results = await get_schemas(dataset_path_or_ids, by_id, include_tags=True, throw_exception=True)
         schemas = [r.data for r in results if r.data]
         rest = set()
         for s in schemas:

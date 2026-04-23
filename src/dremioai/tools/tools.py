@@ -533,17 +533,8 @@ class SearchTableAndViews(Tools):
                 for category in (search.Category.TABLE, search.Category.VIEW)
             ]
         )
-        skipped = [s for df in res for s in df.attrs.get("skipped", [])]
-        combined = pd.concat(res)
-        out: Dict[str, Any] = {"results": combined.to_dict(orient="records")}
-        if skipped:
-            out["skipped"] = skipped
-            out["skipped_note"] = (
-                f"{len(skipped)} table(s)/view(s) matched the search but were skipped "
-                "because their schema could not be fetched (e.g., broken or "
-                "unavailable catalog entry)."
-            )
-        return out
+        res = pd.concat(res)
+        return {"results": res.to_dict(orient="records")}
 
 
 def _subclasses(cls):
