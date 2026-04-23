@@ -216,6 +216,7 @@ class Search(BaseModel):
 
 class EnterpriseSearchResultsWrapper(BaseModel):
     results: List[EnterpriseSearchResultsObject] = Field(default_factory=list)
+    not_found: List[List[str]] = Field(default_factory=list)
 
 
 async def get_search_results(
@@ -270,9 +271,20 @@ async def get_search_results(
                     )
                     skipped.append({"path": paths[ix], "reason": r.error})
 
+        # Drop rows for unresolvable paths and re-add them with `not_found=True`
+        # so the LLM can see the partial failure in the tool output.
+        data = [d for d, sr in zip(data, schemas) if not sr.error] if schemas else data
         df = pd.DataFrame(data=data)
         if skipped:
-            df.attrs["skipped"] = skipped
+            df = pd.concat(
+                [
+                    df,
+                    pd.DataFrame(
+                        {"path": [s["path"] for s in skipped], "not_found": True}
+                    ),
+                ],
+                ignore_index=True,
+            )
         return df
 
     return EnterpriseSearchResultsWrapper(results=result)
