@@ -17,7 +17,6 @@
 import pytest
 from dremioai.api.dremio.ai_tools import (
     AiTool,
-    AiToolError,
     InvokeToolResponse,
     list_tools,
     invoke_tool,
@@ -32,8 +31,9 @@ async def test_list_tools_returns_tools(mock_settings_instance):
     with HttpMockFramework() as mock:
         mock.load_mock_data(r"/api/v4/ai/tools$", "ai_tools/list_tools.json")
         result = await list_tools()
-    assert len(result) == 3
-    names = [t["name"] for t in result]
+    assert bool(result)
+    assert len(result.tools) == 3
+    names = [t.name for t in result.tools]
     assert "runSql" in names
     assert "getTableOrViewSchema" in names
     assert "listEngines" in names
@@ -44,9 +44,9 @@ async def test_list_tools_returns_input_schema(mock_settings_instance):
     with HttpMockFramework() as mock:
         mock.load_mock_data(r"/api/v4/ai/tools$", "ai_tools/list_tools.json")
         result = await list_tools()
-    run_sql = next(t for t in result if t["name"] == "runSql")
-    assert run_sql["input_schema"]["type"] == "object"
-    assert "sqlText" in run_sql["input_schema"]["properties"]
+    run_sql = next(t for t in result.tools if t.name == "runSql")
+    assert run_sql.input_schema["type"] == "object"
+    assert "sqlText" in run_sql.input_schema["properties"]
 
 
 @pytest.mark.asyncio
@@ -54,7 +54,8 @@ async def test_list_tools_empty_registry(mock_settings_instance):
     with HttpMockFramework() as mock:
         mock.add_mock_response(r"/api/v4/ai/tools$", {"tools": []})
         result = await list_tools()
-    assert result == []
+    assert result.tools == []
+    assert bool(result)
 
 
 # --- invoke_tool tests ---
@@ -64,9 +65,9 @@ async def test_invoke_tool_success(mock_settings_instance):
     with HttpMockFramework() as mock:
         mock.load_mock_data(r"/api/v4/ai/tools/runSql:invoke$", "ai_tools/invoke_result.json")
         result = await invoke_tool("runSql", {"sqlText": "SELECT 1"})
-    assert "result" in result
-    assert result["result"]["columns"] == ["id", "name"]
-    assert "error" not in result
+    assert bool(result)
+    assert result.result["columns"] == ["id", "name"]
+    assert result.error is None
 
 
 @pytest.mark.asyncio
@@ -74,9 +75,9 @@ async def test_invoke_tool_error_response(mock_settings_instance):
     with HttpMockFramework() as mock:
         mock.load_mock_data(r"/api/v4/ai/tools/unknownTool:invoke$", "ai_tools/invoke_error.json")
         result = await invoke_tool("unknownTool", {})
-    assert "error" in result
-    assert "not found" in result["error"]
-    assert "result" not in result
+    assert result.error is not None
+    assert "not found" in result.error
+    assert result.result is None
 
 
 # --- Pydantic model unit tests (no HTTP) ---
@@ -107,22 +108,21 @@ def test_ai_tool_model_minimal_schema():
 
 def test_invoke_tool_response_succeeded():
     resp = InvokeToolResponse.model_validate({"result": {"sql": "SELECT 1"}})
-    assert resp.succeeded is True
+    assert bool(resp) is True
     assert resp.result == {"sql": "SELECT 1"}
     assert resp.error is None
 
 
 def test_invoke_tool_response_failed():
     resp = InvokeToolResponse.model_validate({"error": "Tool not found"})
-    assert resp.succeeded is False
+    assert bool(resp) is False
     assert resp.result is None
     assert resp.error == "Tool not found"
 
 
 def test_invoke_tool_response_empty():
-    """An empty response (no result, no error) should not be considered succeeded."""
     resp = InvokeToolResponse.model_validate({})
-    assert resp.succeeded is False
+    assert bool(resp) is True
     assert resp.result is None
     assert resp.error is None
     assert resp.is_empty is True
@@ -144,24 +144,24 @@ def test_invoke_tool_response_is_empty_false_when_error():
 
 @pytest.mark.asyncio
 async def test_list_tools_http_error(mock_settings_instance):
-    """list_tools should raise AiToolError on HTTP 4xx/5xx."""
+    """list_tools should return a response with error set on HTTP 4xx/5xx."""
     with HttpMockFramework() as mock:
         mock.add_mock_response(r"/api/v4/ai/tools$", {"error": "Unauthorized"}, status=401)
-        with pytest.raises(AiToolError) as exc_info:
-            await list_tools()
-        assert exc_info.value.status == 401
-        assert "401" in str(exc_info.value)
+        result = await list_tools()
+    assert not bool(result)
+    assert result.error is not None
+    assert "401" in result.error
 
 
 @pytest.mark.asyncio
 async def test_invoke_tool_http_error(mock_settings_instance):
-    """invoke_tool should raise AiToolError on HTTP 500."""
+    """invoke_tool should return a response with error set on HTTP 500."""
     with HttpMockFramework() as mock:
         mock.add_mock_response(r"/api/v4/ai/tools/runSql:invoke$", {"error": "Internal Server Error"}, status=500)
-        with pytest.raises(AiToolError) as exc_info:
-            await invoke_tool("runSql", {"sqlText": "SELECT 1"})
-        assert exc_info.value.status == 500
-        assert "500" in str(exc_info.value)
+        result = await invoke_tool("runSql", {"sqlText": "SELECT 1"})
+    assert not bool(result)
+    assert result.error is not None
+    assert "500" in result.error
 
 
 @pytest.mark.asyncio
@@ -171,4 +171,4 @@ async def test_invoke_tool_url_encodes_name(mock_settings_instance):
         # The encoded name "my%2Ftool" should appear in the URL
         mock.add_mock_response(r"/api/v4/ai/tools/my%2Ftool:invoke$", {"result": "ok", "error": None})
         result = await invoke_tool("my/tool", {})
-    assert result.get("result") == "ok"
+    assert result.result == "ok"

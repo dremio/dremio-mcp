@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 import pandas as pd
 import pytest
 
-from dremioai.api.dremio.ai_tools import AiToolError
+from dremioai.api.dremio.ai_tools import InvokeToolResponse, ListToolsResponse
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.servers import mcp as mcp_server
@@ -165,10 +165,10 @@ class TestDynamicTools:
                             "pat": "test-pat",
                             "project_id": uuid.uuid4(),
                             "enable_search": True,
+                            "enable_remote_tools": enable_remote_tools,
                         },
                         "tools": {
                             "server_mode": ToolType.FOR_DATA_PATTERNS,
-                            "enable_remote_tools": enable_remote_tools,
                         },
                     }
                 )
@@ -197,19 +197,12 @@ class TestDynamicTools:
 
     @pytest.mark.asyncio
     async def test_discover_returns_tool_list(self):
-        """DiscoverDynamicTools should return JSON list of tools from Dremio"""
-        fake_remote_tools = [
-            {
-                "name": "JavaTool1",
-                "description": "A tool from Java",
-                "input_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
-            },
-            {
-                "name": "JavaTool2",
-                "description": "Another Java tool",
-                "input_schema": {"type": "object"},
-            },
-        ]
+        """DiscoverDynamicTools should return JSON with tools from Dremio"""
+        from dremioai.api.dremio.ai_tools import AiTool
+        fake_response = ListToolsResponse(tools=[
+            AiTool(name="JavaTool1", description="A tool from Java", inputSchema={"type": "object", "properties": {"x": {"type": "string"}}}),
+            AiTool(name="JavaTool2", description="Another Java tool", inputSchema={"type": "object"}),
+        ])
 
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
@@ -217,32 +210,30 @@ class TestDynamicTools:
             with patch(
                 "dremioai.tools.tools.ai_tools.list_tools",
                 new_callable=AsyncMock,
-                return_value=fake_remote_tools,
+                return_value=fake_response,
             ):
                 result = await server.call_tool("DiscoverDynamicTools", {})
 
             assert result is not None
             parsed = json.loads(result[0][0].text)
-            names = {t["name"] for t in parsed}
+            names = {t["name"] for t in parsed["tools"]}
             assert "JavaTool1" in names
             assert "JavaTool2" in names
 
     @pytest.mark.asyncio
     async def test_discover_returns_error_on_dremio_failure(self):
-        """DiscoverDynamicTools should return an error string when Dremio is unreachable"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
 
             with patch(
                 "dremioai.tools.tools.ai_tools.list_tools",
                 new_callable=AsyncMock,
-                side_effect=Exception("Dremio unreachable"),
+                return_value=ListToolsResponse(error="Dremio unreachable"),
             ):
                 result = await server.call_tool("DiscoverDynamicTools", {})
 
             assert result is not None
             text = result[0][0].text
-            assert "Failed to discover dynamic tools" in text
             assert "Dremio unreachable" in text
 
     @pytest.mark.asyncio
@@ -254,7 +245,7 @@ class TestDynamicTools:
             with patch(
                 "dremioai.tools.tools.ai_tools.invoke_tool",
                 new_callable=AsyncMock,
-                return_value={"result": "hello"},
+                return_value=InvokeToolResponse(result="hello"),
             ) as mock_invoke:
                 result = await server.call_tool(
                     "CallDynamicTool",
@@ -268,14 +259,13 @@ class TestDynamicTools:
 
     @pytest.mark.asyncio
     async def test_call_dynamic_tool_returns_error_on_failure(self):
-        """CallDynamicTool should return an error string when invoke fails"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
 
             with patch(
                 "dremioai.tools.tools.ai_tools.invoke_tool",
                 new_callable=AsyncMock,
-                side_effect=AiToolError("HTTP 500 Internal Server Error", status=500),
+                return_value=InvokeToolResponse(error="HTTP 500 Internal Server Error"),
             ):
                 result = await server.call_tool(
                     "CallDynamicTool",
@@ -286,8 +276,9 @@ class TestDynamicTools:
                 )
 
             text = result[0][0].text
-            assert "Failed to invoke dynamic tool" in text
-            assert "BrokenTool" in text
+            parsed = json.loads(text)
+            assert parsed.get("error") is not None
+            assert "500" in parsed["error"]
 
     @pytest.mark.asyncio
     async def test_call_dynamic_tool_with_invalid_json(self):

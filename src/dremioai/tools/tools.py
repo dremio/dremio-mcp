@@ -228,8 +228,7 @@ def is_tool_for(
             return False
 
     if get_requires_remote_tools(tool):
-        tool_settings = settings.instance().tools
-        if not (tool_settings and tool_settings.enable_remote_tools):
+        if not (dremio and dremio.enable_remote_tools):
             return False
 
     if (For := get_for(tool)) is not None:
@@ -554,15 +553,8 @@ class DiscoverDynamicTools(Tools):
         """Discover additional tools available from the Dremio server.
         Call this tool to get a list of dynamically available tools with their
         names, descriptions, and input schemas."""
-        try:
-            result = await ai_tools.list_tools()
-            return json.dumps(result)
-        except Exception as exc:
-            logger.warning(f"Failed to discover dynamic tools from Dremio: {exc}")
-            return (
-                f"Failed to discover dynamic tools from Dremio: {exc}. "
-                "The Dremio instance may be unreachable or may not support dynamic tools."
-            )
+        result = await ai_tools.list_tools()
+        return result.model_dump_json()
 
 
 class CallDynamicTool(Tools):
@@ -578,22 +570,16 @@ class CallDynamicTool(Tools):
             tool_name: The name of the tool to invoke, as returned by DiscoverDynamicTools.
             tool_arguments: The arguments to pass to the tool, either as a JSON string or a dict.
         """
-        if isinstance(tool_arguments, dict):
-            args = tool_arguments
-        else:
+        if isinstance(tool_arguments, str):
             try:
                 args = json.loads(tool_arguments)
             except json.JSONDecodeError as exc:
                 return f"Invalid JSON in tool_arguments: {exc}"
+        else:
+            args = tool_arguments
 
-        try:
-            result = await ai_tools.invoke_tool(tool_name, args)
-            if not result:
-                return json.dumps({"result": None})
-            return json.dumps(result)
-        except Exception as exc:
-            logger.warning(f"Failed to invoke dynamic tool '{tool_name}': {exc}")
-            return f"Failed to invoke dynamic tool '{tool_name}': {exc}"
+        result = await ai_tools.invoke_tool(tool_name, args)
+        return result.model_dump_json(exclude_none=True)
 
 
 def _subclasses(cls):
