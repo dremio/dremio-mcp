@@ -64,9 +64,9 @@ async def test_get_schemas_one_failure_does_not_break_others():
     assert len(result) == 3
     assert result[0].error is None
     assert result[0].data["path"] == ["ok", "one"]
-    # Failed entry: no data + HTTP error surfaced + original exception preserved.
+    # Failed entry: no data + error message captures exception type and detail.
     assert result[1].data is None
-    assert "HTTP 400" in result[1].error
+    assert "ClientResponseError" in result[1].error
     assert "Bad Request" in result[1].error
     assert result[2].error is None
     assert result[2].data["path"] == ["ok", "two"]
@@ -89,17 +89,19 @@ async def test_get_schemas_non_http_exception_is_captured():
 
 
 @pytest.mark.asyncio
-async def test_search_table_and_views_surfaces_skipped_paths():
-    """Tool response should include a `skipped` list when schema fetches fail."""
+async def test_search_table_and_views_drops_broken_entries_and_returns_healthy_ones():
+    """DX-118395: one broken catalog entry must not fail the whole tool call.
 
-    ok_df = pd.DataFrame([{"path": ["ok", "tbl"], "name": "ok.tbl", "schema": {"a": "INT"}}])
+    The tool silently drops entries whose schema could not be fetched and
+    returns the healthy ones.
+    """
 
+    ok_df = pd.DataFrame(
+        [{"path": ["ok", "tbl"], "name": "ok.tbl", "schema": {"a": "INT"}}]
+    )
     bad_df = pd.DataFrame(
         [{"path": ["bad", "view"], "name": "bad.view", "schema": None}]
     )
-    bad_df.attrs["skipped"] = [
-        {"path": ["bad", "view"], "reason": "HTTP 400: Bad Request"}
-    ]
 
     async def fake_search(search_obj, use_df=False):
         if search_obj.filter == 'category in ["TABLE"]':
@@ -109,29 +111,22 @@ async def test_search_table_and_views_surfaces_skipped_paths():
     with patch.object(tools_mod.search, "get_search_results", side_effect=fake_search):
         result = await tools_mod.SearchTableAndViews().invoke("NYC bike trips")
 
-    assert "results" in result
-    assert len(result["results"]) == 2
-    assert "skipped" in result
-    assert result["skipped"] == [
-        {"path": ["bad", "view"], "reason": "HTTP 400: Bad Request"}
-    ]
-    assert "skipped_note" in result
-    assert "1 table(s)/view(s)" in result["skipped_note"]
+    assert set(result.keys()) == {"results"}
+    names = {row["name"] for row in result["results"]}
+    assert "ok.tbl" in names
 
 
 @pytest.mark.asyncio
-async def test_search_table_and_views_no_skipped_key_when_all_succeed():
-    df = pd.DataFrame([{"path": ["ok"], "name": "ok", "schema": {}}])
+async def test_get_descriptions_raises_on_schema_fetch_error():
+    """get_descriptions must remain fail-fast so GetDescriptionOfTableOrSchema
+    surfaces an error instead of silently returning partial data."""
 
-    async def fake_search(search_obj, use_df=False):
-        return df
+    async def fake_get_schema(p, *_a, **_kw):
+        raise _client_response_error(400, "Bad Request")
 
-    with patch.object(tools_mod.search, "get_search_results", side_effect=fake_search):
-        result = await tools_mod.SearchTableAndViews().invoke("q")
-
-    assert "results" in result
-    assert "skipped" not in result
-    assert "skipped_note" not in result
+    with patch.object(catalog, "get_schema", side_effect=fake_get_schema):
+        with pytest.raises(ClientResponseError):
+            await catalog.get_descriptions([["a", "b"]])
 
 
 @pytest.mark.asyncio
@@ -145,4 +140,5 @@ async def test_get_schemas_all_failing_returns_empty_dicts_with_errors():
     assert len(result) == 2
     for r in result:
         assert r.data is None
-        assert "HTTP 404" in r.error
+        assert "ClientResponseError" in r.error
+        assert "Not Found" in r.error
