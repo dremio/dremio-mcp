@@ -266,11 +266,12 @@ async def get_search_results(
                     logger.error("Schema not found for search",
                                  path=paths[ix], reason=error)
                     schema = {}
-                data[ix]["schema"] = schema.get("schema")
+                if "schema" in schema:
+                    data[ix]["schema"] = schema.get("schema")
+                else:
+                    data[ix]["not_found"] = True
 
         df = pd.DataFrame(data=data)
-        # for any paths that we don't have schema, set not found
-        df["not_found"] = df.schema.isna()
         return df
 
     return EnterpriseSearchResultsWrapper(results=result)
