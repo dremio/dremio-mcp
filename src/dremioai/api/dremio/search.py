@@ -261,30 +261,16 @@ async def get_search_results(
         paths = [p["path"] for p in data]
         skipped: List[Dict[str, Any]] = []
         if schemas := await get_schemas(paths, include_tags=True, flatten=True):
-            for ix, r in enumerate(schemas):
-                data[ix]["schema"] = r.data.get("schema") if r.data else None
-                if r.error:
-                    logger.info(
-                        "search_schema_fetch_failed",
-                        path=paths[ix],
-                        reason=r.error,
-                    )
-                    skipped.append({"path": paths[ix], "reason": r.error})
+            for ix, (schema, error) in enumerate(schemas):
+                if schema is None or error is not None:
+                    logger.error("Schema not found for search",
+                                 path=paths[ix], reason=error)
+                    schema = {}
+                data[ix]["schema"] = schema.get("schema")
 
-        # Drop rows for unresolvable paths and re-add them with `not_found=True`
-        # so the LLM can see the partial failure in the tool output.
-        data = [d for d, sr in zip(data, schemas) if not sr.error] if schemas else data
         df = pd.DataFrame(data=data)
-        if skipped:
-            df = pd.concat(
-                [
-                    df,
-                    pd.DataFrame(
-                        {"path": [s["path"] for s in skipped], "not_found": True}
-                    ),
-                ],
-                ignore_index=True,
-            )
+        # for any paths that we don't have schema, set not found
+        df["not_found"] = df.schema.isna()
         return df
 
     return EnterpriseSearchResultsWrapper(results=result)

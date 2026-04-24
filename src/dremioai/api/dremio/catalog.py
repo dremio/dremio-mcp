@@ -204,7 +204,7 @@ async def get_schemas(
     include_tags: Optional[bool] = False,
     flatten: Optional[bool] = False,
     throw_exception: Optional[bool] = False,
-) -> List[SchemaResult]:
+) -> SchemaResult:
     async def _safe_get_schema(p) -> SchemaResult:
         try:
             data = await get_schema(p, by_id, include_tags, flatten)
