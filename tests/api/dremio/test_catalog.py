@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 from aiohttp import ClientResponseError
 
-from dremioai.api.dremio import catalog
+from dremioai.api.dremio import catalog, search
 from dremioai.tools import tools as tools_mod
 
 
@@ -43,49 +43,53 @@ async def test_get_schemas_all_success():
         result = await catalog.get_schemas([["a", "b"], ["c"]])
 
     assert len(result) == 2
-    assert all(r.error is None for r in result)
-    assert result[0].data["path"] == ["a", "b"]
-    assert result[1].data["path"] == ["c"]
+    assert result[0]["path"] == ["a", "b"]
+    assert result[1]["path"] == ["c"]
 
 
 @pytest.mark.asyncio
-async def test_get_schemas_one_failure_does_not_break_others():
-    """A single broken catalog entry must not fail the whole batch (DX-118395)."""
+async def test_get_schemas_propagates_http_exception():
+    """get_schemas does not swallow errors — exceptions bubble up to the caller (DX-118395)."""
 
-    async def fake_get_schema(p, *_a, **_kw):
-        if p == ["bad", "view"]:
+    async def fake_get_schema(*_a, **_kw):
+        raise _client_response_error(400, "Bad Request")
+
+    with patch.object(catalog, "get_schema", side_effect=fake_get_schema):
+        with pytest.raises(ClientResponseError):
+            await catalog.get_schemas([["ok", "one"], ["bad", "view"]])
+
+
+@pytest.mark.asyncio
+async def test_get_schemas_propagates_non_http_exception():
+    async def fake_get_schema(*_a, **_kw):
+        raise ValueError("kapow")
+
+    with patch.object(catalog, "get_schema", side_effect=fake_get_schema):
+        with pytest.raises(ValueError, match="kapow"):
+            await catalog.get_schemas([["boom"]])
+
+
+@pytest.mark.asyncio
+async def test_populate_schemas_marks_not_found_on_failure():
+    """One broken catalog entry must not fail the whole search (DX-118395).
+    Error is embedded per-row via schema_not_found on EnterpriseSearchCatalogObject."""
+
+    async def fake_get_schema(dataset_path_or_id, *_a, **_kw):
+        if dataset_path_or_id == ["bad", "view"]:
             raise _client_response_error(400, "Bad Request")
-        return {"schema": {"col": "VARCHAR"}, "path": p}
+        return {"schema": {"col": "VARCHAR"}}
 
-    paths = [["ok", "one"], ["bad", "view"], ["ok", "two"]]
-    with patch.object(catalog, "get_schema", side_effect=fake_get_schema):
-        result = await catalog.get_schemas(paths)
+    ok = search.EnterpriseSearchCatalogObject(path=["ok", "one"], labels=[])
+    bad = search.EnterpriseSearchCatalogObject(path=["bad", "view"], labels=[])
 
-    assert len(result) == 3
-    assert result[0].error is None
-    assert result[0].data["path"] == ["ok", "one"]
-    # Failed entry: no data + error message captures exception type and detail.
-    assert result[1].data is None
-    assert "ClientResponseError" in result[1].error
-    assert "Bad Request" in result[1].error
-    assert result[2].error is None
-    assert result[2].data["path"] == ["ok", "two"]
+    with patch.object(search, "get_schema", side_effect=fake_get_schema):
+        await ok.populate_schemas()
+        await bad.populate_schemas()
 
-
-@pytest.mark.asyncio
-async def test_get_schemas_non_http_exception_is_captured():
-    async def fake_get_schema(p, *_a, **_kw):
-        if p == ["boom"]:
-            raise ValueError("kapow")
-        return {"path": p}
-
-    with patch.object(catalog, "get_schema", side_effect=fake_get_schema):
-        result = await catalog.get_schemas([["ok"], ["boom"]])
-
-    assert result[0].error is None
-    assert result[1].data is None
-    assert "ValueError" in result[1].error
-    assert "kapow" in result[1].error
+    assert ok.schema == {"col": "VARCHAR"}
+    assert ok.schema_not_found is False
+    assert bad.schema is None
+    assert bad.schema_not_found is True
 
 
 @pytest.mark.asyncio
@@ -128,17 +132,3 @@ async def test_get_descriptions_raises_on_schema_fetch_error():
         with pytest.raises(ClientResponseError):
             await catalog.get_descriptions([["a", "b"]])
 
-
-@pytest.mark.asyncio
-async def test_get_schemas_all_failing_returns_empty_dicts_with_errors():
-    async def fake_get_schema(*_a, **_kw):
-        raise _client_response_error(404, "Not Found")
-
-    with patch.object(catalog, "get_schema", side_effect=fake_get_schema):
-        result = await catalog.get_schemas([["a"], ["b"]])
-
-    assert len(result) == 2
-    for r in result:
-        assert r.data is None
-        assert "ClientResponseError" in r.error
-        assert "Not Found" in r.error

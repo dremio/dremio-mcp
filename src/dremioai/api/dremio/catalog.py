@@ -18,18 +18,14 @@ from pydantic import BaseModel, Field, AfterValidator, ValidationError
 from typing import Annotated, List, Set, Tuple, Dict, AnyStr, Any, Union, Optional
 from datetime import datetime
 from enum import StrEnum, auto
-from functools import partial, reduce
-from csv import reader, excel
-from io import StringIO
-
-from aiohttp import ClientResponseError
+from functools import partial
 
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.api.util import UStrEnum, run_in_parallel
 from dremioai.config import settings
-from dremioai import log
-
-logger = log.logger(__name__)
+from csv import reader, excel
+from io import StringIO
+from functools import reduce
 
 
 class CatalogItemType(UStrEnum):
@@ -190,34 +186,15 @@ async def get_schema(
     return schema
 
 
-class SchemaResult(BaseModel):
-    """Per-path result of `get_schemas`. `data` is populated on success; `error`
-    carries a human-readable failure message when the fetch raised."""
-
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-
-
 async def get_schemas(
     dataset_path_or_ids: List[Union[List[str], str]],
     by_id: Optional[bool] = False,
     include_tags: Optional[bool] = False,
     flatten: Optional[bool] = False,
-    throw_exception: Optional[bool] = False,
-) -> SchemaResult:
-    async def _safe_get_schema(p) -> SchemaResult:
-        try:
-            data = await get_schema(p, by_id, include_tags, flatten)
-            return SchemaResult(data=data)
-        except Exception as e:
-            if throw_exception:
-                raise e
-            return SchemaResult(
-                error=f"{type(e).__name__}: {e}"
-            )
+) -> List[Dict[str, Any]]:
 
     return await run_in_parallel(
-        [_safe_get_schema(p) for p in dataset_path_or_ids]
+        [get_schema(p, by_id, include_tags, flatten) for p in dataset_path_or_ids]
     )
 
 
@@ -242,8 +219,7 @@ async def get_descriptions(
     components = set()
     result = {}
     while True:
-        results = await get_schemas(dataset_path_or_ids, by_id, include_tags=True, throw_exception=True)
-        schemas = [r.data for r in results if r.data]
+        schemas = await get_schemas(dataset_path_or_ids, by_id, include_tags=True)
         rest = set()
         for s in schemas:
             if d := extract_description(s):
