@@ -14,7 +14,7 @@ dependencies = [
     "click>=8.1.8",
     "fastapi>=0.115.11",
     "launchdarkly-server-sdk>=9.15.0",
-    "mcp>=1.23.0",
+    "mcp==1.10.0",
     "multidict>=6.4.0",
     "openai>=1.65.3",
     "pandas>=2.2.3",

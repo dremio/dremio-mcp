@@ -208,21 +208,6 @@ class FastMCPServerWithAuthToken(FastMCP):
             # like ../mcp/{project_id}/..  and extract that project id as
             # context var
             app.add_middleware(ProjectIdMiddleware)
-            # FastMCP registers the streamable-HTTP route as an exact match
-            # on "/mcp". Loosen it so project-id-prefixed URLs such as
-            # "/mcp/<project_id>/" also match; the ProjectIdMiddleware still
-            # extracts the id from the URL.
-            import re as _re
-            from starlette.routing import Route as _Route
-
-            for _route in app.routes:
-                if (
-                    isinstance(_route, _Route)
-                    and getattr(_route, "path", None) == self.settings.streamable_http_path
-                ):
-                    _route.path_regex = _re.compile(
-                        rf"^{_re.escape(self.settings.streamable_http_path)}(?:/[\da-z-]+/?.*)?$"
-                    )
 
         # Metrics are now served on a separate port, not mounted here
         return app
