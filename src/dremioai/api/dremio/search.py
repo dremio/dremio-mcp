@@ -85,6 +85,7 @@ class Category(UStrEnum):
     REFLECTION = auto()
     SCRIPT = auto()
     SOURCE = auto()
+    VIZ = auto()
 
 
 class UserOrRole(UStrEnum):
