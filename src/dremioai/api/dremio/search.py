@@ -25,7 +25,7 @@ from typing import (
     Any,
     List,
     Union,
-    Optional,
+    Optional, Dict,
 )
 from dremioai.api.util import UStrEnum
 from datetime import datetime
@@ -160,22 +160,16 @@ class EnterpriseSearchCatalogObject(BaseModel):
     modified_at: Optional[datetime] = Field(default=None, alias="lastModifiedAt")
     func_sql: Optional[str] = Field(default=None, alias="functionSql")
     owner: Optional[EnterpriseSearchUserOrRoleObject] = None
-    schema: Optional[Any] = None
-    schema_not_found: Optional[bool] = None
+    schema: Optional[Dict[str, Any]] = None
 
     async def populate_schemas(self):
         if self.path:
             try:
                 data = await get_schema(dataset_path_or_id=self.path, include_tags=True, flatten=True)
+                self.schema = data.get('schema') if data else None
             except Exception as e:
                 logger.error("Schema not found for search",
-                             path=self.path, reason=f"{type(e).__name__}: {e}")
-                data = {}
-            if "schema" in data:
-                self.schema = data.get("schema")
-                self.schema_not_found = False
-            else:
-                self.schema_not_found = True
+                             path=self.path, reason=str(e))
 
     def as_df_dict(self):
         return {
@@ -185,7 +179,6 @@ class EnterpriseSearchCatalogObject(BaseModel):
             "tags": ",".join(self.labels),
             "description": self.wiki,
             "schema": self.schema,
-            "not_found": self.schema_not_found,
         }
 
 
@@ -277,5 +270,7 @@ async def get_search_results(
     if use_df:
         data = [r.catalog.as_df_dict() for r in result]
         df = pd.DataFrame(data=data)
+        if not df.empty:
+            df["not_found"] = df.schema.isna()
         return df
     return EnterpriseSearchResultsWrapper(results=result)
