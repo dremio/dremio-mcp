@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import asyncio
 
 from pydantic import (
     BaseModel,
@@ -21,17 +22,21 @@ from pydantic import (
     field_validator,
 )
 from typing import (
+    Any,
     List,
     Union,
-    Optional,
+    Optional, Dict,
 )
 from dremioai.api.util import UStrEnum
 from datetime import datetime
 from enum import auto
 from dremioai.config import settings
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
-from dremioai.api.dremio.catalog import get_schemas
+from dremioai.api.dremio.catalog import get_schemas, get_schema
+from dremioai import log
 import pandas as pd
+
+logger = log.logger(__name__)
 
 
 class QueryType(UStrEnum):
@@ -85,6 +90,7 @@ class Category(UStrEnum):
     REFLECTION = auto()
     SCRIPT = auto()
     SOURCE = auto()
+    VIZ = auto()
 
 
 class UserOrRole(UStrEnum):
@@ -155,6 +161,16 @@ class EnterpriseSearchCatalogObject(BaseModel):
     modified_at: Optional[datetime] = Field(default=None, alias="lastModifiedAt")
     func_sql: Optional[str] = Field(default=None, alias="functionSql")
     owner: Optional[EnterpriseSearchUserOrRoleObject] = None
+    schema: Optional[Dict[str, Any]] = None
+
+    async def populate_schemas(self):
+        if self.path:
+            try:
+                data = await get_schema(dataset_path_or_id=self.path, include_tags=True, flatten=True)
+                self.schema = data.get('schema') if data else None
+            except Exception as e:
+                logger.error("Schema not found for search",
+                             path=self.path, reason=str(e))
 
     def as_df_dict(self):
         return {
@@ -163,6 +179,7 @@ class EnterpriseSearchCatalogObject(BaseModel):
             "type": self.type,
             "tags": ",".join(self.labels),
             "description": self.wiki,
+            "schema": self.schema,
         }
 
 
@@ -247,16 +264,14 @@ async def get_search_results(
             deser=EnterpriseSearchResults,
             params=params,
         )
+    result = [r for r in result if r.category in (Category.TABLE, Category.VIEW)]
+    tasks = [r.catalog.populate_schemas() for r in result]
+    await asyncio.gather(*tasks, return_exceptions=True)
 
     if use_df:
-        result = [r for r in result if r.category in (Category.TABLE, Category.VIEW)]
-
         data = [r.catalog.as_df_dict() for r in result]
-        paths = [p["path"] for p in data]
-        if schemas := await get_schemas(paths, include_tags=True, flatten=True):
-            for ix, schema in enumerate(schemas):
-                data[ix]["schema"] = schema.get("schema")
-
-        return pd.DataFrame(data=data)
-
+        df = pd.DataFrame(data=data)
+        if not df.empty:
+            df["not_found"] = df.schema.isna()
+        return df
     return EnterpriseSearchResultsWrapper(results=result)
