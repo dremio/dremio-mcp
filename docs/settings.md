@@ -96,44 +96,6 @@ prometheus:
   token: <string> # Authentication token
 ```
 
-### LangChain Settings (Experimental)
-
-The Tools defined in the `tools` section can be used with LangChain if required as well. The LangChain integration depends on `openai` or `ollama` for LLM. The [src/dremoiai/servers/frameworks/langchain/server.py] supplies a command line interface showing the integration.
-
-```yaml
-langchain:
-  llm: <Model> # LLM type (ollama/openai)
-  openai:
-    api_key: <string> # OpenAI API key
-    model: <string> # Model name (default: gpt-4)
-    org: <string> # Optional: Organization ID
-  ollama:
-    model: <string> # Model name (default: llama3.1)
-```
-
-### BeeAI Settings (Experimental)
-
-[BeeAI](https://github.com/i-am-bee/beeai-framework) framework supports MCP as well as multiple LLM providers. The [src/dremoiai/servers/frameworks/beeai/server.py] supplies a command line interface showing this integration.
-
-```yaml
-beeai:
-  mcp_server:
-    command: "uv"
-    args:
-    - "run"
-    - "--directory"
-    - "<toplevel git directory>"
-    - "dremio-mcp-server"
-    - "run"
-  sliding_memory_size: <int> # Memory window size
-  anthropic:
-    api_key: <string> # Anthropic API key
-    chat_model: <string> # Chat model name
-  openai: <OpenAI> # OpenAI settings (same as LangChain)
-  ollama: <Ollama> # Ollama settings (same as LangChain)
-```
- 
-
 ## Configuration Methods
 
 ### File-based Configuration
