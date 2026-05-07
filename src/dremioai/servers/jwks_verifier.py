@@ -126,7 +126,7 @@ class JWKSVerifier:
         claims = pyjwt.decode(
             token,
             signing_key.key,
-            algorithms=["RS256"],
+            algorithms=["RS256", "ES256", "ES384", "ES512"],
             options={
                 "verify_aud": False,
                 "verify_iss": False,
