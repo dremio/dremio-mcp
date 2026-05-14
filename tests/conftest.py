@@ -17,6 +17,7 @@
 """
 Global pytest fixtures for dremio-mcp tests.
 """
+
 import os
 import random
 import uuid
@@ -48,6 +49,13 @@ import contextlib
 from dremioai.log import set_level
 from dremioai.metrics import registry
 from prometheus_client import CollectorRegistry
+
+
+@pytest.fixture(autouse=True)
+def reset_settings_state():
+    settings.reset_state_for_tests()
+    yield
+    settings.reset_state_for_tests()
 
 
 @pytest.fixture(autouse=True)
@@ -117,23 +125,26 @@ def mock_config_dir(temp_config_dir):
 @pytest.fixture
 def mock_settings_instance():
     """Create a mock settings instance with default values"""
-    old_settings = settings.instance()
-    try:
-        settings._settings.set(
-            settings.Settings.model_validate(
-                {
-                    "dremio": {
-                        "uri": "https://test-dremio-uri.com",
-                        "pat": "test-pat",
-                        "project_id": uuid.uuid4(),
-                    },
-                    "tools": {"server_mode": ToolType.FOR_SELF.name},
-                }
-            )
-        )
-        yield settings.instance()
-    finally:
-        settings._settings.set(old_settings)
+    config = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test-dremio-uri.com",
+                "pat": "test-pat",
+                "project_id": uuid.uuid4(),
+                "api": {
+                    "http_retry": {
+                        "max_retries": 5,
+                        "initial_delay": 2.0,
+                        "max_delay": 120.0,
+                        "backoff_multiplier": 3.0,
+                    }
+                },
+            },
+            "tools": {"server_mode": ToolType.FOR_SELF.name},
+        }
+    )
+    settings.set_base_settings(config)
+    yield settings.instance()
 
 
 @pytest.fixture
@@ -240,7 +251,7 @@ async def http_streamable_mcp_server(
             config["dremio"]["wlm"] = {"engine_name": wlm_engine}
         if dremio_overrides:
             config["dremio"].update(dremio_overrides)
-        settings._settings.set(settings.Settings.model_validate(config))
+        settings.set_base_settings(settings.Settings.model_validate(config))
         settings.write_settings()
 
         set_level(logging_level.upper())
@@ -276,7 +287,7 @@ async def http_streamable_mcp_server(
         if sf is not None:
             sf.close()
         print(f"{sf} closed")
-        settings._settings.set(old)
+        settings.set_base_settings(old)
 
 
 @contextlib.asynccontextmanager

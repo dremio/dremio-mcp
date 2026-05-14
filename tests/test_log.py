@@ -49,6 +49,8 @@ def reset_structlog():
     structlog.reset_defaults()
     # Reset the global level
     log._level = None
+    log._scoped_level = None
+    log._scoped_logger_names.clear()
     # Clear all handlers from root logger
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
@@ -60,6 +62,8 @@ def reset_structlog():
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
+    log._scoped_level = None
+    log._scoped_logger_names.clear()
 
 
 class TestGetLogDirectory:
@@ -355,3 +359,26 @@ class TestIntegration:
             assert "Info message" not in content
             assert "Warning message" in content
             assert "Error message" in content
+
+    def test_scoped_log_level_filtering(self, mock_home_dir):
+        """Scoped log level should only apply to the named loggers."""
+        with patch("sys.platform", "linux"):
+            structlog.reset_defaults()
+            log.set_level(logging.INFO)
+            log.configure(to_file=True)
+            log.set_level(logging.DEBUG, logger_names=["scoped.logger"])
+
+            scoped_logger = log.logger("scoped.logger")
+            other_logger = log.logger("other.logger")
+
+            scoped_logger.debug("Scoped debug message")
+            other_logger.debug("Other debug message")
+            other_logger.info("Other info message")
+
+            expected_dir = mock_home_dir / ".local" / "share" / "dremioai" / "logs"
+            log_file = expected_dir / "dremioai.log"
+            content = log_file.read_text()
+
+            assert "Scoped debug message" in content
+            assert "Other debug message" not in content
+            assert "Other info message" in content

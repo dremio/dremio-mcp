@@ -553,31 +553,47 @@ def create_metrics_server(host: str, port: int, log_level: str) -> uvicorn.Serve
     return server
 
 
-_LOG_LEVEL_REFRESH_INTERVAL = 60  # seconds
+_SETTINGS_REFRESH_INTERVAL = 60  # seconds
 
 
-async def _log_level_refresh_loop():
-    """Periodically sync log level from LD flags."""
-    _log = log.logger("log_level_refresh")
+async def _settings_refresh_loop():
+    """Periodically reload runtime-mutable settings and sync log level."""
+    _log = log.logger("settings_refresh")
     while True:
-        await asyncio.sleep(_LOG_LEVEL_REFRESH_INTERVAL)
+        await asyncio.sleep(_SETTINGS_REFRESH_INTERVAL)
         try:
             s = settings.instance()
             if s is None:
                 continue
-            level_name = s.get("log_level")
+            settings.reload_mutable_settings_if_changed()
+            current_settings = settings.instance()
+            level_name = current_settings.get("log_level")
+            logger_names = current_settings.loggers or []
             level = getattr(logging, level_name.upper(), None)
-            if level is not None and level != log.level():
-                _log.info(f"Updating log level to {level_name}")
+            if level is None:
+                continue
+
+            current_scoped_loggers = log.scoped_loggers()
+            if logger_names:
+                if (
+                    level != log.scoped_level()
+                    or logger_names != current_scoped_loggers
+                ):
+                    _log.info(
+                        f"Updating log level to {level_name} for loggers {', '.join(logger_names)}"
+                    )
+                    log.set_level(level, logger_names=logger_names)
+            elif level != log.level() or current_scoped_loggers:
+                _log.info(f"Updating global log level to {level_name}")
                 log.set_level(level)
         except Exception as e:
-            _log.debug(f"Log level refresh failed: {e}")
+            _log.debug(f"Settings refresh failed: {e}")
 
 
 @contextlib.asynccontextmanager
 async def _server_lifespan(app: FastMCP):
     """Lifespan context manager that runs background tasks alongside the server."""
-    task = asyncio.create_task(_log_level_refresh_loop())
+    task = asyncio.create_task(_settings_refresh_loop())
     try:
         yield
     finally:
@@ -656,7 +672,7 @@ def main(
     if mock:
         transport = Transports.streamable_http
         # In mock mode, create a minimal settings instance — no Dremio config needed
-        settings._settings.set(
+        settings.set_base_settings(
             settings.Settings.model_validate(
                 {
                     "dremio": {
@@ -664,14 +680,23 @@ def main(
                         "pat": "mock-pat",
                     }
                 }
-            )
+            ),
+            initialize_ld=True,
         )
     else:
         if enable_streaming_http:
             transport = Transports.streamable_http
         else:
             transport = Transports.stdio
-        cfg = settings.configure(config_file).get()
+        settings.configure(config_file)
+        if settings.instance().loggers:
+            configured_level = getattr(
+                logging, settings.instance().get("log_level").upper(), None
+            )
+            if configured_level is not None:
+                log.set_level(
+                    configured_level, logger_names=settings.instance().loggers
+                )
         dremio = settings.instance().dremio
         if (
             dremio.oauth_supported
