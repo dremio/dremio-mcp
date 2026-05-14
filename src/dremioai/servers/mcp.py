@@ -565,7 +565,11 @@ async def _settings_refresh_loop():
             s = settings.instance()
             if s is None:
                 continue
-            settings.reload_mutable_settings_if_changed()
+            # Config reload is typically a small local file read, so blocking the
+            # event loop here would be an edge case. We still offload it to a
+            # worker thread to keep the refresh loop non-blocking if config I/O
+            # ever becomes unexpectedly slow.
+            await asyncio.to_thread(settings.reload_mutable_settings_if_changed)
             current_settings = settings.instance()
             level_name = current_settings.get("log_level")
             logger_names = current_settings.loggers or []
