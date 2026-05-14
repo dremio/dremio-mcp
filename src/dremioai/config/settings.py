@@ -433,6 +433,10 @@ class BeeAI(BaseModel):
 
 class Settings(FlagAwareMixin, BaseSettings):
     log_level: Annotated[Optional[str], RuntimeMutable()] = Field(default="INFO")
+    loggers: Annotated[Optional[List[str]], RuntimeMutable(), NoFlag()] = Field(
+        default=None,
+        description="Optional logger names to scope log_level to; when unset, log_level applies globally.",
+    )
     dremio: Optional[Dremio] = Field(default=None)
     tools: Optional[Tools] = Field(default_factory=Tools)
     launchdarkly: Optional[LaunchDarkly] = Field(default_factory=LaunchDarkly)

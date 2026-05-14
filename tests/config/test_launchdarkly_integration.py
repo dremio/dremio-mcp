@@ -728,6 +728,41 @@ dremio:
         log.set_level(original_level)
 
 
+@pytest.mark.asyncio
+async def test_settings_refresh_scopes_log_level_to_configured_loggers(tmp_path):
+    from dremioai.servers.mcp import _settings_refresh_loop
+    from dremioai import log
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("""
+log_level: DEBUG
+loggers:
+  - scoped.logger
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+""")
+    settings.configure(cfg)
+
+    original_level = log.level()
+    try:
+        with (
+            patch("dremioai.servers.mcp._SETTINGS_REFRESH_INTERVAL", 0),
+            patch.object(log, "set_level") as mock_set_level,
+        ):
+            task = asyncio.create_task(_settings_refresh_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        mock_set_level.assert_called_with(logging.DEBUG, logger_names=["scoped.logger"])
+    finally:
+        log.set_level(original_level)
+
+
 # -- _build_context -----------------------------------------------------------
 
 

@@ -566,10 +566,25 @@ async def _settings_refresh_loop():
             if s is None:
                 continue
             settings.reload_mutable_settings_if_changed()
-            level_name = settings.instance().get("log_level")
+            current_settings = settings.instance()
+            level_name = current_settings.get("log_level")
+            logger_names = current_settings.loggers or []
             level = getattr(logging, level_name.upper(), None)
-            if level is not None and level != log.level():
-                _log.info(f"Updating log level to {level_name}")
+            if level is None:
+                continue
+
+            current_scoped_loggers = log.scoped_loggers()
+            if logger_names:
+                if (
+                    level != log.scoped_level()
+                    or logger_names != current_scoped_loggers
+                ):
+                    _log.info(
+                        f"Updating log level to {level_name} for loggers {', '.join(logger_names)}"
+                    )
+                    log.set_level(level, logger_names=logger_names)
+            elif level != log.level() or current_scoped_loggers:
+                _log.info(f"Updating global log level to {level_name}")
                 log.set_level(level)
         except Exception as e:
             _log.debug(f"Settings refresh failed: {e}")
@@ -674,6 +689,14 @@ def main(
         else:
             transport = Transports.stdio
         settings.configure(config_file)
+        if settings.instance().loggers:
+            configured_level = getattr(
+                logging, settings.instance().get("log_level").upper(), None
+            )
+            if configured_level is not None:
+                log.set_level(
+                    configured_level, logger_names=settings.instance().loggers
+                )
         dremio = settings.instance().dremio
         if (
             dremio.oauth_supported
