@@ -23,7 +23,11 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from mcp.server.fastmcp.utilities.func_metadata import func_metadata
 from dremioai.config import settings
-from dremioai.tools.tools import GetUsefulSystemTableNames, GetSchemaOfTable, RunSqlQuery
+from dremioai.tools.tools import (
+    GetUsefulSystemTableNames,
+    GetSchemaOfTable,
+    RunSqlQuery,
+)
 
 
 async def mock_mcp_validate_tool_output(tool, *args, **kwargs):
@@ -82,15 +86,17 @@ async def test_run_sql_query_json_safe_output():
         ]
     )
 
-    with patch("dremioai.tools.tools.sql.run_query", new_callable=AsyncMock) as mock_run_query:
+    with patch(
+        "dremioai.tools.tools.sql.run_query", new_callable=AsyncMock
+    ) as mock_run_query:
         mock_run_query.return_value = df
-        token = settings._settings.set(
+        token = settings._settings_override.set(
             settings.Settings.model_validate({"dremio": {"uri": "https://test"}})
         )
         try:
             result = await tool.invoke("SELECT 1")
         finally:
-            settings._settings.reset(token)
+            settings._settings_override.reset(token)
 
     assert isinstance(result, dict)
     assert "result" in result

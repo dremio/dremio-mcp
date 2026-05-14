@@ -399,7 +399,7 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None 
         if ld_sdk_key:
             overrides["launchdarkly.sdk_key"] = ld_sdk_key
         configured_settings = old.model_copy(deep=True).with_overrides(overrides)
-        settings._settings.set(configured_settings)
+        settings._set_base_settings(configured_settings)
         mcp_server = init(
             transport=Transports.streamable_http,
             port=port,
@@ -409,11 +409,6 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None 
         )
 
         def _run():
-            # Propagate settings to server thread — ContextVar doesn't
-            # automatically transfer across threads, so without this the
-            # server would fall back to the default config file.
-            settings._settings.set(configured_settings)
-
             a = mcp_server.streamable_http_app()
             c = uvicorn.Config(app=a, host="127.0.0.1", port=port, log_level="warning")
             s = uvicorn.Server(c)
@@ -434,7 +429,7 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None 
 
         yield port
     finally:
-        settings._settings.set(old)
+        settings._set_base_settings(old)
 
 
 @app.command("test", help="Run a quick smoketest for a deployed MCP server")

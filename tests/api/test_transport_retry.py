@@ -26,6 +26,7 @@ from aiohttp import ClientResponse
 
 from dremioai.api.transport import RetryConfig, retry_middleware
 from dremioai.config import settings
+from dremioai.config.feature_flags import FeatureFlagManager
 
 
 class TestRetryConfig:
@@ -37,20 +38,21 @@ class TestRetryConfig:
             retry_config = RetryConfig()
 
             # Verify default values from HttpRetry model
-            assert retry_config.config.max_retries == 20
-            assert retry_config.config.initial_delay == 1.0
-            assert retry_config.config.max_delay == 60.0
-            assert retry_config.config.backoff_multiplier == 2.0
+            assert retry_config.max_retries == 20
+            assert retry_config.get_config_delay(0) == 1.0
+            assert (
+                retry_config.get_delay(MagicMock(headers={"Retry-After": None}), 10)
+                == 60.0
+            )
 
     def test_retry_config_with_custom_settings(self, mock_settings_instance):
         """Test RetryConfig initialization with custom settings"""
         retry_config = RetryConfig()
 
         # Verify it uses settings from mock
-        assert retry_config.config.max_retries == 5
-        assert retry_config.config.initial_delay == 2.0
-        assert retry_config.config.max_delay == 120.0
-        assert retry_config.config.backoff_multiplier == 3.0
+        assert retry_config.max_retries == 5
+        assert retry_config.get_config_delay(0) == 2.0
+        assert retry_config.get_config_delay(1) == 6.0
 
     def test_get_config_delay_exponential_backoff(self, mock_settings_instance):
         """Test exponential backoff calculation"""
@@ -123,6 +125,22 @@ class TestRetryConfig:
         # Should fall back to config delay
         delay = retry_config.get_delay(mock_response, attempt_number=1)
         assert delay == 6.0  # Falls back to config delay
+
+    @patch("dremioai.config.feature_flags.ldclient")
+    def test_retry_config_uses_get_for_ld_precedence(
+        self, mock_ldclient, mock_settings_instance
+    ):
+        mock_client = MagicMock()
+        mock_client.is_initialized.return_value = True
+        mock_client.variation.side_effect = lambda key, ctx, default: (
+            9 if key == "dremio.api.http_retry.max_retries" else default
+        )
+        mock_ldclient.get.return_value = mock_client
+        FeatureFlagManager.initialize("test-key")
+
+        retry_config = RetryConfig()
+
+        assert retry_config.max_retries == 9
 
 
 class TestRetryMiddleware:
@@ -294,19 +312,21 @@ class TestRetryMiddleware:
 @pytest.fixture
 def mock_settings_instance():
     """Create a mock settings instance with custom retry configuration"""
-    # Create actual HttpRetry instance with custom values
-    http_retry_config = settings.HttpRetry(
-        max_retries=5, initial_delay=2.0, max_delay=120.0, backoff_multiplier=3.0
+    mock_settings = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+                "api": {
+                    "http_retry": {
+                        "max_retries": 5,
+                        "initial_delay": 2.0,
+                        "max_delay": 120.0,
+                        "backoff_multiplier": 3.0,
+                    }
+                },
+            }
+        }
     )
-
-    mock_dremio = MagicMock()
-    mock_dremio.api = MagicMock()
-    mock_dremio.api.http_retry = http_retry_config
-
-    # Create mock settings object
-    mock_settings = MagicMock()
-    mock_settings.dremio = mock_dremio
-
-    # Patch settings.instance to return our mock
-    with patch.object(settings, "instance", return_value=mock_settings):
-        yield mock_settings
+    settings._set_base_settings(mock_settings)
+    yield mock_settings

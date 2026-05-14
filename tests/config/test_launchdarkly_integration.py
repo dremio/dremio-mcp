@@ -27,10 +27,8 @@ from dremioai.config.feature_flags import FeatureFlagManager
 @pytest.fixture(autouse=True)
 def reset_feature_flag_manager():
     FeatureFlagManager.reset()
-    old = settings._settings.get()
     yield
     FeatureFlagManager.reset()
-    settings._settings.set(old)
 
 
 def _make_settings(launchdarkly=None, **dremio_overrides):
@@ -40,7 +38,7 @@ def _make_settings(launchdarkly=None, **dremio_overrides):
     if launchdarkly is not None:
         cfg["launchdarkly"] = launchdarkly
     s = settings.Settings.model_validate(cfg)
-    settings._settings.set(s)
+    settings._set_base_settings(s)
     return s
 
 
@@ -572,15 +570,15 @@ def test_flag_keys_match_golden():
     ), "Flag keys changed! If intentional, run: uv run python scripts/generate_flag_keys.py --write"
 
 
-# -- Periodic log level refresh -----------------------------------------------
+# -- Periodic settings refresh ------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_log_level_refresh_updates_level():
+async def test_settings_refresh_updates_level():
     """Periodic refresh picks up LD log_level changes and updates logging."""
     from dremioai.servers.mcp import (
-        _log_level_refresh_loop,
-        _LOG_LEVEL_REFRESH_INTERVAL,
+        _settings_refresh_loop,
+        _SETTINGS_REFRESH_INTERVAL,
     )
     from dremioai import log
 
@@ -598,8 +596,8 @@ async def test_log_level_refresh_updates_level():
         FeatureFlagManager.initialize("test-sdk-key")
 
         # Run one iteration with a short interval
-        with patch("dremioai.servers.mcp._LOG_LEVEL_REFRESH_INTERVAL", 0):
-            task = asyncio.create_task(_log_level_refresh_loop())
+        with patch("dremioai.servers.mcp._SETTINGS_REFRESH_INTERVAL", 0):
+            task = asyncio.create_task(_settings_refresh_loop())
             await asyncio.sleep(0.05)
             task.cancel()
             try:
@@ -614,18 +612,18 @@ async def test_log_level_refresh_updates_level():
 
 
 @pytest.mark.asyncio
-async def test_log_level_refresh_no_change_when_same():
+async def test_settings_refresh_no_change_when_same():
     """Refresh loop does not call set_level when level hasn't changed."""
-    from dremioai.servers.mcp import _log_level_refresh_loop
+    from dremioai.servers.mcp import _settings_refresh_loop
     from dremioai import log
 
     _make_settings()
 
     with (
-        patch("dremioai.servers.mcp._LOG_LEVEL_REFRESH_INTERVAL", 0),
+        patch("dremioai.servers.mcp._SETTINGS_REFRESH_INTERVAL", 0),
         patch.object(log, "set_level") as mock_set_level,
     ):
-        task = asyncio.create_task(_log_level_refresh_loop())
+        task = asyncio.create_task(_settings_refresh_loop())
         await asyncio.sleep(0.05)
         task.cancel()
         try:
@@ -635,6 +633,99 @@ async def test_log_level_refresh_no_change_when_same():
 
     # log_level defaults to INFO, which is already the current level
     mock_set_level.assert_not_called()
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_reload_mutable_settings_preserves_ld_precedence(mock_ldclient, tmp_path):
+    mock_client = _make_mock_ld_client({"dremio.allow_dml": True})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("""
+launchdarkly:
+  sdk_key: test-key
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+  allow_dml: false
+""")
+    settings.configure(cfg)
+
+    cfg.write_text("""
+launchdarkly:
+  sdk_key: test-key
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+  allow_dml: false
+  api:
+    polling_interval: 7
+""")
+    settings.reload_mutable_settings_if_changed()
+
+    assert settings.instance().dremio.allow_dml is False
+    assert settings.instance().dremio.get("allow_dml") is True
+    assert settings.instance().dremio.api.get("polling_interval") == 7
+
+
+@patch("dremioai.config.feature_flags.ldclient")
+def test_reload_mutable_settings_does_not_reinitialize_ld_on_validation_failure(
+    mock_ldclient, tmp_path
+):
+    mock_client = _make_mock_ld_client({})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("""
+launchdarkly:
+  sdk_key: test-key
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+""")
+    settings.configure(cfg)
+    assert mock_ldclient.set_config.call_count == 1
+
+    cfg.write_text("dremio: [")
+    settings.reload_mutable_settings_if_changed()
+
+    assert mock_ldclient.set_config.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_reloads_yaml_before_log_level_evaluation(tmp_path):
+    from dremioai.servers.mcp import _settings_refresh_loop
+    from dremioai import log
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("""
+log_level: INFO
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+""")
+    settings.configure(cfg)
+
+    cfg.write_text("""
+log_level: ERROR
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+""")
+
+    original_level = log.level()
+    try:
+        with patch("dremioai.servers.mcp._SETTINGS_REFRESH_INTERVAL", 0):
+            task = asyncio.create_task(_settings_refresh_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        assert log.level() == logging.ERROR
+    finally:
+        log.set_level(original_level)
 
 
 # -- _build_context -----------------------------------------------------------

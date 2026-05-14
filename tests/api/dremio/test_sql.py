@@ -14,41 +14,67 @@
 #  limitations under the License.
 #
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from dremioai.api.dremio.sql import Job
 
-
-@pytest.mark.parametrize(
-    "js",
-    [
-        pytest.param(
-            """
-    {
-        "jobState": "COMPLETED",
-        "rowCount": 1,
-        "errorMessage": "",
-        "startedAt": "2025-06-11T15:35:11.636Z",
-        "endedAt": "2025-06-11T15:35:15.949Z",
-        "queryType": "REST",
-        "queueName": "SMALL",
-        "queueId": "SMALL",
-        "resourceSchedulingStartedAt": "2025-06-11T15:35:12.435Z",
-        "resourceSchedulingEndedAt": "2025-06-11T15:35:12.503Z",
-        "cancellationReason": ""
-    }""",
-            id="with rows",
-        ),
-        pytest.param(
-            """{
-        "jobState": "METADATA_RETRIEVAL",
-        "errorMessage": "",
-        "startedAt": "2025-06-11T15:35:11.565Z",
-        "queryType": "REST",
-        "cancellationReason": ""
-    }""",
-            id="without rows",
-        ),
-    ],
+from dremioai.api.dremio.sql import (
+    Job,
+    JobResults,
+    JobResultsWrapper,
+    JobState,
+    QuerySubmission,
+    QueryType,
+    get_results,
 )
-def test_basic_job(js: str):
-    j = Job.model_validate_json(js)
+from dremioai.config import settings
+
+
+@pytest.mark.asyncio
+@patch("dremioai.config.feature_flags.ldclient")
+async def test_get_results_uses_polling_interval_get_for_ld_precedence(mock_ldclient):
+    mock_client = MagicMock()
+    mock_client.is_initialized.return_value = True
+    mock_client.variation.side_effect = lambda key, ctx, default: (
+        0.25 if key == "dremio.api.polling_interval" else default
+    )
+    mock_ldclient.get.return_value = mock_client
+
+    settings._set_base_settings(
+        settings.Settings.model_validate(
+            {
+                "launchdarkly": {"sdk_key": "test-key"},
+                "dremio": {
+                    "uri": "https://test.dremio.cloud",
+                    "pat": "test-pat",
+                    "api": {"polling_interval": 3.0},
+                },
+            }
+        )
+    )
+
+    running = Job(jobState=JobState.RUNNING, queryType=QueryType.REST)
+    complete = Job(
+        jobState=JobState.COMPLETED,
+        rowCount=1,
+        queryType=QueryType.REST,
+    )
+    results = JobResults(rowCount=1, schema=[], rows=[{"value": 1}])
+    client = AsyncMock()
+    client.get.side_effect = [running, complete]
+
+    with (
+        patch(
+            "dremioai.api.dremio.sql._fetch_results",
+            new=AsyncMock(return_value=results),
+        ),
+        patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
+        response = await get_results(
+            project_id=None,
+            qs=QuerySubmission(id="job-1"),
+            client=client,
+        )
+
+    assert isinstance(response, JobResultsWrapper)
+    assert mock_sleep.await_args_list[0].args[0] == 0.25

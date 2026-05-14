@@ -26,7 +26,12 @@ from pydantic import (
     field_serializer,
     AliasChoices,
 )
-from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, YamlConfigSettingsSource
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+    PydanticBaseSettingsSource,
+    YamlConfigSettingsSource,
+)
 from typing import (
     Optional,
     Union,
@@ -52,6 +57,7 @@ from contextvars import ContextVar
 from os import environ
 from importlib.util import find_spec
 from datetime import datetime
+from types import NoneType
 from dremioai import log
 from dremioai.config.feature_flags import FeatureFlagManager
 
@@ -73,6 +79,13 @@ class GetterMixin:
 # Usage: field: Annotated[type, NoFlag()] = Field(...)
 class NoFlag:
     """Mark a field to skip LD flag lookups in FlagAwareMixin.get()."""
+
+    pass
+
+
+class RuntimeMutable:
+    """Mark a field as safe to update from a runtime config reload."""
+
     pass
 
 
@@ -80,6 +93,14 @@ def _has_no_flag(model_cls: type, field_name: str) -> bool:
     """Check if a field has the NoFlag annotation marker."""
     info = model_cls.model_fields.get(field_name)
     return info is not None and any(isinstance(m, NoFlag) for m in info.metadata)
+
+
+def _has_runtime_mutable(model_cls: type, field_name: str) -> bool:
+    """Check if a field has the RuntimeMutable annotation marker."""
+    info = model_cls.model_fields.get(field_name)
+    return info is not None and any(
+        isinstance(m, RuntimeMutable) for m in info.metadata
+    )
 
 
 # FlagAwareMixin overrides .get() to check LaunchDarkly before returning the
@@ -101,9 +122,7 @@ class FlagAwareMixin(GetterMixin):
         if _has_no_flag(type(self), field_name):
             return super().get(field_name)
         key = f"{self._flag_prefix}.{field_name}" if self._flag_prefix else field_name
-        return FeatureFlagManager.instance().get_flag(
-            key, super().get(field_name)
-        )
+        return FeatureFlagManager.instance().get_flag(key, super().get(field_name))
 
 
 # Convenience base for sub-models that need both FlagAwareMixin and BaseModel.
@@ -199,17 +218,17 @@ class Metrics(FlagAwareModel):
 
 class HttpRetry(FlagAwareModel):
 
-    max_retries: Optional[int] = Field(
+    max_retries: Annotated[Optional[int], RuntimeMutable()] = Field(
         default=20,
         description="Maximum number of retry attempts for rate-limited requests",
     )
-    initial_delay: Optional[float] = Field(
+    initial_delay: Annotated[Optional[float], RuntimeMutable()] = Field(
         default=1.0, description="Initial delay in seconds before first retry"
     )
-    max_delay: Optional[float] = Field(
+    max_delay: Annotated[Optional[float], RuntimeMutable()] = Field(
         default=60.0, description="Maximum delay in seconds between retries"
     )
-    backoff_multiplier: Optional[float] = Field(
+    backoff_multiplier: Annotated[Optional[float], RuntimeMutable()] = Field(
         default=2.0, description="Multiplier for exponential backoff"
     )
 
@@ -217,7 +236,7 @@ class HttpRetry(FlagAwareModel):
 class ApiSettings(FlagAwareModel):
     # HTTP retry configuration
     http_retry: Optional[HttpRetry] = Field(default_factory=HttpRetry)
-    polling_interval: Optional[float] = Field(
+    polling_interval: Annotated[Optional[float], RuntimeMutable()] = Field(
         default=1, description="Polling interval for REST api in seconds"
     )
 
@@ -237,17 +256,21 @@ class LaunchDarkly(BaseModel):
 
 class Dremio(FlagAwareModel):
     uri: Annotated[
-        Union[str, HttpUrl, DremioCloudUri], AfterValidator(_resolve_dremio_uri), NoFlag()
+        Union[str, HttpUrl, DremioCloudUri],
+        AfterValidator(_resolve_dremio_uri),
+        NoFlag(),
     ]
     raw_pat: Annotated[Optional[str], NoFlag()] = Field(default=None, alias="pat")
-    raw_project_id: Annotated[Optional[ProjectId], NoFlag()] = Field(default=None, alias="project_id")
-    enable_search: Optional[bool] = Field(
+    raw_project_id: Annotated[Optional[ProjectId], NoFlag()] = Field(
+        default=None, alias="project_id"
+    )
+    enable_search: Annotated[Optional[bool], RuntimeMutable()] = Field(
         default=False,
         alias=AliasChoices("enable_search", "enable_experimental"),
         description="enable experimental tools",
     )
     oauth2: Optional[OAuth2] = None
-    allow_dml: Optional[bool] = Field(default=False)
+    allow_dml: Annotated[Optional[bool], RuntimeMutable()] = Field(default=False)
     extract_org_id_from_jwt: Optional[bool] = Field(
         default=False,
         description="Extract org ID from JWT aud claim for LD context targeting",
@@ -274,7 +297,7 @@ class Dremio(FlagAwareModel):
     wlm: Optional[Wlm] = None
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
-    enable_remote_tools: Optional[bool] = Field(
+    enable_remote_tools: Annotated[Optional[bool], RuntimeMutable()] = Field(
         default=False,
         description="Enable dynamic registration of remote tools from Dremio's Java-side tool registry",
     )
@@ -407,7 +430,7 @@ class BeeAI(BaseModel):
 
 
 class Settings(FlagAwareMixin, BaseSettings):
-    log_level: Optional[str] = Field(default="INFO")
+    log_level: Annotated[Optional[str], RuntimeMutable()] = Field(default="INFO")
     dremio: Optional[Dremio] = Field(default=None)
     tools: Optional[Tools] = Field(default_factory=Tools)
     launchdarkly: Optional[LaunchDarkly] = Field(default_factory=LaunchDarkly)
@@ -442,8 +465,6 @@ class Settings(FlagAwareMixin, BaseSettings):
 
     def model_post_init(self, __context):
         _propagate_flag_prefixes(self, "")
-        if self.launchdarkly and self.launchdarkly.sdk_key:
-            FeatureFlagManager.initialize(self.launchdarkly.sdk_key)
 
     def with_overrides(self, overrides: Dict[str, Any]) -> Self:
         def set_values(aparts: List[str], value: Any, obj: Any):
@@ -502,8 +523,157 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
 # Module-level holder so configure() can pass the YAML path to the Settings constructor
 _yaml_file: Path | None = None
 
+_base_settings: Settings | None = None
+_settings_override: ContextVar[Settings | None] = ContextVar(
+    "settings_override", default=None
+)
+_config_fingerprint: tuple[str, int, int, int] | None = None
 
-_settings: ContextVar[Settings] = ContextVar("settings", default=None)
+
+def _initialize_launchdarkly(inst: Settings | None):
+    sdk_key = (
+        inst.launchdarkly.sdk_key
+        if isinstance(inst, Settings)
+        and inst.launchdarkly is not None
+        and inst.launchdarkly.sdk_key
+        else None
+    )
+    FeatureFlagManager.initialize(sdk_key)
+
+
+def _set_base_settings(
+    inst: Settings,
+    *,
+    fingerprint: tuple[str, int, int, int] | None = None,
+    initialize_ld: bool = True,
+) -> Settings:
+    global _base_settings, _config_fingerprint
+    _base_settings = inst
+    _config_fingerprint = fingerprint
+    if initialize_ld:
+        _initialize_launchdarkly(inst)
+    return inst
+
+
+def _reset_state_for_tests():
+    global _yaml_file, _base_settings, _config_fingerprint
+    _yaml_file = None
+    _base_settings = None
+    _config_fingerprint = None
+    FeatureFlagManager.reset()
+
+
+def _build_settings_candidate() -> Settings:
+    return Settings()
+
+
+def _resolved_config_fingerprint(cfg: Path | None) -> tuple[str, int, int, int] | None:
+    if cfg is None:
+        return None
+    resolved = cfg.resolve()
+    stat = resolved.stat()
+    return (str(resolved), stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def _unwrap_annotation(annotation: Any) -> Any:
+    args = [a for a in get_args(annotation) if a is not NoneType]
+    if len(args) == 1:
+        return args[0]
+    return annotation
+
+
+def _copy_runtime_mutable_fields(
+    current_obj: Any,
+    candidate_obj: Any,
+    model_cls: type,
+    changed_paths: list[str],
+    prefix: str = "",
+):
+    hints = get_type_hints(model_cls, include_extras=True)
+    for field_name in model_cls.model_fields:
+        value = getattr(candidate_obj, field_name, None)
+        current_value = getattr(current_obj, field_name, None)
+        field_path = f"{prefix}.{field_name}" if prefix else field_name
+        annotation = _unwrap_annotation(hints[field_name])
+
+        if _has_runtime_mutable(model_cls, field_name):
+            if current_value != value:
+                setattr(current_obj, field_name, value)
+                changed_paths.append(field_path)
+            continue
+
+        if (
+            isinstance(annotation, type)
+            and issubclass(annotation, BaseModel)
+            and value is not None
+        ):
+            if current_value is None:
+                current_value = value.model_copy(deep=True)
+                _blank_model_subtree(current_value, annotation)
+                setattr(current_obj, field_name, current_value)
+            _copy_runtime_mutable_fields(
+                current_value, value, annotation, changed_paths, field_path
+            )
+
+
+def _blank_model_subtree(current_obj: Any, model_cls: type):
+    hints = get_type_hints(model_cls, include_extras=True)
+    for field_name in model_cls.model_fields:
+        value = getattr(current_obj, field_name, None)
+        annotation = _unwrap_annotation(hints[field_name])
+
+        if (
+            isinstance(annotation, type)
+            and issubclass(annotation, BaseModel)
+            and value is not None
+        ):
+            _blank_model_subtree(value, annotation)
+            continue
+
+        object.__setattr__(current_obj, field_name, None)
+
+
+def reload_mutable_settings_if_changed() -> list[str]:
+    global _base_settings, _config_fingerprint
+    _log = log.logger("settings_reload")
+    if _yaml_file is None:
+        return []
+
+    try:
+        fingerprint = _resolved_config_fingerprint(_yaml_file)
+    except Exception as exc:
+        _log.warning(f"Unable to fingerprint config file {_yaml_file}: {exc}")
+        return []
+
+    if fingerprint == _config_fingerprint:
+        return []
+
+    try:
+        candidate = _build_settings_candidate()
+    except Exception as exc:
+        _log.warning(f"Skipping config reload for {_yaml_file}: {exc}")
+        return []
+
+    if not isinstance(_base_settings, Settings):
+        _set_base_settings(candidate, fingerprint=fingerprint, initialize_ld=False)
+        return []
+
+    updated = _base_settings.model_copy(deep=True)
+    changed_paths: list[str] = []
+    _copy_runtime_mutable_fields(updated, candidate, Settings, changed_paths)
+
+    _base_settings = updated
+    _config_fingerprint = fingerprint
+
+    if changed_paths:
+        _log.info(
+            f"Reloaded runtime-mutable settings from {_yaml_file}: {', '.join(changed_paths)}"
+        )
+    else:
+        _log.info(
+            f"Config file {_yaml_file} changed but runtime-mutable settings were unchanged"
+        )
+    return changed_paths
 
 
 # the default config is ~/.config/dremioai/config.yaml, use it if it exists
@@ -520,16 +690,21 @@ def default_config() -> Path:
 
 # configures the settings using the given config file and overwrites the global
 # settings instance if force is True
-def configure(cfg: Union[str, Path] = None, force=False) -> ContextVar[Settings]:
-    global _settings
-    if force and isinstance(_settings.get(), Settings):
-        old = _settings.get()
+def configure(cfg: Union[str, Path] = None, force=False) -> Settings:
+    global _yaml_file, _base_settings, _config_fingerprint
+    if force and isinstance(_base_settings, Settings):
+        old_settings = _base_settings
+        old_yaml_file = _yaml_file
+        old_fingerprint = _config_fingerprint
         try:
-            _settings.set(None)
-            configure(cfg, force=False)
-        except:
+            _base_settings = None
+            _config_fingerprint = None
+            return configure(cfg, force=False)
+        except Exception:
             # don't replace the old if there is an issue setting the new value
-            _settings.set(old)
+            _base_settings = old_settings
+            _yaml_file = old_yaml_file
+            _config_fingerprint = old_fingerprint
             raise
 
     if isinstance(cfg, str):
@@ -542,25 +717,28 @@ def configure(cfg: Union[str, Path] = None, force=False) -> ContextVar[Settings]
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.touch()
 
-    global _yaml_file
     _yaml_file = cfg
-    _settings.set(Settings())
-
-    return _settings
+    candidate = _build_settings_candidate()
+    return _set_base_settings(
+        candidate, fingerprint=_resolved_config_fingerprint(cfg), initialize_ld=True
+    )
 
 
 # Get the current settings instance if one has been configured. If not try
 # to configure it using the default config file. If that fails, create a new
 # empty settings instance.
 def instance() -> Settings | None:
-    global _settings
-    if not isinstance(_settings.get(), Settings):
+    global _base_settings
+    override = _settings_override.get()
+    if isinstance(override, Settings):
+        return override
+    if not isinstance(_base_settings, Settings):
         try:
             configure()  # use default config, if exists
         except FileNotFoundError:
             # no default config, create a new default one
-            _settings.set(Settings())
-    return _settings.get()
+            _set_base_settings(Settings())
+    return _base_settings
 
 
 async def run_with(
@@ -569,14 +747,14 @@ async def run_with(
     args: Optional[List[Any]] = [],
     kw: Optional[Dict[str, Any]] = {},
 ) -> Any:
-    global _settings
-
     async def _call():
-        tok = _settings.set(instance().model_copy(deep=True).with_overrides(overrides))
+        tok = _settings_override.set(
+            instance().model_copy(deep=True).with_overrides(overrides)
+        )
         try:
             return await func(*args, **kw)
         finally:
-            _settings.reset(tok)
+            _settings_override.reset(tok)
 
     return await _call()
 

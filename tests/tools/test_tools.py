@@ -137,7 +137,7 @@ SELECT * FROM employee_hierarchy ORDER BY level, name;""",
         "comment": "Recursive CTE for hierarchical data traversal",
     },
     {
-        "sql": "CREATE TABLE \"temp\".tbl AS SELECT 1;",
+        "sql": 'CREATE TABLE "temp".tbl AS SELECT 1;',
         "allowed": False,
         "comment": "Simple CREATE TABLE AS SELECT query",
     },
@@ -415,7 +415,7 @@ WHERE is_deleted = false
 def mock_settings(dml_allowed: bool):
     old_settings = settings.instance()
     try:
-        settings._settings.set(
+        settings._set_base_settings(
             settings.Settings.model_validate(
                 {
                     "dremio": {
@@ -427,7 +427,7 @@ def mock_settings(dml_allowed: bool):
         )
         yield
     finally:
-        settings._settings.set(old_settings)
+        settings._set_base_settings(old_settings)
 
 
 @pytest.mark.parametrize(

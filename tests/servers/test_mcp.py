@@ -39,7 +39,7 @@ def mock_settings(mode: ToolType):
         old = settings.instance()
         with TemporaryDirectory() as temp_dir:
             temp_dir = Path(temp_dir)
-            settings._settings.set(
+            settings._set_base_settings(
                 settings.Settings.model_validate(
                     {
                         "dremio": {
@@ -54,7 +54,7 @@ def mock_settings(mode: ToolType):
             settings.write_settings(cfg=cfg, inst=settings.instance())
             yield settings.instance(), cfg
     finally:
-        settings._settings.set(old)
+        settings._set_base_settings(old)
 
 
 @asynccontextmanager

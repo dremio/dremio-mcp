@@ -56,7 +56,7 @@ def test_create_default_config(mock_config_dir):
     project_id = uuid.uuid4()
     mode = ToolType.FOR_DATA_PATTERNS
     settings.configure(force=True)
-    settings._settings.set(
+    settings._set_base_settings(
         settings.instance().model_validate(
             {
                 "dremio": {
@@ -79,6 +79,180 @@ def test_create_default_config(mock_config_dir):
     )
     tools = settings.instance().tools
     assert tools.server_mode == mode
+
+
+async def _read_runtime_settings():
+    cfg = settings.instance()
+    return (
+        cfg.log_level,
+        cfg.dremio.enable_search,
+        cfg.dremio.api.polling_interval,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_with_keeps_overrides_request_scoped():
+    base = settings.Settings.model_validate(
+        {
+            "log_level": "INFO",
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+                "enable_search": False,
+                "api": {"polling_interval": 1.0},
+            },
+        }
+    )
+    settings._set_base_settings(base)
+
+    original = await _read_runtime_settings()
+    overridden = await settings.run_with(
+        _read_runtime_settings,
+        overrides={
+            "log_level": "DEBUG",
+            "dremio.enable_search": True,
+            "dremio.api.polling_interval": 3.5,
+        },
+    )
+
+    assert overridden == ("DEBUG", True, 3.5)
+    assert await _read_runtime_settings() == original
+
+
+def test_reload_mutable_settings_if_changed_updates_runtime_mutable_only(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "log_level": "INFO",
+                "dremio": {
+                    "uri": "https://one.dremio.cloud",
+                    "pat": "test-pat",
+                    "enable_search": False,
+                    "allow_dml": False,
+                    "api": {
+                        "polling_interval": 1.0,
+                        "http_retry": {"max_retries": 5},
+                    },
+                },
+            }
+        )
+    )
+
+    settings.configure(cfg)
+
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "log_level": "DEBUG",
+                "dremio": {
+                    "uri": "https://two.dremio.cloud",
+                    "pat": "changed-pat",
+                    "enable_search": True,
+                    "allow_dml": True,
+                    "api": {
+                        "polling_interval": 9.0,
+                        "http_retry": {"max_retries": 11},
+                    },
+                },
+            }
+        )
+    )
+
+    changed = settings.reload_mutable_settings_if_changed()
+
+    assert changed == [
+        "log_level",
+        "dremio.enable_search",
+        "dremio.allow_dml",
+        "dremio.api.http_retry.max_retries",
+        "dremio.api.polling_interval",
+    ]
+    assert settings.instance().log_level == "DEBUG"
+    assert settings.instance().dremio.enable_search is True
+    assert settings.instance().dremio.allow_dml is True
+    assert settings.instance().dremio.api.http_retry.max_retries == 11
+    assert settings.instance().dremio.api.polling_interval == 9.0
+    assert settings.instance().dremio.uri == "https://one.dremio.cloud"
+    assert settings.instance().dremio.pat == "test-pat"
+
+
+def test_reload_mutable_settings_if_changed_preserves_base_on_invalid_yaml(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "log_level": "INFO",
+                "dremio": {"uri": "https://test.dremio.cloud", "pat": "test-pat"},
+            }
+        )
+    )
+    settings.configure(cfg)
+
+    before = settings.instance().model_copy(deep=True)
+    cfg.write_text("dremio: [")
+
+    changed = settings.reload_mutable_settings_if_changed()
+
+    assert changed == []
+    assert settings.instance().model_dump() == before.model_dump()
+
+
+def test_reload_mutable_settings_if_changed_ignores_non_mutable_changes(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "log_level": "INFO",
+                "dremio": {"uri": "https://one.dremio.cloud", "pat": "test-pat"},
+            }
+        )
+    )
+    settings.configure(cfg)
+
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "log_level": "INFO",
+                "dremio": {"uri": "https://two.dremio.cloud", "pat": "changed-pat"},
+            }
+        )
+    )
+
+    changed = settings.reload_mutable_settings_if_changed()
+
+    assert changed == []
+    assert settings.instance().dremio.uri == "https://one.dremio.cloud"
+    assert settings.instance().dremio.pat == "test-pat"
+
+
+def test_reload_mutable_settings_if_changed_materializes_missing_nested_subtree(
+    tmp_path,
+):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({"log_level": "INFO"}))
+    settings.configure(cfg)
+
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "log_level": "INFO",
+                "dremio": {
+                    "uri": "https://later.dremio.cloud",
+                    "pat": "later-pat",
+                    "allow_dml": True,
+                    "api": {"polling_interval": 7.0},
+                },
+            }
+        )
+    )
+
+    changed = settings.reload_mutable_settings_if_changed()
+
+    assert "dremio.allow_dml" in changed
+    assert "dremio.api.polling_interval" in changed
+    assert settings.instance().dremio.get("allow_dml") is True
+    assert settings.instance().dremio.api.get("polling_interval") == 7.0
 
 
 @pytest.mark.parametrize(
@@ -177,7 +351,15 @@ def test_auth_urls(
     )
     if iss_override:
         issuer = iss_override
-    auth = (f"{issuer}/oauth/authorize", f"{issuer}/oauth/token", f"{issuer}/oauth/register") if not error else None
+    auth = (
+        (
+            f"{issuer}/oauth/authorize",
+            f"{issuer}/oauth/token",
+            f"{issuer}/oauth/register",
+        )
+        if not error
+        else None
+    )
     issuer = issuer if not error else None
     assert d.auth_issuer_uri == issuer
     assert d.auth_endpoints == auth
@@ -187,12 +369,14 @@ def test_auth_urls(
 def test_launchdarkly_sdk_key_from_env(monkeypatch, sdk_key):
     monkeypatch.setenv("DREMIOAI_LAUNCHDARKLY__SDK_KEY", sdk_key)
 
-    s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
+    s = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+            }
         }
-    })
+    )
 
     assert s.launchdarkly.sdk_key == sdk_key
     assert s.launchdarkly.enabled is True
@@ -203,11 +387,9 @@ def test_launchdarkly_sdk_key_from_file(tmp_path):
     sdk_key_file = tmp_path / "sdk_key.txt"
     sdk_key_file.write_text("sdk-file-key-abcdef")
 
-    s = settings.Settings.model_validate({
-        "launchdarkly": {
-            "sdk_key": f"@{sdk_key_file}"
-        }
-    })
+    s = settings.Settings.model_validate(
+        {"launchdarkly": {"sdk_key": f"@{sdk_key_file}"}}
+    )
 
     assert s.launchdarkly.sdk_key == "sdk-file-key-abcdef"
     assert s.launchdarkly.enabled is True
@@ -224,39 +406,45 @@ def test_launchdarkly_defaults():
 
 def test_dremio_get_without_launchdarkly():
     """Test that get() returns config value when LaunchDarkly is not configured."""
-    s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
-            "allow_dml": True,
+    s = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+                "allow_dml": True,
+            }
         }
-    })
+    )
 
     assert s.dremio.get("allow_dml") is True
 
 
 def test_dremio_get_with_launchdarkly_disabled():
     """Test that get() returns config value when LaunchDarkly is disabled."""
-    s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
-            "enable_search": True,
+    s = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+                "enable_search": True,
+            }
         }
-    })
+    )
 
     assert s.dremio.get("enable_search") is True
 
 
 def test_dremio_enable_search_fallback():
     """Test that enable_search returns config value when LD is disabled."""
-    s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
-            "enable_search": True
+    s = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+                "enable_search": True,
+            }
         }
-    })
+    )
 
     assert s.dremio.enable_search is True
     assert s.dremio.get("enable_search") is True
@@ -264,13 +452,15 @@ def test_dremio_enable_search_fallback():
 
 def test_dremio_allow_dml_fallback():
     """Test that allow_dml returns config value when LD is disabled."""
-    s = settings.Settings.model_validate({
-        "dremio": {
-            "uri": "https://test.dremio.cloud",
-            "pat": "test-pat",
-            "allow_dml": True
+    s = settings.Settings.model_validate(
+        {
+            "dremio": {
+                "uri": "https://test.dremio.cloud",
+                "pat": "test-pat",
+                "allow_dml": True,
+            }
         }
-    })
+    )
 
     assert s.dremio.allow_dml is True
     assert s.dremio.get("allow_dml") is True

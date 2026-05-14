@@ -36,7 +36,7 @@ class TestSimpleFastMCPServer:
         """Create mock settings for testing FastMCP server"""
         try:
             old = settings.instance()
-            settings._settings.set(
+            settings._set_base_settings(
                 settings.Settings.model_validate(
                     {
                         "dremio": {
@@ -51,7 +51,7 @@ class TestSimpleFastMCPServer:
             )
             yield settings.instance()
         finally:
-            settings._settings.set(old)
+            settings._set_base_settings(old)
 
     @pytest.mark.asyncio
     async def test_fastmcp_server_creation_and_tool_registration(self):
@@ -157,7 +157,7 @@ class TestDynamicTools:
         """Create mock settings with remote tools enabled/disabled"""
         try:
             old = settings.instance()
-            settings._settings.set(
+            settings._set_base_settings(
                 settings.Settings.model_validate(
                     {
                         "dremio": {
@@ -175,7 +175,7 @@ class TestDynamicTools:
             )
             yield settings.instance()
         finally:
-            settings._settings.set(old)
+            settings._set_base_settings(old)
 
     @pytest.mark.asyncio
     async def test_meta_tools_registered_when_enabled(self):
@@ -206,10 +206,24 @@ class TestDynamicTools:
     async def test_discover_returns_tool_list(self):
         """DiscoverDynamicTools should return JSON with tools from Dremio"""
         from dremioai.api.dremio.ai_tools import AiTool
-        fake_response = ListToolsResponse(tools=[
-            AiTool(name="JavaTool1", description="A tool from Java", inputSchema={"type": "object", "properties": {"x": {"type": "string"}}}),
-            AiTool(name="JavaTool2", description="Another Java tool", inputSchema={"type": "object"}),
-        ])
+
+        fake_response = ListToolsResponse(
+            tools=[
+                AiTool(
+                    name="JavaTool1",
+                    description="A tool from Java",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"x": {"type": "string"}},
+                    },
+                ),
+                AiTool(
+                    name="JavaTool2",
+                    description="Another Java tool",
+                    inputSchema={"type": "object"},
+                ),
+            ]
+        )
 
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
             server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
