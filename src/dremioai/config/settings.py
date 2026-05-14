@@ -15,6 +15,7 @@
 #
 import uuid
 import hashlib
+import threading
 from uuid import UUID
 from urllib.parse import urlparse
 
@@ -541,6 +542,7 @@ class SettingsReloader:
             "settings_override", default=None
         )
         self.config_fingerprint: ConfigFingerprint | None = None
+        self.lock = threading.RLock()
 
     def initialize_launchdarkly(self, inst: Settings | None):
         sdk_key = (
@@ -565,18 +567,20 @@ class SettingsReloader:
         so the refresh loop can compare a scratch `Settings()` object without
         reconfiguring LaunchDarkly on every tick.
         """
-        self.base_settings = inst
-        self.config_fingerprint = fingerprint
-        if initialize_ld:
-            self.initialize_launchdarkly(inst)
+        with self.lock:
+            self.base_settings = inst
+            self.config_fingerprint = fingerprint
+            if initialize_ld:
+                self.initialize_launchdarkly(inst)
         return inst
 
     def reset_for_tests(self):
         global _yaml_file
-        _yaml_file = None
-        self.base_settings = None
-        self.config_fingerprint = None
-        FeatureFlagManager.reset()
+        with self.lock:
+            _yaml_file = None
+            self.base_settings = None
+            self.config_fingerprint = None
+            FeatureFlagManager.reset()
 
     def build_candidate(self) -> Settings:
         return Settings()
@@ -670,31 +674,28 @@ class SettingsReloader:
 
         try:
             fingerprint = self.compute_fingerprint(_yaml_file)
-        except Exception as exc:
-            _log.warning(f"Unable to fingerprint config file {_yaml_file}: {exc}")
-            return []
-
-        if fingerprint == self.config_fingerprint:
-            return []
-
-        try:
             candidate = self.build_candidate()
-        except Exception as exc:
-            _log.warning(f"Skipping config reload for {_yaml_file}: {exc}")
+        except Exception:
+            _log.exception(f"Skipping config reload for {_yaml_file}")
             return []
 
-        if not isinstance(self.base_settings, Settings):
-            self.activate_base_settings(
-                candidate, fingerprint=fingerprint, initialize_ld=False
+        with self.lock:
+            if fingerprint == self.config_fingerprint:
+                return []
+
+            if not isinstance(self.base_settings, Settings):
+                self.base_settings = candidate
+                self.config_fingerprint = fingerprint
+                return []
+
+            updated = self.base_settings.model_copy(deep=True)
+            changed_paths: list[str] = []
+            self.copy_runtime_mutable_fields(
+                updated, candidate, Settings, changed_paths
             )
-            return []
 
-        updated = self.base_settings.model_copy(deep=True)
-        changed_paths: list[str] = []
-        self.copy_runtime_mutable_fields(updated, candidate, Settings, changed_paths)
-
-        self.base_settings = updated
-        self.config_fingerprint = fingerprint
+            self.base_settings = updated
+            self.config_fingerprint = fingerprint
 
         if changed_paths:
             _log.info(
@@ -794,13 +795,17 @@ def instance() -> Settings | None:
     override = settings_reloader.settings_override.get()
     if isinstance(override, Settings):
         return override
-    if not isinstance(settings_reloader.base_settings, Settings):
+    with settings_reloader.lock:
+        base_settings = settings_reloader.base_settings
+    if not isinstance(base_settings, Settings):
         try:
             configure()  # use default config, if exists
         except FileNotFoundError:
             # no default config, create a new default one
             set_base_settings(Settings())
-    return settings_reloader.base_settings
+        with settings_reloader.lock:
+            return settings_reloader.base_settings
+    return base_settings
 
 
 async def run_with(
