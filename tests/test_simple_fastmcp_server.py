@@ -36,7 +36,7 @@ class TestSimpleFastMCPServer:
         """Create mock settings for testing FastMCP server"""
         try:
             old = settings.instance()
-            settings._set_base_settings(
+            settings.set_base_settings(
                 settings.Settings.model_validate(
                     {
                         "dremio": {
@@ -51,7 +51,7 @@ class TestSimpleFastMCPServer:
             )
             yield settings.instance()
         finally:
-            settings._set_base_settings(old)
+            settings.set_base_settings(old)
 
     @pytest.mark.asyncio
     async def test_fastmcp_server_creation_and_tool_registration(self):
@@ -157,7 +157,7 @@ class TestDynamicTools:
         """Create mock settings with remote tools enabled/disabled"""
         try:
             old = settings.instance()
-            settings._set_base_settings(
+            settings.set_base_settings(
                 settings.Settings.model_validate(
                     {
                         "dremio": {
@@ -175,7 +175,7 @@ class TestDynamicTools:
             )
             yield settings.instance()
         finally:
-            settings._set_base_settings(old)
+            settings.set_base_settings(old)
 
     @pytest.mark.asyncio
     async def test_meta_tools_registered_when_enabled(self):

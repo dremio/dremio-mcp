@@ -56,7 +56,7 @@ def test_create_default_config(mock_config_dir):
     project_id = uuid.uuid4()
     mode = ToolType.FOR_DATA_PATTERNS
     settings.configure(force=True)
-    settings._set_base_settings(
+    settings.set_base_settings(
         settings.instance().model_validate(
             {
                 "dremio": {
@@ -103,7 +103,7 @@ async def test_run_with_keeps_overrides_request_scoped():
             },
         }
     )
-    settings._set_base_settings(base)
+    settings.set_base_settings(base)
 
     original = await _read_runtime_settings()
     overridden = await settings.run_with(

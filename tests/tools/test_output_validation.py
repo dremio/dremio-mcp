@@ -90,13 +90,13 @@ async def test_run_sql_query_json_safe_output():
         "dremioai.tools.tools.sql.run_query", new_callable=AsyncMock
     ) as mock_run_query:
         mock_run_query.return_value = df
-        token = settings._settings_override.set(
+        token = settings.push_settings_override(
             settings.Settings.model_validate({"dremio": {"uri": "https://test"}})
         )
         try:
             result = await tool.invoke("SELECT 1")
         finally:
-            settings._settings_override.reset(token)
+            settings.pop_settings_override(token)
 
     assert isinstance(result, dict)
     assert "result" in result

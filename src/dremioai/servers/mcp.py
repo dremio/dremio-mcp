@@ -657,7 +657,7 @@ def main(
     if mock:
         transport = Transports.streamable_http
         # In mock mode, create a minimal settings instance — no Dremio config needed
-        settings._set_base_settings(
+        settings.set_base_settings(
             settings.Settings.model_validate(
                 {
                     "dremio": {

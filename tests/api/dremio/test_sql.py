@@ -40,7 +40,7 @@ async def test_get_results_uses_polling_interval_get_for_ld_precedence(mock_ldcl
     )
     mock_ldclient.get.return_value = mock_client
 
-    settings._set_base_settings(
+    settings.set_base_settings(
         settings.Settings.model_validate(
             {
                 "launchdarkly": {"sdk_key": "test-key"},

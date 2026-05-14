@@ -42,7 +42,7 @@ def mock_settings_for_test(mode: ToolType):
     """Create mock settings for testing FastMCP server"""
     try:
         old = settings.instance()
-        settings._set_base_settings(
+        settings.set_base_settings(
             settings.Settings.model_validate(
                 {
                     "dremio": {
@@ -57,7 +57,7 @@ def mock_settings_for_test(mode: ToolType):
         )
         yield settings.instance()
     finally:
-        settings._set_base_settings(old)
+        settings.set_base_settings(old)
 
 
 @pytest.mark.asyncio

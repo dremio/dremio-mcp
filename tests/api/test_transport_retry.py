@@ -328,5 +328,5 @@ def mock_settings_instance():
             }
         }
     )
-    settings._set_base_settings(mock_settings)
+    settings.set_base_settings(mock_settings)
     yield mock_settings

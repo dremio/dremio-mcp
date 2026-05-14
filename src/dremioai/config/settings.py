@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 import uuid
+import hashlib
 from uuid import UUID
 from urllib.parse import urlparse
 
@@ -523,157 +524,217 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
 # Module-level holder so configure() can pass the YAML path to the Settings constructor
 _yaml_file: Path | None = None
 
-_base_settings: Settings | None = None
-_settings_override: ContextVar[Settings | None] = ContextVar(
-    "settings_override", default=None
-)
-_config_fingerprint: tuple[str, int, int, int] | None = None
+ConfigFingerprint = tuple[str, int, int, int, str]
 
 
-def _initialize_launchdarkly(inst: Settings | None):
-    sdk_key = (
-        inst.launchdarkly.sdk_key
-        if isinstance(inst, Settings)
-        and inst.launchdarkly is not None
-        and inst.launchdarkly.sdk_key
-        else None
-    )
-    FeatureFlagManager.initialize(sdk_key)
+class SettingsReloader:
+    """Singleton runtime helper for base settings snapshots and config reloads.
+
+    The active settings snapshot must be process-wide so background refreshes
+    are visible across request contexts. Request-scoped overrides remain in a
+    ContextVar so `run_with()` keeps its existing isolation semantics.
+    """
+
+    def __init__(self):
+        self.base_settings: Settings | None = None
+        self.settings_override: ContextVar[Settings | None] = ContextVar(
+            "settings_override", default=None
+        )
+        self.config_fingerprint: ConfigFingerprint | None = None
+
+    def initialize_launchdarkly(self, inst: Settings | None):
+        sdk_key = (
+            inst.launchdarkly.sdk_key
+            if isinstance(inst, Settings)
+            and inst.launchdarkly is not None
+            and inst.launchdarkly.sdk_key
+            else None
+        )
+        FeatureFlagManager.initialize(sdk_key)
+
+    def activate_base_settings(
+        self,
+        inst: Settings,
+        *,
+        fingerprint: ConfigFingerprint | None = None,
+        initialize_ld: bool = True,
+    ) -> Settings:
+        """Activate a base settings snapshot and optionally refresh LD wiring.
+
+        Candidate validation during reload intentionally skips LD reinitialization
+        so the refresh loop can compare a scratch `Settings()` object without
+        reconfiguring LaunchDarkly on every tick.
+        """
+        self.base_settings = inst
+        self.config_fingerprint = fingerprint
+        if initialize_ld:
+            self.initialize_launchdarkly(inst)
+        return inst
+
+    def reset_for_tests(self):
+        global _yaml_file
+        _yaml_file = None
+        self.base_settings = None
+        self.config_fingerprint = None
+        FeatureFlagManager.reset()
+
+    def build_candidate(self) -> Settings:
+        return Settings()
+
+    def compute_fingerprint(self, cfg: Path | None) -> ConfigFingerprint | None:
+        """Return a resolved-path fingerprint plus a content hash.
+
+        Resolved path + inode + size + mtime_ns handles ConfigMap swaps well.
+        A SHA-256 of the current file contents covers the rare edge case where
+        metadata stays the same across a rewrite.
+        """
+        if cfg is None:
+            return None
+        resolved = cfg.resolve()
+        stat = resolved.stat()
+        content_hash = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        return (
+            str(resolved),
+            stat.st_ino,
+            stat.st_size,
+            stat.st_mtime_ns,
+            content_hash,
+        )
+
+    def unwrap_annotation(self, annotation: Any) -> Any:
+        args = [a for a in get_args(annotation) if a is not NoneType]
+        if len(args) == 1:
+            return args[0]
+        return annotation
+
+    def copy_runtime_mutable_fields(
+        self,
+        current_obj: Any,
+        candidate_obj: Any,
+        model_cls: type,
+        changed_paths: list[str],
+        prefix: str = "",
+    ):
+        """Copy only RuntimeMutable leaves from candidate_obj into current_obj."""
+        hints = get_type_hints(model_cls, include_extras=True)
+        for field_name in model_cls.model_fields:
+            value = getattr(candidate_obj, field_name, None)
+            current_value = getattr(current_obj, field_name, None)
+            field_path = f"{prefix}.{field_name}" if prefix else field_name
+            annotation = self.unwrap_annotation(hints[field_name])
+
+            if _has_runtime_mutable(model_cls, field_name):
+                if current_value != value:
+                    setattr(current_obj, field_name, value)
+                    changed_paths.append(field_path)
+                continue
+
+            if (
+                isinstance(annotation, type)
+                and issubclass(annotation, BaseModel)
+                and value is not None
+            ):
+                if current_value is None:
+                    # Simple instantiation is not sufficient here because some
+                    # nested models have required, startup-only fields. We copy
+                    # the candidate subtree shape, blank it, then replay only
+                    # runtime-mutable leaves into that shell.
+                    current_value = value.model_copy(deep=True)
+                    self.blank_model_subtree(current_value, annotation)
+                    setattr(current_obj, field_name, current_value)
+                self.copy_runtime_mutable_fields(
+                    current_value, value, annotation, changed_paths, field_path
+                )
+
+    def blank_model_subtree(self, current_obj: Any, model_cls: type):
+        """Clear a copied subtree before replaying mutable leaves into it."""
+        hints = get_type_hints(model_cls, include_extras=True)
+        for field_name in model_cls.model_fields:
+            value = getattr(current_obj, field_name, None)
+            annotation = self.unwrap_annotation(hints[field_name])
+
+            if (
+                isinstance(annotation, type)
+                and issubclass(annotation, BaseModel)
+                and value is not None
+            ):
+                self.blank_model_subtree(value, annotation)
+                continue
+
+            object.__setattr__(current_obj, field_name, None)
+
+    def reload_if_changed(self) -> list[str]:
+        _log = log.logger("settings_reload")
+        if _yaml_file is None:
+            return []
+
+        try:
+            fingerprint = self.compute_fingerprint(_yaml_file)
+        except Exception as exc:
+            _log.warning(f"Unable to fingerprint config file {_yaml_file}: {exc}")
+            return []
+
+        if fingerprint == self.config_fingerprint:
+            return []
+
+        try:
+            candidate = self.build_candidate()
+        except Exception as exc:
+            _log.warning(f"Skipping config reload for {_yaml_file}: {exc}")
+            return []
+
+        if not isinstance(self.base_settings, Settings):
+            self.activate_base_settings(
+                candidate, fingerprint=fingerprint, initialize_ld=False
+            )
+            return []
+
+        updated = self.base_settings.model_copy(deep=True)
+        changed_paths: list[str] = []
+        self.copy_runtime_mutable_fields(updated, candidate, Settings, changed_paths)
+
+        self.base_settings = updated
+        self.config_fingerprint = fingerprint
+
+        if changed_paths:
+            _log.info(
+                f"Reloaded runtime-mutable settings from {_yaml_file}: {', '.join(changed_paths)}"
+            )
+        else:
+            _log.info(
+                f"Config file {_yaml_file} changed but runtime-mutable settings were unchanged"
+            )
+        return changed_paths
 
 
-def _set_base_settings(
+settings_reloader = SettingsReloader()
+
+
+def set_base_settings(
     inst: Settings,
     *,
-    fingerprint: tuple[str, int, int, int] | None = None,
+    fingerprint: ConfigFingerprint | None = None,
     initialize_ld: bool = True,
 ) -> Settings:
-    global _base_settings, _config_fingerprint
-    _base_settings = inst
-    _config_fingerprint = fingerprint
-    if initialize_ld:
-        _initialize_launchdarkly(inst)
-    return inst
+    return settings_reloader.activate_base_settings(
+        inst, fingerprint=fingerprint, initialize_ld=initialize_ld
+    )
 
 
-def _reset_state_for_tests():
-    global _yaml_file, _base_settings, _config_fingerprint
-    _yaml_file = None
-    _base_settings = None
-    _config_fingerprint = None
-    FeatureFlagManager.reset()
+def reset_state_for_tests():
+    settings_reloader.reset_for_tests()
 
 
-def _build_settings_candidate() -> Settings:
-    return Settings()
+def push_settings_override(inst: Settings):
+    return settings_reloader.settings_override.set(inst)
 
 
-def _resolved_config_fingerprint(cfg: Path | None) -> tuple[str, int, int, int] | None:
-    if cfg is None:
-        return None
-    resolved = cfg.resolve()
-    stat = resolved.stat()
-    return (str(resolved), stat.st_ino, stat.st_size, stat.st_mtime_ns)
-
-
-def _unwrap_annotation(annotation: Any) -> Any:
-    args = [a for a in get_args(annotation) if a is not NoneType]
-    if len(args) == 1:
-        return args[0]
-    return annotation
-
-
-def _copy_runtime_mutable_fields(
-    current_obj: Any,
-    candidate_obj: Any,
-    model_cls: type,
-    changed_paths: list[str],
-    prefix: str = "",
-):
-    hints = get_type_hints(model_cls, include_extras=True)
-    for field_name in model_cls.model_fields:
-        value = getattr(candidate_obj, field_name, None)
-        current_value = getattr(current_obj, field_name, None)
-        field_path = f"{prefix}.{field_name}" if prefix else field_name
-        annotation = _unwrap_annotation(hints[field_name])
-
-        if _has_runtime_mutable(model_cls, field_name):
-            if current_value != value:
-                setattr(current_obj, field_name, value)
-                changed_paths.append(field_path)
-            continue
-
-        if (
-            isinstance(annotation, type)
-            and issubclass(annotation, BaseModel)
-            and value is not None
-        ):
-            if current_value is None:
-                current_value = value.model_copy(deep=True)
-                _blank_model_subtree(current_value, annotation)
-                setattr(current_obj, field_name, current_value)
-            _copy_runtime_mutable_fields(
-                current_value, value, annotation, changed_paths, field_path
-            )
-
-
-def _blank_model_subtree(current_obj: Any, model_cls: type):
-    hints = get_type_hints(model_cls, include_extras=True)
-    for field_name in model_cls.model_fields:
-        value = getattr(current_obj, field_name, None)
-        annotation = _unwrap_annotation(hints[field_name])
-
-        if (
-            isinstance(annotation, type)
-            and issubclass(annotation, BaseModel)
-            and value is not None
-        ):
-            _blank_model_subtree(value, annotation)
-            continue
-
-        object.__setattr__(current_obj, field_name, None)
+def pop_settings_override(token):
+    settings_reloader.settings_override.reset(token)
 
 
 def reload_mutable_settings_if_changed() -> list[str]:
-    global _base_settings, _config_fingerprint
-    _log = log.logger("settings_reload")
-    if _yaml_file is None:
-        return []
-
-    try:
-        fingerprint = _resolved_config_fingerprint(_yaml_file)
-    except Exception as exc:
-        _log.warning(f"Unable to fingerprint config file {_yaml_file}: {exc}")
-        return []
-
-    if fingerprint == _config_fingerprint:
-        return []
-
-    try:
-        candidate = _build_settings_candidate()
-    except Exception as exc:
-        _log.warning(f"Skipping config reload for {_yaml_file}: {exc}")
-        return []
-
-    if not isinstance(_base_settings, Settings):
-        _set_base_settings(candidate, fingerprint=fingerprint, initialize_ld=False)
-        return []
-
-    updated = _base_settings.model_copy(deep=True)
-    changed_paths: list[str] = []
-    _copy_runtime_mutable_fields(updated, candidate, Settings, changed_paths)
-
-    _base_settings = updated
-    _config_fingerprint = fingerprint
-
-    if changed_paths:
-        _log.info(
-            f"Reloaded runtime-mutable settings from {_yaml_file}: {', '.join(changed_paths)}"
-        )
-    else:
-        _log.info(
-            f"Config file {_yaml_file} changed but runtime-mutable settings were unchanged"
-        )
-    return changed_paths
+    return settings_reloader.reload_if_changed()
 
 
 # the default config is ~/.config/dremioai/config.yaml, use it if it exists
@@ -691,20 +752,20 @@ def default_config() -> Path:
 # configures the settings using the given config file and overwrites the global
 # settings instance if force is True
 def configure(cfg: Union[str, Path] = None, force=False) -> Settings:
-    global _yaml_file, _base_settings, _config_fingerprint
-    if force and isinstance(_base_settings, Settings):
-        old_settings = _base_settings
+    global _yaml_file
+    if force and isinstance(settings_reloader.base_settings, Settings):
+        old_settings = settings_reloader.base_settings
         old_yaml_file = _yaml_file
-        old_fingerprint = _config_fingerprint
+        old_fingerprint = settings_reloader.config_fingerprint
         try:
-            _base_settings = None
-            _config_fingerprint = None
+            settings_reloader.base_settings = None
+            settings_reloader.config_fingerprint = None
             return configure(cfg, force=False)
         except Exception:
             # don't replace the old if there is an issue setting the new value
-            _base_settings = old_settings
+            settings_reloader.base_settings = old_settings
             _yaml_file = old_yaml_file
-            _config_fingerprint = old_fingerprint
+            settings_reloader.config_fingerprint = old_fingerprint
             raise
 
     if isinstance(cfg, str):
@@ -718,9 +779,11 @@ def configure(cfg: Union[str, Path] = None, force=False) -> Settings:
         cfg.touch()
 
     _yaml_file = cfg
-    candidate = _build_settings_candidate()
-    return _set_base_settings(
-        candidate, fingerprint=_resolved_config_fingerprint(cfg), initialize_ld=True
+    candidate = settings_reloader.build_candidate()
+    return set_base_settings(
+        candidate,
+        fingerprint=settings_reloader.compute_fingerprint(cfg),
+        initialize_ld=True,
     )
 
 
@@ -728,17 +791,16 @@ def configure(cfg: Union[str, Path] = None, force=False) -> Settings:
 # to configure it using the default config file. If that fails, create a new
 # empty settings instance.
 def instance() -> Settings | None:
-    global _base_settings
-    override = _settings_override.get()
+    override = settings_reloader.settings_override.get()
     if isinstance(override, Settings):
         return override
-    if not isinstance(_base_settings, Settings):
+    if not isinstance(settings_reloader.base_settings, Settings):
         try:
             configure()  # use default config, if exists
         except FileNotFoundError:
             # no default config, create a new default one
-            _set_base_settings(Settings())
-    return _base_settings
+            set_base_settings(Settings())
+    return settings_reloader.base_settings
 
 
 async def run_with(
@@ -748,13 +810,13 @@ async def run_with(
     kw: Optional[Dict[str, Any]] = {},
 ) -> Any:
     async def _call():
-        tok = _settings_override.set(
+        tok = push_settings_override(
             instance().model_copy(deep=True).with_overrides(overrides)
         )
         try:
             return await func(*args, **kw)
         finally:
-            _settings_override.reset(tok)
+            pop_settings_override(tok)
 
     return await _call()
 

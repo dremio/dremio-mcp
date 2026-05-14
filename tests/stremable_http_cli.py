@@ -399,7 +399,7 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None 
         if ld_sdk_key:
             overrides["launchdarkly.sdk_key"] = ld_sdk_key
         configured_settings = old.model_copy(deep=True).with_overrides(overrides)
-        settings._set_base_settings(configured_settings)
+        settings.set_base_settings(configured_settings)
         mcp_server = init(
             transport=Transports.streamable_http,
             port=port,
@@ -429,7 +429,7 @@ def _local_mcp_server(dremio_uri: str, port: int = 8989, ld_sdk_key: str | None 
 
         yield port
     finally:
-        settings._set_base_settings(old)
+        settings.set_base_settings(old)
 
 
 @app.command("test", help="Run a quick smoketest for a deployed MCP server")

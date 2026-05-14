@@ -38,7 +38,7 @@ def _make_settings(launchdarkly=None, **dremio_overrides):
     if launchdarkly is not None:
         cfg["launchdarkly"] = launchdarkly
     s = settings.Settings.model_validate(cfg)
-    settings._set_base_settings(s)
+    settings.set_base_settings(s)
     return s
 
 
