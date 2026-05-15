@@ -66,7 +66,7 @@ async def list_tools() -> ListToolsResponse:
     try:
         client = AsyncHttpClient()
         project_id = settings.instance().dremio.project_id
-        endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
+        endpoint = f"/v1/projects/{project_id}" if project_id else "/api/v4"
         return await client.get(f"{endpoint}/ai/tools", deser=ListToolsResponse)
     except ClientResponseError as e:
         log.exception("Failed to list AI tools")
@@ -81,7 +81,7 @@ async def invoke_tool(tool_name: str, args: Dict[str, Any]) -> InvokeToolRespons
     try:
         client = AsyncHttpClient()
         project_id = settings.instance().dremio.project_id
-        endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
+        endpoint = f"/v1/projects/{project_id}" if project_id else "/api/v4"
         return await client.post(
             f"{endpoint}/ai/tools/{safe_name}:invoke",
             body={"args": args},

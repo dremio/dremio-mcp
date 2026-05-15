@@ -38,7 +38,7 @@ def no_project_id_settings(mock_settings_instance):
 @pytest.mark.asyncio
 async def test_list_tools_returns_tools(mock_settings_instance):
     with HttpMockFramework() as mock:
-        mock.load_mock_data(r"/v0/projects/[^/]+/ai/tools$", "ai_tools/list_tools.json")
+        mock.load_mock_data(r"/v1/projects/[^/]+/ai/tools$", "ai_tools/list_tools.json")
         result = await list_tools()
     assert bool(result)
     assert len(result.tools) == 3
@@ -51,7 +51,7 @@ async def test_list_tools_returns_tools(mock_settings_instance):
 @pytest.mark.asyncio
 async def test_list_tools_returns_input_schema(mock_settings_instance):
     with HttpMockFramework() as mock:
-        mock.load_mock_data(r"/v0/projects/[^/]+/ai/tools$", "ai_tools/list_tools.json")
+        mock.load_mock_data(r"/v1/projects/[^/]+/ai/tools$", "ai_tools/list_tools.json")
         result = await list_tools()
     run_sql = next(t for t in result.tools if t.name == "runSql")
     assert run_sql.input_schema["type"] == "object"
@@ -61,7 +61,7 @@ async def test_list_tools_returns_input_schema(mock_settings_instance):
 @pytest.mark.asyncio
 async def test_list_tools_empty_registry(mock_settings_instance):
     with HttpMockFramework() as mock:
-        mock.add_mock_response(r"/v0/projects/[^/]+/ai/tools$", {"tools": []})
+        mock.add_mock_response(r"/v1/projects/[^/]+/ai/tools$", {"tools": []})
         result = await list_tools()
     assert result.tools == []
     assert bool(result)
@@ -73,7 +73,7 @@ async def test_list_tools_empty_registry(mock_settings_instance):
 async def test_invoke_tool_success(mock_settings_instance):
     with HttpMockFramework() as mock:
         mock.load_mock_data(
-            r"/v0/projects/[^/]+/ai/tools/runSql:invoke$",
+            r"/v1/projects/[^/]+/ai/tools/runSql:invoke$",
             "ai_tools/invoke_result.json",
         )
         result = await invoke_tool("runSql", {"sqlText": "SELECT 1"})
@@ -86,7 +86,7 @@ async def test_invoke_tool_success(mock_settings_instance):
 async def test_invoke_tool_error_response(mock_settings_instance):
     with HttpMockFramework() as mock:
         mock.load_mock_data(
-            r"/v0/projects/[^/]+/ai/tools/unknownTool:invoke$",
+            r"/v1/projects/[^/]+/ai/tools/unknownTool:invoke$",
             "ai_tools/invoke_error.json",
         )
         result = await invoke_tool("unknownTool", {})
@@ -162,7 +162,7 @@ async def test_list_tools_http_error(mock_settings_instance):
     """list_tools should return a response with error set on HTTP 4xx/5xx."""
     with HttpMockFramework() as mock:
         mock.add_mock_response(
-            r"/v0/projects/[^/]+/ai/tools$",
+            r"/v1/projects/[^/]+/ai/tools$",
             {"error": "Unauthorized"},
             status=401,
         )
@@ -177,7 +177,7 @@ async def test_invoke_tool_http_error(mock_settings_instance):
     """invoke_tool should return a response with error set on HTTP 500."""
     with HttpMockFramework() as mock:
         mock.add_mock_response(
-            r"/v0/projects/[^/]+/ai/tools/runSql:invoke$",
+            r"/v1/projects/[^/]+/ai/tools/runSql:invoke$",
             {"error": "Internal Server Error"},
             status=500,
         )
@@ -193,7 +193,7 @@ async def test_invoke_tool_url_encodes_name(mock_settings_instance):
     with HttpMockFramework() as mock:
         # The encoded name "my%2Ftool" should appear in the URL
         mock.add_mock_response(
-            r"/v0/projects/[^/]+/ai/tools/my%2Ftool:invoke$",
+            r"/v1/projects/[^/]+/ai/tools/my%2Ftool:invoke$",
             {"result": "ok", "error": None},
         )
         result = await invoke_tool("my/tool", {})
@@ -201,19 +201,19 @@ async def test_invoke_tool_url_encodes_name(mock_settings_instance):
 
 
 @pytest.mark.asyncio
-async def test_list_tools_uses_api_v3_without_project_id(no_project_id_settings):
+async def test_list_tools_uses_api_v4_without_project_id(no_project_id_settings):
     with HttpMockFramework() as mock:
-        mock.load_mock_data(r"/api/v3/ai/tools$", "ai_tools/list_tools.json")
+        mock.load_mock_data(r"/api/v4/ai/tools$", "ai_tools/list_tools.json")
         result = await list_tools()
     assert bool(result)
     assert len(result.tools) == 3
 
 
 @pytest.mark.asyncio
-async def test_invoke_tool_uses_api_v3_without_project_id(no_project_id_settings):
+async def test_invoke_tool_uses_api_v4_without_project_id(no_project_id_settings):
     with HttpMockFramework() as mock:
         mock.load_mock_data(
-            r"/api/v3/ai/tools/runSql:invoke$",
+            r"/api/v4/ai/tools/runSql:invoke$",
             "ai_tools/invoke_result.json",
         )
         result = await invoke_tool("runSql", {"sqlText": "SELECT 1"})
