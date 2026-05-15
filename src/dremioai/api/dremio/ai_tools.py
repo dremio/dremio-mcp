@@ -64,10 +64,9 @@ class InvokeToolResponse(BaseModel):
 async def list_tools() -> ListToolsResponse:
     try:
         client = AsyncHttpClient()
-        return await client.get(
-            "/api/v4/ai/tools",
-            deser=ListToolsResponse,
-        )
+        project_id = settings.instance().dremio.project_id
+        endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
+        return await client.get(f"{endpoint}/ai/tools", deser=ListToolsResponse)
     except ClientResponseError as e:
         log.exception("Failed to list AI tools")
         return ListToolsResponse(error=f"HTTP {e.status} {e.message}")
@@ -80,8 +79,10 @@ async def invoke_tool(tool_name: str, args: Dict[str, Any]) -> InvokeToolRespons
     safe_name = quote(tool_name, safe="")
     try:
         client = AsyncHttpClient()
+        project_id = settings.instance().dremio.project_id
+        endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
         return await client.post(
-            f"/api/v4/ai/tools/{safe_name}:invoke",
+            f"{endpoint}/ai/tools/{safe_name}:invoke",
             body={"args": args},
             deser=InvokeToolResponse,
         )
