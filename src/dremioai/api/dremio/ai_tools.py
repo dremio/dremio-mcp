@@ -20,6 +20,7 @@ from urllib.parse import quote
 
 from aiohttp import ClientResponseError
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
+from dremioai.config import settings
 from dremioai.log import logger
 
 log = logger(__name__)
