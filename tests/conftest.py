@@ -51,6 +51,24 @@ from prometheus_client import CollectorRegistry
 
 
 @pytest.fixture(autouse=True)
+def reset_uvicorn_logger_propagation():
+    """Reset uvicorn logger state between tests.
+
+    Uvicorn's configure_logging() sets uvicorn.access.propagate=False via its
+    default LOGGING_CONFIG when a server starts. This leaks into subsequent tests
+    that assert stdlib loggers propagate to the root handler.
+    """
+    yield
+    import logging
+
+    for name in ("uvicorn.access", "uvicorn.error", "uvicorn"):
+        lg = logging.getLogger(name)
+        lg.propagate = True
+        for h in lg.handlers[:]:
+            lg.removeHandler(h)
+
+
+@pytest.fixture(autouse=True)
 def reset_sse_starlette_app_status():
     """
     Reset the global AppStatus.should_exit_event from sse_starlette between tests.
