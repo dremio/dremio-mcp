@@ -692,6 +692,44 @@ dremio:
     assert mock_ldclient.set_config.call_count == 1
 
 
+@patch("dremioai.config.feature_flags.ldclient")
+def test_reload_mutable_settings_preserves_snapshot_on_schema_validation_failure(
+    mock_ldclient, tmp_path
+):
+    mock_client = _make_mock_ld_client({})
+    mock_ldclient.get.return_value = mock_client
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("""
+launchdarkly:
+  sdk_key: test-key
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+  api:
+    polling_interval: 3
+""")
+    settings.configure(cfg)
+    before = settings.instance().model_dump()
+    assert mock_ldclient.set_config.call_count == 1
+
+    cfg.write_text("""
+launchdarkly:
+  sdk_key: test-key
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+  api:
+    http_retry:
+      max_retries: not-a-number
+""")
+    changed = settings.reload_mutable_settings_if_changed()
+
+    assert changed == []
+    assert settings.instance().model_dump() == before
+    assert mock_ldclient.set_config.call_count == 1
+
+
 @pytest.mark.asyncio
 async def test_settings_refresh_reloads_yaml_before_log_level_evaluation(tmp_path):
     from dremioai.servers.mcp import _settings_refresh_loop

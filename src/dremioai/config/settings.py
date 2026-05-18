@@ -433,7 +433,7 @@ class BeeAI(BaseModel):
 
 class Settings(FlagAwareMixin, BaseSettings):
     log_level: Annotated[Optional[str], RuntimeMutable()] = Field(default="INFO")
-    loggers: Annotated[Optional[List[str]], RuntimeMutable(), NoFlag()] = Field(
+    loggers: Annotated[Optional[List[str]], NoFlag()] = Field(
         default=None,
         description="Optional logger names to scope log_level to; when unset, log_level applies globally.",
     )
@@ -640,36 +640,12 @@ class SettingsReloader:
             if (
                 isinstance(annotation, type)
                 and issubclass(annotation, BaseModel)
+                and current_value is not None
                 and value is not None
             ):
-                if current_value is None:
-                    # Simple instantiation is not sufficient here because some
-                    # nested models have required, startup-only fields. We copy
-                    # the candidate subtree shape, blank it, then replay only
-                    # runtime-mutable leaves into that shell.
-                    current_value = value.model_copy(deep=True)
-                    self.blank_model_subtree(current_value, annotation)
-                    setattr(current_obj, field_name, current_value)
                 self.copy_runtime_mutable_fields(
                     current_value, value, annotation, changed_paths, field_path
                 )
-
-    def blank_model_subtree(self, current_obj: Any, model_cls: type):
-        """Clear a copied subtree before replaying mutable leaves into it."""
-        hints = get_type_hints(model_cls, include_extras=True)
-        for field_name in model_cls.model_fields:
-            value = getattr(current_obj, field_name, None)
-            annotation = self.unwrap_annotation(hints[field_name])
-
-            if (
-                isinstance(annotation, type)
-                and issubclass(annotation, BaseModel)
-                and value is not None
-            ):
-                self.blank_model_subtree(value, annotation)
-                continue
-
-            object.__setattr__(current_obj, field_name, None)
 
     def reload_if_changed(self) -> list[str]:
         _log = log.logger("settings_reload")
