@@ -36,6 +36,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from dremioai import log
+from dremioai.config import settings
 from dremioai.servers.jwks_verifier import JWKSVerifier, VerifiedClaims, TokenExpiredError
 from dremioai.servers.mcp import (
     FastMCPServerWithAuthToken,
@@ -293,6 +294,7 @@ class TestDispatchWarning:
 
     @pytest.mark.asyncio
     async def test_dispatch_logs_warning_on_401(self, caplog):
+        settings.set_base_settings(settings.Settings())
         middleware = RequireAuthWithWWWAuthenticateMiddleware(app=MagicMock())
 
         mock_user = MagicMock()

@@ -183,12 +183,18 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
             and request.url.path.startswith("/mcp")
         ):
             client_host = request.client.host if request.client else "unknown"
+            inst = settings.instance()
+            endpoint = (
+                str(inst.dremio.uri)
+                if inst is not None and inst.dremio is not None and inst.dremio.uri
+                else None
+            )
             self.logger.warning(
                 "Unauthorized request rejected",
                 path=request.url.path,
                 client=client_host,
                 project_id=ProjectIdMiddleware.get_project_id(),
-                endpoint=str(settings.instance().dremio.uri),
+                endpoint=endpoint,
             )
             # Return 401 with WWW-Authenticate header
             return StarletteResponse(
