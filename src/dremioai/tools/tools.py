@@ -219,15 +219,18 @@ get_project_id_required = lambda tool: _get_class_var_hints(tool, "project_id_re
 def is_tool_for(
     tool: Tools, tool_type: ToolType, dremio: settings.Dremio = None
 ) -> bool:
-    if dremio is None and settings.instance().dremio:
-        dremio = settings.instance().dremio
+    inst = settings.instance()
+    if dremio is None and inst is not None and inst.dremio is not None:
+        dremio = inst.dremio
 
     if project_id_required := get_project_id_required(tool):
         if dremio is not None and dremio.project_id is None:
             return False
 
     if (For := get_for(tool)) is not None:
-        if For & ToolType.EXPERIMENTAL and not dremio.get("enable_search"):
+        if For & ToolType.EXPERIMENTAL and (
+            dremio is None or not dremio.get("enable_search")
+        ):
             return False
         return (For & tool_type) != 0  # == tool_type
     return False
