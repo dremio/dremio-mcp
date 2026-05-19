@@ -434,7 +434,7 @@ class BeeAI(BaseModel):
 
 class Settings(FlagAwareMixin, BaseSettings):
     log_level: Annotated[Optional[str], RuntimeMutable()] = Field(default="INFO")
-    loggers: Annotated[Optional[List[str]], NoFlag()] = Field(
+    loggers: Annotated[Optional[List[str]], RuntimeMutable(), NoFlag()] = Field(
         default=None,
         description="Optional logger names to scope log_level to; when unset, log_level applies globally.",
     )

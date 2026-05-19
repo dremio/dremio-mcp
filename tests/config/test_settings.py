@@ -189,6 +189,7 @@ def test_reload_mutable_settings_if_changed_updates_runtime_mutable_only(tmp_pat
         yaml.safe_dump(
             {
                 "log_level": "INFO",
+                "loggers": ["initial.logger"],
                 "dremio": {
                     "uri": "https://one.dremio.cloud",
                     "pat": "test-pat",
@@ -209,6 +210,7 @@ def test_reload_mutable_settings_if_changed_updates_runtime_mutable_only(tmp_pat
         yaml.safe_dump(
             {
                 "log_level": "DEBUG",
+                "loggers": ["updated.logger"],
                 "dremio": {
                     "uri": "https://two.dremio.cloud",
                     "pat": "changed-pat",
@@ -227,12 +229,14 @@ def test_reload_mutable_settings_if_changed_updates_runtime_mutable_only(tmp_pat
 
     assert changed == [
         "log_level",
+        "loggers",
         "dremio.enable_search",
         "dremio.allow_dml",
         "dremio.api.http_retry.max_retries",
         "dremio.api.polling_interval",
     ]
     assert settings.instance().log_level == "DEBUG"
+    assert settings.instance().loggers == ["updated.logger"]
     assert settings.instance().dremio.enable_search is True
     assert settings.instance().dremio.allow_dml is True
     assert settings.instance().dremio.api.http_retry.max_retries == 11

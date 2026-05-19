@@ -773,6 +773,14 @@ async def test_settings_refresh_scopes_log_level_to_configured_loggers(tmp_path)
 
     cfg = tmp_path / "config.yaml"
     cfg.write_text("""
+log_level: INFO
+dremio:
+  uri: https://test.dremio.cloud
+  pat: test-pat
+""")
+    settings.configure(cfg)
+
+    cfg.write_text("""
 log_level: DEBUG
 loggers:
   - scoped.logger
@@ -780,7 +788,6 @@ dremio:
   uri: https://test.dremio.cloud
   pat: test-pat
 """)
-    settings.configure(cfg)
 
     original_level = log.level()
     try:
