@@ -185,7 +185,7 @@ async def get_results(
     if client is None:
         client = AsyncHttpClient()
 
-    delay = settings.instance().dremio.api.polling_interval
+    delay = settings.instance().dremio.api.get("polling_interval")
 
     endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
     job: Job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)

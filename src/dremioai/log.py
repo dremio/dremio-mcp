@@ -56,6 +56,8 @@ def logger(name=None):
 
 
 _level = None
+_scoped_level = None
+_scoped_logger_names = set()
 
 
 def _rename_exception_field(_logger, _name, event_dict):
@@ -77,13 +79,52 @@ def level():
     return getattr(logging, os.environ.get("LOG_LEVEL", "INFO"), logging.INFO)
 
 
-def set_level(l):
-    global _level
+def scoped_level():
+    return _scoped_level
+
+
+def scoped_loggers():
+    return sorted(_scoped_logger_names)
+
+
+def _normalize_level(l):
+    if isinstance(l, str):
+        return getattr(logging, l.upper(), logging.INFO)
+    return l
+
+
+def _set_handler_level(l):
+    for handler in logging.getLogger().handlers:
+        handler.setLevel(l)
+
+
+def set_level(l, logger_names=None):
+    global _level, _scoped_level, _scoped_logger_names
+    l = _normalize_level(l)
+
+    if logger_names:
+        global_level = level()
+        logger_names = set(logger_names)
+
+        for name in _scoped_logger_names - logger_names:
+            logging.getLogger(name).setLevel(global_level)
+
+        for name in logger_names:
+            logging.getLogger(name).setLevel(l)
+
+        _scoped_logger_names = logger_names
+        _scoped_level = l
+        logging.getLogger().setLevel(global_level)
+        _set_handler_level(min(global_level, l))
+        return
+
     _level = l
-    # propagate to all loggers
+    _scoped_level = None
+    _scoped_logger_names.clear()
     logging.getLogger().setLevel(l)
     for name in logging.getLogger().manager.loggerDict:
         logging.getLogger(name).setLevel(l)
+    _set_handler_level(l)
 
 
 def configure(enable_json_logging=None, to_file=False):
@@ -101,7 +142,6 @@ def configure(enable_json_logging=None, to_file=False):
     else:
         handler = logging.StreamHandler(sys.stderr)
 
-    handler.setLevel(level())
     logging.getLogger().handlers.clear()
     logging.getLogger().addHandler(handler)
 
@@ -133,8 +173,8 @@ def configure(enable_json_logging=None, to_file=False):
         formatter_processors.append(_rename_exception_field)
     formatter_processors.extend(
         [
-        structlog.processors.EventRenamer("message"),
-        renderer,
+            structlog.processors.EventRenamer("message"),
+            renderer,
         ]
     )
     handler.setFormatter(

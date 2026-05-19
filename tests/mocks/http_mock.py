@@ -17,6 +17,7 @@ import io
 import json
 import re
 import asyncio
+import socket
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, TextIO, List, Coroutine, Callable
@@ -404,9 +405,14 @@ class LoggingServerFixture(ServerFixture):
 
 def create_pytest_logging_server_fixture(
     mock_data: Optional[OrderedDict[str, str]] = None,
-    port: int = 8000,
+    port: int | None = None,
     log_level="warning",
 ) -> LoggingServerFixture:
+    if port is None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            sock.listen(1)
+            port = sock.getsockname()[1]
 
     log_file = io.StringIO()
     thread, stop_event = start_logging_server(

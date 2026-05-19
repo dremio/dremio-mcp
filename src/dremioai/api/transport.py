@@ -43,18 +43,18 @@ DeserializationStrategy: TypeAlias = Union[Callable, BaseModel]
 class RetryConfig:
     def __init__(self):
         if settings.instance() and settings.instance().dremio:
-            self.config = settings.instance().dremio.api.http_retry
+            self.http_retry = settings.instance().dremio.api.http_retry
         else:
-            self.config = settings.HttpRetry()
+            self.http_retry = settings.HttpRetry()
 
     @property
     def max_retries(self) -> int:
         """Expose max_retries from config for convenience"""
-        return self.config.max_retries
+        return self.http_retry.get("max_retries")
 
     def get_config_delay(self, attempt_number: int = 0) -> float:
-        return self.config.initial_delay * (
-            self.config.backoff_multiplier**attempt_number
+        return self.http_retry.get("initial_delay") * (
+            self.http_retry.get("backoff_multiplier") ** attempt_number
         )
 
     def get_delay(
@@ -72,7 +72,7 @@ class RetryConfig:
                     f"Invalid Retry-After header, using exponential backoff - {e}"
                 )
 
-        return min(delay, self.config.max_delay)
+        return min(delay, self.http_retry.get("max_delay"))
 
 
 async def retry_middleware(
@@ -200,7 +200,11 @@ class AsyncHttpClient:
         async with ClientSession(middlewares=(retry_middleware,)) as session:
             self.log_request("POST", endpoint, params)
             async with session.post(
-                f"{self.uri}{endpoint}", params=params, headers=self.headers, json=body, ssl=False
+                f"{self.uri}{endpoint}",
+                params=params,
+                headers=self.headers,
+                json=body,
+                ssl=False,
             ) as response:
                 return await self.handle_response(
                     response, deser, file, top_level_list=top_level_list
@@ -222,5 +226,7 @@ class DremioAsyncHttpClient(AsyncHttpClient):
         pat = dremio.pat
 
         if uri is None or pat is None:
-            raise RuntimeError("Dremio connection is not properly configured. Both URI and authentication token are required.")
+            raise RuntimeError(
+                "Dremio connection is not properly configured. Both URI and authentication token are required."
+            )
         super().__init__(uri, pat)
