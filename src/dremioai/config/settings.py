@@ -530,7 +530,7 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
 # Module-level holder so configure() can pass the YAML path to the Settings constructor
 _yaml_file: Path | None = None
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class ConfigFingerprint:
     path: str
     inode: int
@@ -538,16 +538,15 @@ class ConfigFingerprint:
     mtime_ns: int
     content_hash: str
 
-    def __init__(self, resolved: Path):
+    @classmethod
+    def from_resolved_path(cls, resolved: Path) -> Self:
         stat = resolved.stat()
-        object.__setattr__(self, "path", str(resolved))
-        object.__setattr__(self, "inode", stat.st_ino)
-        object.__setattr__(self, "size", stat.st_size)
-        object.__setattr__(self, "mtime_ns", stat.st_mtime_ns)
-        object.__setattr__(
-            self,
-            "content_hash",
-            hashlib.sha256(resolved.read_bytes()).hexdigest(),
+        return cls(
+            path=str(resolved),
+            inode=stat.st_ino,
+            size=stat.st_size,
+            mtime_ns=stat.st_mtime_ns,
+            content_hash=hashlib.sha256(resolved.read_bytes()).hexdigest(),
         )
 
 
@@ -612,7 +611,7 @@ class SettingsReloader:
         """Return a config fingerprint for the resolved config path."""
         if cfg is None:
             return None
-        return ConfigFingerprint(cfg.resolve())
+        return ConfigFingerprint.from_resolved_path(cfg.resolve())
 
     def unwrap_optional_annotation(self, annotation: Any) -> Any:
         """Unwrap Optional[T] / T | None, but leave broader unions unchanged."""
