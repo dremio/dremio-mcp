@@ -16,6 +16,7 @@
 import uuid
 import hashlib
 import threading
+from dataclasses import dataclass
 from uuid import UUID
 from urllib.parse import urlparse
 
@@ -529,7 +530,25 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
 # Module-level holder so configure() can pass the YAML path to the Settings constructor
 _yaml_file: Path | None = None
 
-ConfigFingerprint = tuple[str, int, int, int, str]
+@dataclass(frozen=True, init=False)
+class ConfigFingerprint:
+    path: str
+    inode: int
+    size: int
+    mtime_ns: int
+    content_hash: str
+
+    def __init__(self, resolved: Path):
+        stat = resolved.stat()
+        object.__setattr__(self, "path", str(resolved))
+        object.__setattr__(self, "inode", stat.st_ino)
+        object.__setattr__(self, "size", stat.st_size)
+        object.__setattr__(self, "mtime_ns", stat.st_mtime_ns)
+        object.__setattr__(
+            self,
+            "content_hash",
+            hashlib.sha256(resolved.read_bytes()).hexdigest(),
+        )
 
 
 class SettingsReloader:
@@ -590,27 +609,14 @@ class SettingsReloader:
         return Settings()
 
     def compute_fingerprint(self, cfg: Path | None) -> ConfigFingerprint | None:
-        """Return a resolved-path fingerprint plus a content hash.
-
-        Resolved path + inode + size + mtime_ns handles ConfigMap swaps well.
-        A SHA-256 of the current file contents covers the rare edge case where
-        metadata stays the same across a rewrite.
-        """
+        """Return a config fingerprint for the resolved config path."""
         if cfg is None:
             return None
-        resolved = cfg.resolve()
-        stat = resolved.stat()
-        content_hash = hashlib.sha256(resolved.read_bytes()).hexdigest()
-        return (
-            str(resolved),
-            stat.st_ino,
-            stat.st_size,
-            stat.st_mtime_ns,
-            content_hash,
-        )
+        return ConfigFingerprint(cfg.resolve())
 
-    def unwrap_annotation(self, annotation: Any) -> Any:
-        args = [a for a in get_args(annotation) if a is not NoneType]
+    def unwrap_optional_annotation(self, annotation: Any) -> Any:
+        """Unwrap Optional[T] / T | None, but leave broader unions unchanged."""
+        args = tuple(a for a in get_args(annotation) if a is not NoneType)
         if len(args) == 1:
             return args[0]
         return annotation
@@ -629,7 +635,7 @@ class SettingsReloader:
             value = getattr(candidate_obj, field_name, None)
             current_value = getattr(current_obj, field_name, None)
             field_path = f"{prefix}.{field_name}" if prefix else field_name
-            annotation = self.unwrap_annotation(hints[field_name])
+            annotation = self.unwrap_optional_annotation(hints[field_name])
 
             if _has_runtime_mutable(model_cls, field_name):
                 if current_value != value:
@@ -668,12 +674,19 @@ class SettingsReloader:
                 self.config_fingerprint = fingerprint
                 return []
 
-            updated = self.base_settings.model_copy(deep=True)
-            changed_paths: list[str] = []
-            self.copy_runtime_mutable_fields(
-                updated, candidate, Settings, changed_paths
-            )
+            current_base = self.base_settings
+            current_fingerprint = self.config_fingerprint
 
+        updated = current_base.model_copy(deep=True)
+        changed_paths: list[str] = []
+        self.copy_runtime_mutable_fields(updated, candidate, Settings, changed_paths)
+
+        with self.lock:
+            if (
+                self.base_settings is not current_base
+                or self.config_fingerprint != current_fingerprint
+            ):
+                return []
             self.base_settings = updated
             self.config_fingerprint = fingerprint
 
