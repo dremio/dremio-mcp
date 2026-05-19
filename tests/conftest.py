@@ -19,7 +19,7 @@ Global pytest fixtures for dremio-mcp tests.
 """
 
 import os
-import random
+import socket
 import uuid
 from typing import AsyncGenerator, NamedTuple
 
@@ -49,6 +49,13 @@ import contextlib
 from dremioai.log import set_level
 from dremioai.metrics import registry
 from prometheus_client import CollectorRegistry
+
+
+def _reserve_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return sock.getsockname()[1]
 
 
 @pytest.fixture(autouse=True)
@@ -203,7 +210,7 @@ def _create_logging_server(log_level="warning"):
     )
 
     return create_pytest_logging_server_fixture(
-        mock_data=mock_data, port=8000, log_level=log_level
+        mock_data=mock_data, log_level=log_level
     )
 
 
@@ -244,12 +251,10 @@ async def http_streamable_mcp_server(
     try:
         settings.configure(force=True)
         host = "127.0.0.1"
-        port = random.randrange(9000, 12000)
-        metrics_port = random.randrange(9000, 12000)
-
-        # Ensure metrics port is different from main port
+        port = _reserve_local_port()
+        metrics_port = _reserve_local_port()
         while metrics_port == port:
-            metrics_port = random.randrange(9000, 12000)
+            metrics_port = _reserve_local_port()
 
         config = {
             "dremio": {
