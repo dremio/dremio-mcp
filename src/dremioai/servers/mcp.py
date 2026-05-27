@@ -489,6 +489,7 @@ def init(
                 readOnlyHint=not (is_sql_tool and allow_dml),
                 destructiveHint=bool(is_sql_tool and allow_dml),
             ),
+            structured_output=False,
         )
 
     for resource in tools.get_resources(For=mode):
@@ -504,7 +505,12 @@ def init(
         )
     # if mode is None or (mode & tools.ToolType.FOR_SELF) != 0:
     mcp.add_prompt(
-        Prompt.from_function(tools.system_prompt, "System Prompt", "System Prompt")
+        Prompt.from_function(
+            tools.system_prompt,
+            name="System Prompt",
+            title="System Prompt",
+            description="System-level instructions for Dremio analysis tasks",
+        )
     )
 
     if not mock:

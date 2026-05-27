@@ -195,12 +195,12 @@ class TestDynamicTools:
             assert "DiscoverDynamicTools" in tool_names
             assert "CallDynamicTool" in tool_names
             result = await server.call_tool("DiscoverDynamicTools", {})
-            assert "not enabled" in result[0][0].text
+            assert "not enabled" in result[0].text
             result = await server.call_tool(
                 "CallDynamicTool",
                 {"tool_name": "SomeTool", "tool_arguments": "{}"},
             )
-            assert "not enabled" in result[0][0].text
+            assert "not enabled" in result[0].text
 
     @pytest.mark.asyncio
     async def test_discover_returns_tool_list(self):
@@ -236,7 +236,7 @@ class TestDynamicTools:
                 result = await server.call_tool("DiscoverDynamicTools", {})
 
             assert result is not None
-            parsed = json.loads(result[0][0].text)
+            parsed = json.loads(result[0].text)
             names = {t["name"] for t in parsed["tools"]}
             assert "JavaTool1" in names
             assert "JavaTool2" in names
@@ -254,7 +254,7 @@ class TestDynamicTools:
                 result = await server.call_tool("DiscoverDynamicTools", {})
 
             assert result is not None
-            text = result[0][0].text
+            text = result[0].text
             assert "Dremio unreachable" in text
 
     @pytest.mark.asyncio
@@ -296,7 +296,7 @@ class TestDynamicTools:
                     },
                 )
 
-            text = result[0][0].text
+            text = result[0].text
             parsed = json.loads(text)
             assert parsed.get("error") is not None
             assert "500" in parsed["error"]
@@ -315,5 +315,5 @@ class TestDynamicTools:
                 },
             )
 
-            text = result[0][0].text
+            text = result[0].text
             assert "Invalid JSON" in text

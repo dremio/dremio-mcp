@@ -35,8 +35,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from decimal import Decimal
 
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dremioai import log
 import re
@@ -134,30 +133,39 @@ def _df_to_json_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     ]
 
 
-class ProjectIdMiddleware(BaseHTTPMiddleware):
+class ProjectIdMiddleware:
     pat = re.compile(r"/mcp/([\da-z-]+)(/?.*)")
     logger = log.logger("ProjectIdMiddleware")
 
-    # Context variable to store the current project ID
+    # ContextVar is per-async-task so each request gets its own project_id
     project_id_context: ContextVar[str | None] = ContextVar("project_id", default=None)
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
 
     @classmethod
     def get_project_id(cls) -> Optional[str]:
         return cls.project_id_context.get()
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        ProjectIdMiddleware.logger.info(
-            f"Request {request.url.path} body = {await request.body()!s}"
-        )
-        if m := ProjectIdMiddleware.pat.search(request.url.path):
-            ProjectIdMiddleware.project_id_context.set(m.group(1))
-            FeatureFlagManager.set_project_id(m.group(1))
-        else:
-            ProjectIdMiddleware.logger.debug(
-                f"Path {request.url.path} ({request.url!r}) doesn't match"
-            )
-
-        return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            ProjectIdMiddleware.logger.info(f"Request {path}")
+            if m := ProjectIdMiddleware.pat.search(path):
+                project_id = m.group(1)
+                ProjectIdMiddleware.project_id_context.set(project_id)
+                FeatureFlagManager.set_project_id(project_id)
+                # Modify scope in-place so the MCP handler sees /mcp[/...].
+                # BaseHTTPMiddleware cannot do this: Starlette 1.0 call_next
+                # captures the original scope via closure and ignores any
+                # request.scope changes made in dispatch().
+                remaining = m.group(2).rstrip("/")
+                new_path = f"/mcp{remaining}" if remaining else "/mcp"
+                scope["path"] = new_path
+                scope["raw_path"] = new_path.encode("ascii")
+            else:
+                ProjectIdMiddleware.logger.debug(f"Path {path} doesn't match")
+        await self.app(scope, receive, send)
 
 
 # A decorator to ensure a tool that needs to access Dremio runs with the correct token

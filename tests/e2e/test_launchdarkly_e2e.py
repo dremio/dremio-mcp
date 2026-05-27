@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import json
 import uuid
 import warnings
 
@@ -97,7 +98,8 @@ async def test_allow_dml_without_ld(mock_config_dir, logging_server, logging_lev
             result: CallToolResult = await session.call_tool(
                 "RunSqlQuery", {"query": "DROP TABLE foo"}
             )
-            assert "error" in result.structuredContent.get("result", {}), \
+            data = json.loads(result.content[0].text)
+            assert "error" in data, \
                 "DML should be rejected when allow_dml is False"
 
 
@@ -124,7 +126,8 @@ async def test_allow_dml_enabled_by_ld(mock_ldclient, mock_config_dir, logging_s
             result: CallToolResult = await session.call_tool(
                 "RunSqlQuery", {"query": "DROP TABLE foo"}
             )
-            err = result.structuredContent.get("result", {}).get("error", "")
+            data = json.loads(result.content[0].text)
+            err = data.get("error", "")
             assert "DML" not in err and "not permitted" not in err, \
                 f"DML should pass validation when LD sets allow_dml=True: {err}"
 
