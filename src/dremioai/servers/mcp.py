@@ -68,7 +68,10 @@ from yaml import dump
 
 from dremioai import log
 from dremioai.api.oauth2 import get_oauth2_tokens
-from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
+from dremioai.api.oauth_metadata import (
+    OAuthMetadataRFC8414,
+    OAuthProtectedResourceMetadata,
+)
 from dremioai.config import settings
 from dremioai.config.feature_flags import FeatureFlagManager
 from dremioai.metrics.registry import get_metrics_app
@@ -196,11 +199,27 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
                 project_id=ProjectIdMiddleware.get_project_id(),
                 endpoint=endpoint,
             )
+            # This middleware is the last step that emits the HTTP 401 after the
+            # auth backend has already classified the request as unauthenticated.
+            # RFC 9728 Section 5.1 defines the `resource_metadata` auth-param on
+            # the Bearer challenge so clients can discover the protected resource
+            # metadata document after that 401. If a Bearer token was supplied,
+            # RFC 6750 Section 3.1 allows `error="invalid_token"`, which lets
+            # OAuth-aware MCP clients distinguish "missing token" from "token
+            # rejected upstream by verification/authentication".
+            has_bearer_token = request.headers.get("authorization", "").startswith(
+                "Bearer "
+            )
+            www_authenticate = (
+                f'Bearer resource_metadata="{build_resource_metadata_url(request)}"'
+            )
+            if has_bearer_token:
+                www_authenticate += ', error="invalid_token"'
             # Return 401 with WWW-Authenticate header
             return StarletteResponse(
                 content="Unauthorized",
                 status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": www_authenticate},
             )
 
         # User is authenticated, proceed with the request
@@ -210,6 +229,56 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
 class Transports(StrEnum):
     stdio = auto()
     streamable_http = "streamable-http"
+
+
+def request_base_url(request: Request) -> str:
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def normalize_resource_path(path: str | None) -> str:
+    if not path:
+        return "/mcp"
+    normalized = "/" + path.lstrip("/")
+    return normalized.rstrip("/") or "/"
+
+
+def build_resource_metadata_url(request: Request, resource_path: str | None = None) -> str:
+    return (
+        f"{request_base_url(request)}/.well-known/oauth-protected-resource"
+        f"{normalize_resource_path(resource_path or request.url.path)}"
+    )
+
+
+def build_authorization_server_metadata() -> OAuthMetadataRFC8414 | None:
+    if issuer := settings.instance().dremio.auth_issuer_uri:
+        auth, tok, reg = settings.instance().dremio.auth_endpoints
+        return OAuthMetadataRFC8414(
+            issuer=AnyHttpUrl(issuer),
+            authorization_endpoint=auth,
+            token_endpoint=tok,
+            registration_endpoint=AnyHttpUrl(reg),
+            scopes_supported=["dremio.all", "offline_access"],
+            response_types_supported=["code"],
+            grant_types_supported=["authorization_code", "refresh_token"],
+            code_challenge_methods_supported=["S256"],
+            token_endpoint_auth_methods_supported=["none"],
+        )
+    return None
+
+
+def build_protected_resource_metadata(
+    request: Request,
+    resource_path: str | None = None,
+    auth_metadata: OAuthMetadataRFC8414 | None = None,
+) -> OAuthProtectedResourceMetadata:
+    metadata = {
+        "resource": f"{request_base_url(request)}{normalize_resource_path(resource_path)}"
+    }
+    if auth_metadata is not None:
+        metadata["authorization_servers"] = [str(auth_metadata.issuer).rstrip("/")]
+    return OAuthProtectedResourceMetadata.model_validate(metadata)
 
 
 class FastMCPServerWithAuthToken(FastMCP):
@@ -509,24 +578,38 @@ def init(
 
     if not mock:
 
+        # FastMCP can expose RFC 9728 metadata from `settings.auth.resource_server_url`,
+        # but this server does not currently populate AuthSettings and also needs the
+        # path-inserted variant derived from the incoming request host/path. RFC 9728
+        # inserts `/.well-known/oauth-protected-resource` ahead of the resource path,
+        # so an MCP endpoint like `/mcp/1234` must publish metadata at
+        # `/.well-known/oauth-protected-resource/mcp/1234` in addition to the root
+        # well-known route.
+        #
+        # DX-119494 is the motivating production case: Langdock custom OAuth app
+        # integrations were timing out after the access token aged out, and the
+        # customer-configured MCP endpoint included `/mcp/<project_id>`. Without the
+        # path-aware protected-resource metadata URL, OAuth clients can miss the
+        # correct discovery target for reauth/refresh on project-scoped MCP resources.
+        @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+        @mcp.custom_route(
+            "/.well-known/oauth-protected-resource/{resource_path:path}",
+            methods=["GET"],
+        )
+        async def protected_resource_metadata(
+            request: Request, resource_path: str = ""
+        ) -> Response:
+            auth_md = build_authorization_server_metadata()
+            return PydanticJSONResponse(
+                build_protected_resource_metadata(request, resource_path, auth_md)
+            )
+
         @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
         @mcp.custom_route(
             "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
         )
         async def authorization_server_metadata(request: Request) -> Response:
-            if issuer := settings.instance().dremio.auth_issuer_uri:
-                auth, tok, reg = settings.instance().dremio.auth_endpoints
-                md = OAuthMetadataRFC8414(
-                    issuer=AnyHttpUrl(issuer),
-                    authorization_endpoint=auth,
-                    token_endpoint=tok,
-                    registration_endpoint=AnyHttpUrl(reg),
-                    scopes_supported=["dremio.all", "offline_access"],
-                    response_types_supported=["code"],
-                    grant_types_supported=["authorization_code", "refresh_token"],
-                    code_challenge_methods_supported=["S256"],
-                    token_endpoint_auth_methods_supported=["none"],
-                )
+            if md := build_authorization_server_metadata():
                 return PydanticJSONResponse(md)
             return Response(status_code=404)
 

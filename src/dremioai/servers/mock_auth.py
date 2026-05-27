@@ -38,7 +38,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from dremioai import log
-from dremioai.api.oauth_metadata import OAuthMetadataRFC8414
+from dremioai.api.oauth_metadata import (
+    OAuthMetadataRFC8414,
+    OAuthProtectedResourceMetadata,
+)
+from dremioai.servers.mcp import normalize_resource_path, request_base_url
 
 logger = log.logger(__name__)
 
@@ -299,6 +303,20 @@ def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
     async def _token(request: Request) -> Response:
         return await mock_token(request, issuer)
 
+    @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+    @mcp.custom_route(
+        "/.well-known/oauth-protected-resource/{resource_path:path}", methods=["GET"]
+    )
+    async def _protected_resource_metadata(
+        request: Request, resource_path: str = ""
+    ) -> Response:
+        request_base = request_base_url(request)
+        md = OAuthProtectedResourceMetadata(
+            resource=f"{request_base}{normalize_resource_path(resource_path)}",
+            authorization_servers=[request_base],
+        )
+        return PydanticJSONResponse(md)
+
     @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
     @mcp.custom_route(
         "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
@@ -306,9 +324,7 @@ def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
     async def _metadata(request: Request) -> Response:
         # Derive base URL from the incoming request so metadata works
         # behind ngrok, tunnels, and reverse proxies.
-        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-        host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
-        request_base = f"{scheme}://{host}".rstrip("/")
+        request_base = request_base_url(request)
         logger.info(f"mock_metadata: using base_url={request_base}")
         md = OAuthMetadataRFC8414(
             issuer=AnyHttpUrl(request_base),
