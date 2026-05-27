@@ -43,6 +43,7 @@ from mcp.server.auth.middleware.auth_context import (
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
 from mcp.server.lowlevel.server import request_ctx
@@ -441,6 +442,14 @@ def init(
     opts = {"log_level": "DEBUG", "debug": True, "lifespan": _server_lifespan}
     if transport == Transports.streamable_http:
         opts["stateless_http"] = True
+        # SDK 1.14+ auto-enables DNS rebinding protection when bound to
+        # localhost, which rejects any Host header that isn't 127.0.0.1
+        # /localhost/::1. That breaks reverse-proxy and tunneled access
+        # patterns. Auth is enforced separately via OAuth/PAT, so disable
+        # this here to preserve pre-1.14 behavior.
+        opts["transport_security"] = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False
+        )
     if port is not None:
         opts["port"] = port
     if host is not None:
