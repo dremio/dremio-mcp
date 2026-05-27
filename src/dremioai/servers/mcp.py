@@ -207,9 +207,8 @@ class RequireAuthWithWWWAuthenticateMiddleware(BaseHTTPMiddleware):
             # RFC 6750 Section 3.1 allows `error="invalid_token"`, which lets
             # OAuth-aware MCP clients distinguish "missing token" from "token
             # rejected upstream by verification/authentication".
-            has_bearer_token = request.headers.get("authorization", "").startswith(
-                "Bearer "
-            )
+            headers = getattr(request, "headers", {}) or {}
+            has_bearer_token = headers.get("authorization", "").startswith("Bearer ")
             www_authenticate = (
                 f'Bearer resource_metadata="{build_resource_metadata_url(request)}"'
             )
@@ -232,8 +231,14 @@ class Transports(StrEnum):
 
 
 def request_base_url(request: Request) -> str:
-    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+    headers = getattr(request, "headers", {}) or {}
+    url = getattr(request, "url", None)
+    scheme = headers.get(
+        "x-forwarded-proto", getattr(url, "scheme", None) or "http"
+    )
+    host = headers.get("x-forwarded-host", headers.get("host"))
+    if not host:
+        host = getattr(url, "netloc", None) or getattr(url, "hostname", None) or "localhost"
     return f"{scheme}://{host}".rstrip("/")
 
 
