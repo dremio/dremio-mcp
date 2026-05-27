@@ -279,6 +279,13 @@ class Dremio(FlagAwareModel):
         description="Extract org ID from JWT aud claim for LD context targeting",
     )
     auth_issuer_uri_override: Optional[str] = None
+    auth_resource_uri_override: Optional[str] = Field(
+        default=None,
+        description="Canonical public base URL for OAuth protected-resource metadata "
+        "and WWW-Authenticate resource_metadata challenges. When unset, the MCP "
+        "server derives the origin from the request URL without trusting raw "
+        "forwarded headers.",
+    )
     jwks_uri: Optional[str] = Field(
         default=None,
         description="JWKS endpoint URL for JWT signature verification and expiry checking. "

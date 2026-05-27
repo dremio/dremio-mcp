@@ -231,14 +231,18 @@ class Transports(StrEnum):
 
 
 def request_base_url(request: Request) -> str:
+    dremio = settings.instance().dremio
+    if dremio is not None and (
+        override := dremio.get("auth_resource_uri_override")
+    ):
+        return str(override).rstrip("/")
+
     headers = getattr(request, "headers", {}) or {}
     url = getattr(request, "url", None)
-    scheme = headers.get(
-        "x-forwarded-proto", getattr(url, "scheme", None) or "http"
-    )
-    host = headers.get("x-forwarded-host", headers.get("host"))
+    scheme = getattr(url, "scheme", None) or "http"
+    host = getattr(url, "netloc", None) or getattr(url, "hostname", None)
     if not host:
-        host = getattr(url, "netloc", None) or getattr(url, "hostname", None) or "localhost"
+        host = headers.get("host") or "localhost"
     return f"{scheme}://{host}".rstrip("/")
 
 
@@ -247,6 +251,20 @@ def normalize_resource_path(path: str | None) -> str:
         return "/mcp"
     normalized = "/" + path.lstrip("/")
     return normalized.rstrip("/") or "/"
+
+
+def protected_resource_path_from_request(
+    request: Request, resource_path: str | None = None
+) -> str | None:
+    if resource_path:
+        return resource_path
+
+    path = getattr(getattr(request, "url", None), "path", "") or ""
+    prefix = "/.well-known/oauth-protected-resource"
+    if path.startswith(prefix):
+        suffix = path[len(prefix) :]
+        return suffix or None
+    return resource_path
 
 
 def build_resource_metadata_url(request: Request, resource_path: str | None = None) -> str:
@@ -278,6 +296,7 @@ def build_protected_resource_metadata(
     resource_path: str | None = None,
     auth_metadata: OAuthMetadataRFC8414 | None = None,
 ) -> OAuthProtectedResourceMetadata:
+    resource_path = protected_resource_path_from_request(request, resource_path)
     metadata = {
         "resource": f"{request_base_url(request)}{normalize_resource_path(resource_path)}"
     }

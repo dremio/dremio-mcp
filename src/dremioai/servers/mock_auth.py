@@ -42,7 +42,11 @@ from dremioai.api.oauth_metadata import (
     OAuthMetadataRFC8414,
     OAuthProtectedResourceMetadata,
 )
-from dremioai.servers.mcp import normalize_resource_path, request_base_url
+from dremioai.servers.mcp import (
+    normalize_resource_path,
+    protected_resource_path_from_request,
+    request_base_url,
+)
 
 logger = log.logger(__name__)
 
@@ -311,6 +315,7 @@ def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
         request: Request, resource_path: str = ""
     ) -> Response:
         request_base = request_base_url(request)
+        resource_path = protected_resource_path_from_request(request, resource_path)
         md = OAuthProtectedResourceMetadata(
             resource=f"{request_base}{normalize_resource_path(resource_path)}",
             authorization_servers=[request_base],
@@ -322,8 +327,8 @@ def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
         "/mcp/{project_id}/.well-known/oauth-authorization-server", methods=["GET"]
     )
     async def _metadata(request: Request) -> Response:
-        # Derive base URL from the incoming request so metadata works
-        # behind ngrok, tunnels, and reverse proxies.
+        # Mock mode uses the observed request URL by default, but still respects
+        # the shared canonical override when one is configured explicitly.
         request_base = request_base_url(request)
         logger.info(f"mock_metadata: using base_url={request_base}")
         md = OAuthMetadataRFC8414(
