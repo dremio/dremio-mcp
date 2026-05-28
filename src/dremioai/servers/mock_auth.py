@@ -318,7 +318,7 @@ def register_mock_routes(mcp, issuer: MockJWTIssuer) -> None:
         resource_path = protected_resource_path_from_request(request, resource_path)
         md = OAuthProtectedResourceMetadata(
             resource=f"{request_base}{normalize_resource_path(resource_path)}",
-            authorization_servers=[request_base],
+            authorization_servers=[issuer.issuer],
         )
         return PydanticJSONResponse(md)
 

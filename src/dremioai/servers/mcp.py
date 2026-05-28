@@ -232,9 +232,7 @@ class Transports(StrEnum):
 
 def request_base_url(request: Request) -> str:
     dremio = settings.instance().dremio
-    if dremio is not None and (
-        override := dremio.get("auth_resource_uri_override")
-    ):
+    if dremio is not None and (override := dremio.get("auth_resource_uri_override")):
         return str(override).rstrip("/")
 
     headers = getattr(request, "headers", {}) or {}
@@ -267,7 +265,9 @@ def protected_resource_path_from_request(
     return resource_path
 
 
-def build_resource_metadata_url(request: Request, resource_path: str | None = None) -> str:
+def build_resource_metadata_url(
+    request: Request, resource_path: str | None = None
+) -> str:
     return (
         f"{request_base_url(request)}/.well-known/oauth-protected-resource"
         f"{normalize_resource_path(resource_path or request.url.path)}"
@@ -301,7 +301,9 @@ def build_protected_resource_metadata(
         "resource": f"{request_base_url(request)}{normalize_resource_path(resource_path)}"
     }
     if auth_metadata is not None:
-        metadata["authorization_servers"] = [str(auth_metadata.issuer).rstrip("/")]
+        # RFC 9728 defines authorization_servers as RFC 8414 issuer identifiers,
+        # not as the host that happens to serve the metadata document.
+        metadata["authorization_servers"] = [str(auth_metadata.issuer)]
     return OAuthProtectedResourceMetadata.model_validate(metadata)
 
 
