@@ -164,7 +164,7 @@ class ProjectIdMiddleware:
                 scope["path"] = new_path
                 scope["raw_path"] = new_path.encode("ascii")
             else:
-                ProjectIdMiddleware.logger.debug(f"Path {path} doesn't match")
+                ProjectIdMiddleware.logger.warning(f"Path {path} doesn't match")
         await self.app(scope, receive, send)
 
 
