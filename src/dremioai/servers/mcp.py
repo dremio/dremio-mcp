@@ -300,10 +300,7 @@ def build_protected_resource_metadata(
     metadata = {
         "resource": f"{request_base_url(request)}{normalize_resource_path(resource_path)}"
     }
-    if auth_metadata is not None:
-        # RFC 9728 defines authorization_servers as RFC 8414 issuer identifiers,
-        # not as the host that happens to serve the metadata document.
-        metadata["authorization_servers"] = [str(auth_metadata.issuer)]
+    metadata["authorization_servers"] = [request_base_url(request)]
     return OAuthProtectedResourceMetadata.model_validate(metadata)
 
 

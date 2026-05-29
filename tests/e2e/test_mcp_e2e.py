@@ -139,8 +139,11 @@ async def test_protected_resource_metadata_and_401_challenge(
             assert metadata_response.status_code == 200, metadata_response.text
             metadata = metadata_response.json()
             assert metadata["resource"] == sf.mcp_server.url.rstrip("/")
+            mcp_origin = urlparse(sf.mcp_server.url)._replace(
+                path="", params="", query="", fragment=""
+            )
             assert metadata["authorization_servers"] == [
-                settings.instance().dremio.auth_issuer_uri
+                mcp_origin.geturl().rstrip("/")
             ]
 
             unauthorized = await client.post(sf.mcp_server.url)
