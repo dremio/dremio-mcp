@@ -14,7 +14,7 @@
 #  limitations under the License.
 #
 from mcp.shared.auth import OAuthMetadata
-from pydantic import AnyHttpUrl, field_serializer
+from pydantic import AnyHttpUrl, BaseModel, field_serializer
 
 
 class OAuthMetadataRFC8414(OAuthMetadata):
@@ -28,3 +28,16 @@ class OAuthMetadataRFC8414(OAuthMetadata):
     @field_serializer("issuer")
     def serialize_issuer(self, value: AnyHttpUrl) -> str:
         return str(value).rstrip("/")
+
+
+class OAuthProtectedResourceMetadata(BaseModel):
+    """RFC 9728 protected resource metadata."""
+
+    resource: AnyHttpUrl
+    authorization_servers: list[AnyHttpUrl] | None = None
+
+    @field_serializer("authorization_servers")
+    def serialize_authorization_servers(
+        self, value: list[AnyHttpUrl] | None
+    ) -> list[str] | None:
+        return [str(url).rstrip("/") for url in value] if value is not None else None
