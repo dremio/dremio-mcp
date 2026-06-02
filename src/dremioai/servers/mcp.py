@@ -434,6 +434,7 @@ def init(
     mock: bool = False,
     mock_token_expiry: int = 3600,
     mock_refresh_token_expiry: int = 86400,
+    disable_dns_rebinding_protection: bool = False,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
@@ -442,14 +443,15 @@ def init(
     opts = {"log_level": "DEBUG", "debug": True, "lifespan": _server_lifespan}
     if transport == Transports.streamable_http:
         opts["stateless_http"] = True
-        # SDK 1.14+ auto-enables DNS rebinding protection when bound to
-        # localhost, which rejects any Host header that isn't 127.0.0.1
-        # /localhost/::1. That breaks reverse-proxy and tunneled access
-        # patterns. Auth is enforced separately via OAuth/PAT, so disable
-        # this here to preserve pre-1.14 behavior.
-        opts["transport_security"] = TransportSecuritySettings(
-            enable_dns_rebinding_protection=False
-        )
+        if disable_dns_rebinding_protection:
+            # SDK 1.14+ auto-enables DNS rebinding protection when bound to
+            # localhost, which rejects any Host header that isn't 127.0.0.1
+            # /localhost/::1. That breaks reverse-proxy and tunneled access
+            # patterns. Auth is enforced separately via OAuth/PAT, so only
+            # disable when explicitly requested via --disable-dns-rebinding-protection.
+            opts["transport_security"] = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False
+            )
     if port is not None:
         opts["port"] = port
     if host is not None:
@@ -690,6 +692,16 @@ def main(
         Optional[int],
         Option(help="Mock mode: refresh token expiry in seconds"),
     ] = 86400,
+    disable_dns_rebinding_protection: Annotated[
+        Optional[bool],
+        Option(
+            help=(
+                "Disable DNS rebinding protection for the streamable-HTTP transport. "
+                "Use when running behind a reverse proxy or port-forwarding tunnel "
+                "where the Host header differs from 127.0.0.1/localhost."
+            )
+        ),
+    ] = False,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -740,6 +752,7 @@ def main(
         mock=mock,
         mock_token_expiry=mock_token_expiry,
         mock_refresh_token_expiry=mock_refresh_token_expiry,
+        disable_dns_rebinding_protection=disable_dns_rebinding_protection,
     )
 
     # Create metrics server based on configuration
