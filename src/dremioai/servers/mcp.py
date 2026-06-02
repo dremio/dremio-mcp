@@ -272,11 +272,14 @@ def build_resource_metadata_url(
     if resource_path is None:
         # ProjectIdMiddleware rewrites /mcp/{project_id}[/...] to /mcp[/...] in-place,
         # so request.url.path has already lost the project_id by the time this is called.
-        # Reconstruct the original path from the context var when one is present.
+        # Use the context vars stored by the middleware to reconstruct the original path.
         if project_id := ProjectIdMiddleware.get_project_id():
-            current = request.url.path  # "/mcp" or "/mcp/messages"
-            resource_path = f"/mcp/{project_id}{current[4:]}"
+            resource_path = f"/mcp/{project_id}{ProjectIdMiddleware.get_remaining()}"
         else:
+            log.logger("build_resource_metadata_url").warning(
+                "No project_id in context; falling back to request path",
+                path=request.url.path,
+            )
             resource_path = request.url.path
     return (
         f"{request_base_url(request)}/.well-known/oauth-protected-resource"

@@ -139,6 +139,8 @@ class ProjectIdMiddleware:
 
     # ContextVar is per-async-task so each request gets its own project_id
     project_id_context: ContextVar[str | None] = ContextVar("project_id", default=None)
+    # Trailing path after /mcp/{project_id}, e.g. "/messages" or "" for the root
+    path_remaining_context: ContextVar[str] = ContextVar("path_remaining", default="")
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -146,6 +148,11 @@ class ProjectIdMiddleware:
     @classmethod
     def get_project_id(cls) -> Optional[str]:
         return cls.project_id_context.get()
+
+    @classmethod
+    def get_remaining(cls) -> str:
+        """Return the path segment that follows /mcp/{project_id}, e.g. '/messages' or ''."""
+        return cls.path_remaining_context.get()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
@@ -160,9 +167,9 @@ class ProjectIdMiddleware:
                 # captures the original scope via closure and ignores any
                 # request.scope changes made in dispatch().
                 remaining = m.group(2).rstrip("/")
+                ProjectIdMiddleware.path_remaining_context.set(remaining)
                 new_path = f"/mcp{remaining}" if remaining else "/mcp"
                 scope["path"] = new_path
-                scope["raw_path"] = new_path.encode("ascii")
             else:
                 ProjectIdMiddleware.logger.warning(f"Path {path} doesn't match")
         await self.app(scope, receive, send)
