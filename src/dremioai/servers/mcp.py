@@ -269,9 +269,18 @@ def protected_resource_path_from_request(
 def build_resource_metadata_url(
     request: Request, resource_path: str | None = None
 ) -> str:
+    if resource_path is None:
+        # ProjectIdMiddleware rewrites /mcp/{project_id}[/...] to /mcp[/...] in-place,
+        # so request.url.path has already lost the project_id by the time this is called.
+        # Reconstruct the original path from the context var when one is present.
+        if project_id := ProjectIdMiddleware.get_project_id():
+            current = request.url.path  # "/mcp" or "/mcp/messages"
+            resource_path = f"/mcp/{project_id}{current[4:]}"
+        else:
+            resource_path = request.url.path
     return (
         f"{request_base_url(request)}/.well-known/oauth-protected-resource"
-        f"{normalize_resource_path(resource_path or request.url.path)}"
+        f"{normalize_resource_path(resource_path)}"
     )
 
 

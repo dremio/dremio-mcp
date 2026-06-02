@@ -134,7 +134,7 @@ def _df_to_json_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
 
 class ProjectIdMiddleware:
-    pat = re.compile(r"/mcp/([\da-z-]+)(/?.*)")
+    pat = re.compile(r"^/mcp/([\da-z-]+)(/?.*)")
     logger = log.logger("ProjectIdMiddleware")
 
     # ContextVar is per-async-task so each request gets its own project_id
