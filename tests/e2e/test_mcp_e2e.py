@@ -20,11 +20,20 @@ import pytest
 from conftest import http_streamable_client_server, http_streamable_mcp_server
 from mcp.types import CallToolResult
 from rich import print as pp
+from uuid import uuid4
 
 from dremioai.tools.tools import get_tools
 from dremioai.config import settings
 from urllib.parse import urlparse
 from httpx import AsyncClient
+
+
+def _protected_resource_metadata_url(mcp_url: str) -> str:
+    parsed = urlparse(mcp_url)
+    normalized_path = parsed.path.rstrip("/") or "/"
+    return parsed._replace(
+        path=f"/.well-known/oauth-protected-resource{normalized_path}"
+    ).geturl()
 
 
 @pytest.mark.asyncio
@@ -110,6 +119,41 @@ async def test_oauth_metadata_includes_registration_endpoint(
             assert data["registration_endpoint"].endswith(
                 "/oauth/register"
             ), f"registration_endpoint should end with /oauth/register, got: {data['registration_endpoint']}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "project_id",
+    [
+        pytest.param(None, id="root-mcp-path"),
+        pytest.param(str(uuid4()), id="project-scoped-mcp-path"),
+    ],
+)
+async def test_protected_resource_metadata_and_401_challenge(
+    mock_config_dir, logging_server, logging_level, project_id
+):
+    async with http_streamable_mcp_server(
+        logging_server, logging_level, project_id=project_id
+    ) as sf:
+        metadata_url = _protected_resource_metadata_url(sf.mcp_server.url)
+        async with AsyncClient() as client:
+            metadata_response = await client.get(metadata_url)
+            assert metadata_response.status_code == 200, metadata_response.text
+            metadata = metadata_response.json()
+            assert metadata["resource"] == sf.mcp_server.url.rstrip("/")
+            mcp_origin = urlparse(sf.mcp_server.url)._replace(
+                path="", params="", query="", fragment=""
+            )
+            assert metadata["authorization_servers"] == [
+                mcp_origin.geturl().rstrip("/")
+            ]
+
+            unauthorized = await client.post(sf.mcp_server.url)
+            assert unauthorized.status_code == 401
+            assert (
+                unauthorized.headers["www-authenticate"]
+                == f'Bearer resource_metadata="{metadata_url}"'
+            )
 
 
 @pytest.mark.asyncio
