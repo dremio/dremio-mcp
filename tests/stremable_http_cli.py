@@ -27,6 +27,7 @@ import requests
 import uvicorn
 import yaml
 from rich import print as pp
+from rich.markdown import Markdown
 from rich.table import Table
 from typer import Typer, Option
 from datetime import datetime
@@ -352,8 +353,13 @@ def check_auth(
         redirect_port,
         redirect_path,
     )
-    if url:
-        _write_auth_cache(url, AuthCache(token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id))
+    if url and oauth.access_token:
+        cache_update(
+            url=url,
+            token=oauth.access_token,
+            refresh_token=oauth.refresh_token,
+            client_id=client_id,
+        )
     pp(oauth.access_token)
     return oauth
 
@@ -628,8 +634,15 @@ async def list_tools(
     ] = None,
 ):
     async with mcp_client_session(url, token) as session:
-        for tool in await session.list_tools():
-            pp(tool)
+        result = await session.list_tools()
+        tools = result.tools
+
+    tbl = Table(title=f"Tools — {url}", show_header=True, header_style="bold", show_lines=True)
+    tbl.add_column("Tool", style="bold cyan", no_wrap=True)
+    tbl.add_column("Description")
+    for tool in tools:
+        tbl.add_row(tool.name, Markdown(tool.description or ""))
+    pp(tbl)
 
 
 @cli.command("call-tool")
