@@ -181,7 +181,7 @@ class TestDynamicTools:
     async def test_meta_tools_registered_when_enabled(self):
         """Both meta-tools should appear in tool list when enable_remote_tools is True"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
-            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            server = mcp_server.init(mode=ToolType.DYNAMIC_REMOTE_TOOLS)
             tool_names = {t.name for t in await server.list_tools()}
             assert "DiscoverDynamicTools" in tool_names
             assert "CallDynamicTool" in tool_names
@@ -190,7 +190,7 @@ class TestDynamicTools:
     async def test_meta_tools_disabled_at_invocation(self):
         """Meta-tools appear in the list but return an error when enable_remote_tools is False"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=False):
-            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            server = mcp_server.init(mode=ToolType.DYNAMIC_REMOTE_TOOLS)
             tool_names = {t.name for t in await server.list_tools()}
             assert "DiscoverDynamicTools" in tool_names
             assert "CallDynamicTool" in tool_names
@@ -226,7 +226,7 @@ class TestDynamicTools:
         )
 
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
-            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            server = mcp_server.init(mode=ToolType.DYNAMIC_REMOTE_TOOLS)
 
             with patch(
                 "dremioai.tools.tools.ai_tools.list_tools",
@@ -244,7 +244,7 @@ class TestDynamicTools:
     @pytest.mark.asyncio
     async def test_discover_returns_error_on_dremio_failure(self):
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
-            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            server = mcp_server.init(mode=ToolType.DYNAMIC_REMOTE_TOOLS)
 
             with patch(
                 "dremioai.tools.tools.ai_tools.list_tools",
@@ -261,7 +261,7 @@ class TestDynamicTools:
     async def test_call_dynamic_tool_proxies_to_invoke_tool(self):
         """CallDynamicTool should proxy to ai_tools.invoke_tool with correct args"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
-            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            server = mcp_server.init(mode=ToolType.DYNAMIC_REMOTE_TOOLS)
 
             with patch(
                 "dremioai.tools.tools.ai_tools.invoke_tool",
@@ -281,7 +281,7 @@ class TestDynamicTools:
     @pytest.mark.asyncio
     async def test_call_dynamic_tool_returns_error_on_failure(self):
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
-            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            server = mcp_server.init(mode=ToolType.DYNAMIC_REMOTE_TOOLS)
 
             with patch(
                 "dremioai.tools.tools.ai_tools.invoke_tool",
@@ -305,7 +305,7 @@ class TestDynamicTools:
     async def test_call_dynamic_tool_with_invalid_json(self):
         """CallDynamicTool should return a graceful error for non-JSON arguments"""
         with self.mock_settings_for_dynamic_tools(enable_remote_tools=True):
-            server = mcp_server.init(mode=ToolType.FOR_DATA_PATTERNS)
+            server = mcp_server.init(mode=ToolType.DYNAMIC_REMOTE_TOOLS)
 
             result = await server.call_tool(
                 "CallDynamicTool",

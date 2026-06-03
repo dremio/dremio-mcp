@@ -28,3 +28,6 @@ class ToolType(IntFlag):
     EXPERIMENTAL = (
         auto()
     )  # any experimental tools that are not yet ready for production
+    DYNAMIC_REMOTE_TOOLS = (
+        auto()
+    )  # DiscoverDynamicTools / CallDynamicTool — generic remote tool passthrough; enabled only when explicitly requested

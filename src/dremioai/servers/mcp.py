@@ -628,7 +628,7 @@ def init(
                 else make_logged_invoke(tool.__name__, tool_instance.invoke)
             ),
             name=tool.__name__,
-            description=tool_instance.invoke.__doc__,
+            description=tool_instance.get_description(),
             annotations=ToolAnnotations(
                 readOnlyHint=not (is_sql_tool and allow_dml),
                 destructiveHint=bool(is_sql_tool and allow_dml),
