@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Optional, AsyncGenerator, Callable, Any, Dict
+from typing import Annotated, Any, Awaitable, AsyncGenerator, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 import jwt
@@ -37,7 +37,7 @@ from dremioai.config import settings
 from dremioai.config.feature_flags import FeatureFlagManager
 from dremioai.config.tools import ToolType
 from dremioai.servers.mcp import FastMCPServerWithAuthToken, init, Transports
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def async_command(func: Callable) -> Callable:
@@ -57,34 +57,39 @@ def async_command(func: Callable) -> Callable:
 _AUTH_CACHE_PATH = Path.home() / ".config" / "dremioai" / ".auth.yaml"
 
 
-class _TokenExpiredError(Exception):
+class TokenExpiredError(Exception):
     """Raised when a 401 Unauthorized is detected from the MCP server."""
 
 
-def _read_auth_cache() -> dict:
-    """Read ~/.config/dremioai/.auth.yaml; returns {} when absent or malformed."""
+class AuthCache(BaseModel):
+    """Typed representation of ``~/.config/dremioai/.auth.yaml``."""
+
+    token: str | None = None
+    refresh_token: str | None = Field(None, alias="refresh-token")
+    client_id: str | None = Field(None, alias="client-id")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+def _read_auth_cache() -> AuthCache:
+    """Read ``~/.config/dremioai/.auth.yaml``; returns an empty cache when absent or malformed."""
     if not _AUTH_CACHE_PATH.exists():
-        return {}
+        return AuthCache()
     try:
         data = yaml.safe_load(_AUTH_CACHE_PATH.read_text())
-        return data if isinstance(data, dict) else {}
+        if isinstance(data, dict):
+            return AuthCache.model_validate(data)
     except Exception:
-        return {}
+        pass
+    return AuthCache()
 
 
-def _write_auth_cache(
-    token: str,
-    refresh_token: str | None = None,
-    client_id: str | None = None,
-) -> None:
-    """Persist token (and optionally refresh-token / client-id) to the auth cache."""
+def _write_auth_cache(cache: AuthCache) -> None:
+    """Persist *cache* to ``~/.config/dremioai/.auth.yaml``."""
     _AUTH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    data: dict = {"token": token}
-    if refresh_token:
-        data["refresh-token"] = refresh_token
-    if client_id:
-        data["client-id"] = client_id
-    _AUTH_CACHE_PATH.write_text(yaml.safe_dump(data))
+    _AUTH_CACHE_PATH.write_text(
+        yaml.safe_dump(cache.model_dump(by_alias=True, exclude_none=True))
+    )
 
 
 def _do_token_refresh(
@@ -120,24 +125,23 @@ def _resolve_token(
     client_id: str | None,
     redirect_port: int,
     redirect_path: str,
-) -> tuple[str, dict]:
+) -> tuple[str, AuthCache]:
     """Return the bearer token to use, in priority order:
 
     1. *explicit_token* (``--token`` flag) — cache is bypassed entirely.
-    2. ``~/.config/dremioai/.auth.yaml`` ``token:`` key.
+    2. ``~/.config/dremioai/.auth.yaml`` ``token`` field.
     3. Full OAuth PKCE flow (requires *client_id*); writes result to cache.
 
-    Returns ``(token, cache_dict)``.  *cache_dict* is empty when the caller
-    supplied an explicit token.
+    Returns ``(token, AuthCache)``.  The cache is empty when the caller supplied
+    an explicit token.
     """
     if explicit_token is not None:
-        return explicit_token, {}
+        return explicit_token, AuthCache()
 
     cache = _read_auth_cache()
-    cached_token = cache.get("token")
-    if cached_token:
+    if cache.token:
         pp("[dim]Using cached token (~/.config/dremioai/.auth.yaml)[/dim]")
-        return cached_token, cache
+        return cache.token, cache
 
     # No cached token — try the OAuth flow.
     if not client_id:
@@ -160,35 +164,68 @@ def _resolve_token(
         pp("[red]OAuth flow did not return a token.[/red]")
         raise SystemExit(1)
 
-    _write_auth_cache(oauth.access_token, oauth.refresh_token, client_id)
-    pp(
-        "[green]Authenticated.[/green]  "
-        "Token cached at ~/.config/dremioai/.auth.yaml"
-    )
-    return oauth.access_token, _read_auth_cache()
+    new_cache = AuthCache(token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id)
+    _write_auth_cache(new_cache)
+    pp("[green]Authenticated.[/green]  Token cached at ~/.config/dremioai/.auth.yaml")
+    return oauth.access_token, new_cache
 
 
-def _handle_token_expired(url: str, cache: dict) -> str | None:
+def _handle_token_expired(url: str, cache: AuthCache) -> str | None:
     """Attempt a token refresh using the cached refresh token.
 
     On success writes the new token to cache and returns it.
     Returns ``None`` if the cache lacks a refresh token or the refresh fails.
     """
-    refresh_tok = cache.get("refresh-token")
-    client_id = cache.get("client-id")
-    if not (refresh_tok and client_id):
+    if not (cache.refresh_token and cache.client_id):
         return None
     try:
         oauth_meta = get_oauth_config(url)
         new_token, new_refresh = _do_token_refresh(
-            str(oauth_meta.token_endpoint), client_id, refresh_tok
+            str(oauth_meta.token_endpoint), cache.client_id, cache.refresh_token
         )
         if new_token:
-            _write_auth_cache(new_token, new_refresh or refresh_tok, client_id)
+            _write_auth_cache(AuthCache(
+                token=new_token,
+                refresh_token=new_refresh or cache.refresh_token,
+                client_id=cache.client_id,
+            ))
             return new_token
     except Exception as exc:
         pp(f"[yellow]Token refresh failed: {exc}[/yellow]")
     return None
+
+
+async def with_auth(
+    url: str,
+    explicit_token: str | None,
+    client_id: str | None,
+    op: "Callable[[str], Awaitable[Any]]",
+    redirect_port: int = 8976,
+    redirect_path: str = "/",
+) -> None:
+    """Resolve a bearer token, run ``await op(token)``, and retry once on 401.
+
+    Combines token resolution (explicit → cache → OAuth flow) with automatic
+    refresh-token retry so callers need not repeat the pattern themselves::
+
+        await with_auth(url, token, client_id, lambda tok: _do_stuff(url, tok))
+    """
+    resolved_token, cache = _resolve_token(
+        explicit_token, url, client_id, redirect_port, redirect_path
+    )
+    try:
+        await op(resolved_token)
+    except TokenExpiredError:
+        pp("[yellow]Token expired — refreshing...[/yellow]")
+        new_token = _handle_token_expired(url, cache)
+        if not new_token:
+            pp(
+                "[red]Token refresh failed.[/red]  "
+                "Re-authenticate with --client-id or supply a new --token."
+            )
+            raise SystemExit(1)
+        pp("[green]Token refreshed — retrying...[/green]")
+        await op(new_token)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +310,7 @@ def check_auth(
         redirect_port,
         redirect_path,
     )
-    _write_auth_cache(oauth.access_token, oauth.refresh_token, client_id)
+    _write_auth_cache(AuthCache(token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id))
     pp(oauth.access_token)
     return oauth
 
@@ -466,11 +503,11 @@ async def mcp_client_session(
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 yield session
-    except _TokenExpiredError:
+    except TokenExpiredError:
         raise  # already converted — let it propagate
     except Exception as exc:
         if _is_auth_error(exc):
-            raise _TokenExpiredError(str(exc)) from exc
+            raise TokenExpiredError(str(exc)) from exc
         raise
 
 
@@ -487,23 +524,12 @@ async def list_tools(
         Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
     ] = None,
 ):
-    resolved_token, cache = _resolve_token(token, url, client_id, 8976, "/")
-
-    async def _do(tok: str) -> None:
+    async def _run(tok: str) -> None:
         async with mcp_client_session(url, tok) as session:
-            tools = await session.list_tools()
-            for tool in tools:
+            for tool in await session.list_tools():
                 pp(tool)
 
-    try:
-        await _do(resolved_token)
-    except _TokenExpiredError:
-        pp("[yellow]Token expired — refreshing...[/yellow]")
-        new_token = _handle_token_expired(url, cache)
-        if not new_token:
-            pp("[red]Refresh failed. Re-authenticate with --client-id.[/red]")
-            raise SystemExit(1)
-        await _do(new_token)
+    await with_auth(url, token, client_id, _run)
 
 
 @cli.command("call-tool")
@@ -523,9 +549,7 @@ async def call_tool(
         Optional[str], Option(help="The arguments to pass to the tool as a JSON")
     ] = None,
 ):
-    resolved_token, cache = _resolve_token(token, url, client_id, 8976, "/")
-
-    async def _do(tok: str) -> None:
+    async def _run(tok: str) -> None:
         async with mcp_client_session(url, tok) as session:
             result = await session.call_tool(tool, json.loads(args) if args else None)
             if result.isError:
@@ -534,15 +558,7 @@ async def call_tool(
                 return
             pp(result.structuredContent["result"])
 
-    try:
-        await _do(resolved_token)
-    except _TokenExpiredError:
-        pp("[yellow]Token expired — refreshing...[/yellow]")
-        new_token = _handle_token_expired(url, cache)
-        if not new_token:
-            pp("[red]Refresh failed. Re-authenticate with --client-id.[/red]")
-            raise SystemExit(1)
-        await _do(new_token)
+    await with_auth(url, token, client_id, _run)
 
 
 def _assert(condition: bool, msg: str):
@@ -680,12 +696,8 @@ async def run_test(
     ] = "/",
 ):
     if not local:
-        # Remote mode — resolve the token, then run smoketests with 401 retry.
-        resolved_token, cache = _resolve_token(
-            token, url, client_id, redirect_port, redirect_path
-        )
-
-        async def _do_remote_tests(tok: str) -> None:
+        # Remote mode — with_auth handles token resolution and 401 retry.
+        async def _do_remote(tok: str) -> None:
             await _run_smoketests(
                 url,
                 tok,
@@ -697,19 +709,7 @@ async def run_test(
                 ld_expected=ld_expected,
             )
 
-        try:
-            await _do_remote_tests(resolved_token)
-        except _TokenExpiredError:
-            pp("[yellow]Token expired — refreshing...[/yellow]")
-            new_token = _handle_token_expired(url, cache)
-            if not new_token:
-                pp(
-                    "[red]Token refresh failed.[/red]  "
-                    "Re-authenticate with --client-id or supply a new --token."
-                )
-                raise SystemExit(1)
-            pp("[green]Token refreshed — retrying...[/green]")
-            await _do_remote_tests(new_token)
+        await with_auth(url, token, client_id, _do_remote, redirect_port, redirect_path)
         return
 
     # Local mode: start a local MCP server and test against it
