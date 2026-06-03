@@ -38,7 +38,7 @@ from dremioai.config import settings
 from dremioai.config.feature_flags import FeatureFlagManager
 from dremioai.config.tools import ToolType
 from dremioai.servers.mcp import FastMCPServerWithAuthToken, init, Transports
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 def async_command(func: Callable) -> Callable:
@@ -63,7 +63,7 @@ class TokenExpiredError(Exception):
 
 
 class AuthCache(BaseModel):
-    """Typed representation of ``~/.config/dremioai/.auth.yaml``."""
+    """Per-URI token entry stored in ``~/.config/dremioai/.auth.yaml``."""
 
     token: str | None = None
     refresh_token: str | None = Field(None, alias="refresh-token")
@@ -72,25 +72,58 @@ class AuthCache(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-def _read_auth_cache() -> AuthCache:
-    """Read ``~/.config/dremioai/.auth.yaml``; returns an empty cache when absent or malformed."""
+class AuthCacheStore(RootModel[dict[str, AuthCache]]):
+    """Auth cache file — a mapping of MCP server URI → :class:`AuthCache`.
+
+    YAML on disk::
+
+        https://mcp.dremio.cloud/mcp/<project-id>:
+          token: <access_token>
+          refresh-token: <refresh_token>
+          client-id: <oauth_client_id>
+        https://mcp.eu.dremio.cloud/mcp/<other-project>:
+          token: ...
+    """
+
+    root: dict[str, AuthCache] = Field(default_factory=dict)
+
+    def get(self, url: str) -> AuthCache:
+        return self.root.get(url, AuthCache())
+
+    def set(self, url: str, cache: AuthCache) -> "AuthCacheStore":
+        self.root[url] = cache
+        return self
+
+
+def _read_auth_store() -> AuthCacheStore:
+    """Load the full auth cache store from disk."""
     if not _AUTH_CACHE_PATH.exists():
-        return AuthCache()
+        return AuthCacheStore()
     try:
         data = yaml.safe_load(_AUTH_CACHE_PATH.read_text())
         if isinstance(data, dict):
-            return AuthCache.model_validate(data)
+            return AuthCacheStore.model_validate(data)
     except Exception:
         pass
-    return AuthCache()
+    return AuthCacheStore()
 
 
-def _write_auth_cache(cache: AuthCache) -> None:
-    """Persist *cache* to ``~/.config/dremioai/.auth.yaml``."""
+def _write_auth_store(store: AuthCacheStore) -> None:
+    """Persist the full auth cache store to disk."""
     _AUTH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     _AUTH_CACHE_PATH.write_text(
-        yaml.safe_dump(cache.model_dump(by_alias=True, exclude_none=True))
+        yaml.safe_dump(store.model_dump(by_alias=True, exclude_none=True))
     )
+
+
+def _read_auth_cache(url: str) -> AuthCache:
+    """Return the :class:`AuthCache` entry for *url*; empty if not found."""
+    return _read_auth_store().get(url)
+
+
+def _write_auth_cache(url: str, cache: AuthCache) -> None:
+    """Write/update the :class:`AuthCache` entry for *url* in the store."""
+    _write_auth_store(_read_auth_store().set(url, cache))
 
 
 def _do_token_refresh(
@@ -139,9 +172,9 @@ def _resolve_token(
     if explicit_token is not None:
         return explicit_token, AuthCache()
 
-    cache = _read_auth_cache()
+    cache = _read_auth_cache(url)
     if cache.token:
-        pp("[dim]Using cached token (~/.config/dremioai/.auth.yaml)[/dim]")
+        pp(f"[dim]Using cached token for {url}[/dim]")
         return cache.token, cache
 
     # No cached token — try the OAuth flow.
@@ -152,7 +185,7 @@ def _resolve_token(
         )
         raise SystemExit(1)
 
-    pp("No cached token found. Starting OAuth flow..")
+    pp(f"No cached token for {url}. Starting OAuth flow..")
     oauth_meta = get_oauth_config(url)
     oauth = get_oauth2_tokens(
         client_id,
@@ -166,8 +199,8 @@ def _resolve_token(
         raise SystemExit(1)
 
     new_cache = AuthCache(token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id)
-    _write_auth_cache(new_cache)
-    pp("[green]Authenticated.[/green]  Token cached at ~/.config/dremioai/.auth.yaml")
+    _write_auth_cache(url, new_cache)
+    pp(f"[green]Authenticated.[/green]  Token cached for {url}")
     return oauth.access_token, new_cache
 
 
@@ -185,7 +218,7 @@ def _handle_token_expired(url: str, cache: AuthCache) -> str | None:
             str(oauth_meta.token_endpoint), cache.client_id, cache.refresh_token
         )
         if new_token:
-            _write_auth_cache(AuthCache(
+            _write_auth_cache(url, AuthCache(
                 token=new_token,
                 refresh_token=new_refresh or cache.refresh_token,
                 client_id=cache.client_id,
@@ -319,7 +352,8 @@ def check_auth(
         redirect_port,
         redirect_path,
     )
-    _write_auth_cache(AuthCache(token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id))
+    if url:
+        _write_auth_cache(url, AuthCache(token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id))
     pp(oauth.access_token)
     return oauth
 
@@ -483,6 +517,64 @@ async def verify_token(
     result_tbl.add_row("jwks_enabled", str(jwks_uri is not None).lower())
     result_tbl.add_row("extract_org_id_from_jwt", str(extract_org_id_from_jwt).lower())
     pp(result_tbl)
+
+
+@auth.command("cache-update")
+def cache_update(
+    url: Annotated[str, Option(help="MCP server URL — used as the cache key")],
+    token: Annotated[str, Option(help="Bearer / access token to store")],
+    refresh_token: Annotated[
+        Optional[str], Option("--refresh-token", help="Refresh token (optional)")
+    ] = None,
+    client_id: Annotated[
+        Optional[str], Option("--client-id", help="OAuth client ID (needed for future refresh)")
+    ] = None,
+):
+    """Write or overwrite the cached credentials for a given MCP server URL.
+
+    Useful when you have a token from another source and want to inject it
+    so that ``list-tools``, ``call-tool``, and ``test`` pick it up automatically::
+
+        auth cache-update --url https://mcp.dremio.cloud/mcp/<proj> \\
+                          --token eyJ... \\
+                          --refresh-token rrt_... \\
+                          --client-id my-client-id
+    """
+    _write_auth_cache(
+        url,
+        AuthCache(token=token, refresh_token=refresh_token, client_id=client_id),
+    )
+    pp(f"[green]Cache updated for[/green] {url}")
+
+
+@auth.command("cache-show")
+def cache_show(
+    url: Annotated[
+        Optional[str], Option(help="Show only the entry for this URL (omit for all)")
+    ] = None,
+):
+    """Display the current auth cache contents (tokens are redacted)."""
+    store = _read_auth_store()
+    if not store.root:
+        pp("[dim]Auth cache is empty.[/dim]")
+        return
+    entries = {url: store.root[url]} if url and url in store.root else store.root
+    if url and url not in store.root:
+        pp(f"[yellow]No cache entry found for {url}[/yellow]")
+        return
+    tbl = Table(title="Auth Cache (~/.config/dremioai/.auth.yaml)")
+    tbl.add_column("URL")
+    tbl.add_column("token")
+    tbl.add_column("refresh-token")
+    tbl.add_column("client-id")
+    for entry_url, entry in entries.items():
+        tbl.add_row(
+            entry_url,
+            _redact_value(entry.token),
+            _redact_value(entry.refresh_token),
+            entry.client_id or "",
+        )
+    pp(tbl)
 
 
 cli = Typer(
