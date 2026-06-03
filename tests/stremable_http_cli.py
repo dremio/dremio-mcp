@@ -200,7 +200,9 @@ def _resolve_token(
         pp("[red]OAuth flow did not return a token.[/red]")
         raise SystemExit(1)
 
-    new_cache = AuthCache(token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id)
+    new_cache = AuthCache(
+        token=oauth.access_token, refresh_token=oauth.refresh_token, client_id=client_id
+    )
     _write_auth_cache(url, new_cache)
     pp(f"[green]Authenticated.[/green]  Token cached for {url}")
     return oauth.access_token, new_cache
@@ -221,11 +223,14 @@ def _handle_token_expired(url: str, cache: AuthCache) -> str | None:
             str(oauth_meta.token_endpoint), cache.client_id, cache.refresh_token
         )
         if new_token:
-            _write_auth_cache(url, AuthCache(
-                token=new_token,
-                refresh_token=new_refresh or cache.refresh_token,
-                client_id=cache.client_id,
-            ))
+            _write_auth_cache(
+                url,
+                AuthCache(
+                    token=new_token,
+                    refresh_token=new_refresh or cache.refresh_token,
+                    client_id=cache.client_id,
+                ),
+            )
             return new_token
     except Exception as exc:
         pp(f"[yellow]Token refresh failed: {exc}[/yellow]")
@@ -246,6 +251,7 @@ def with_auth(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]
             async with mcp_client_session(url, token) as session:
                 ...  # token is already resolved here
     """
+
     @functools.wraps(fn)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         url = kwargs.get("url") or "http://127.0.0.1:8000/mcp"
@@ -253,8 +259,11 @@ def with_auth(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]
         redirect_path = kwargs.get("redirect_path", "/")
 
         resolved, cache = _resolve_token(
-            kwargs.get("token"), url, kwargs.get("client_id"),
-            redirect_port, redirect_path,
+            kwargs.get("token"),
+            url,
+            kwargs.get("client_id"),
+            redirect_port,
+            redirect_path,
         )
         try:
             return await fn(*args, **{**kwargs, "token": resolved})
@@ -547,7 +556,8 @@ def cache_update(
         Optional[str], Option("--refresh-token", help="Refresh token (optional)")
     ] = None,
     client_id: Annotated[
-        Optional[str], Option("--client-id", help="OAuth client ID (needed for future refresh)")
+        Optional[str],
+        Option("--client-id", help="OAuth client ID (needed for future refresh)"),
     ] = None,
 ):
     """Write or overwrite the cached credentials for a given MCP server URL.
@@ -573,6 +583,9 @@ def cache_show(
     url: Annotated[
         Optional[str], Option(help="Show only the entry for this URL (omit for all)")
     ] = None,
+    token_only: Annotated[
+        Optional[bool], Option(help="Show only the entry for this URL")
+    ] = False,
 ):
     """Display the current auth cache contents (tokens are redacted)."""
     if url:
@@ -582,9 +595,14 @@ def cache_show(
         pp("[dim]Auth cache is empty.[/dim]")
         return
     entries = {url: store.root[url]} if url and url in store.root else store.root
-    if url and url not in store.root:
+    if url and url not in entries:
         pp(f"[yellow]No cache entry found for {url}[/yellow]")
         return
+
+    if token_only:
+        print(entries[url].token)
+        return
+
     tbl = Table(title="Auth Cache (~/.config/dremioai/.auth.yaml)")
     tbl.add_column("URL")
     tbl.add_column("token")
@@ -608,6 +626,24 @@ cli = Typer(
 )
 
 
+def _unwrap_401(exc: BaseException) -> httpx.HTTPStatusError | None:
+    """Return the first HTTPStatusError with status 401 buried inside *exc*.
+
+    ``streamablehttp_client`` runs streams inside an anyio/asyncio TaskGroup,
+    so transport-level errors arrive wrapped in an ``ExceptionGroup``.  This
+    function recursively unwraps both plain exceptions and ExceptionGroups to
+    find the culprit.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc if exc.response.status_code == 401 else None
+    if isinstance(exc, BaseExceptionGroup):
+        for sub in exc.exceptions:
+            found = _unwrap_401(sub)
+            if found is not None:
+                return found
+    return None
+
+
 @asynccontextmanager
 async def mcp_client_session(
     url: str, token: Optional[str] = None
@@ -624,12 +660,11 @@ async def mcp_client_session(
                 yield session
     except TokenExpiredError:
         raise  # already converted — let it propagate
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 401:
-            raise TokenExpiredError(str(exc)) from exc
-        raise
-    except Exception as exc:
-        # Fallback for non-httpx transports that signal auth failures via message text
+    except BaseException as exc:
+        # streamablehttp_client wraps transport errors in ExceptionGroup; unwrap
+        # to find any 401 HTTPStatusError before falling back to text matching.
+        if found := _unwrap_401(exc):
+            raise TokenExpiredError(str(found)) from found
         msg = str(exc).lower()
         if "401" in msg or "unauthorized" in msg:
             raise TokenExpiredError(str(exc)) from exc
@@ -647,7 +682,8 @@ async def list_tools(
         Optional[str], Option(help="The authorization token to use")
     ] = None,
     client_id: Annotated[
-        Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
+        Optional[str],
+        Option(help="OAuth client ID (used when no --token or cached token)"),
     ] = None,
     redirect_port: Annotated[
         int, Option("--redirect-port", help="Local port for OAuth redirect listener")
@@ -660,7 +696,9 @@ async def list_tools(
         result = await session.list_tools()
         tools = result.tools
 
-    tbl = Table(title=f"Tools — {url}", show_header=True, header_style="bold", show_lines=True)
+    tbl = Table(
+        title=f"Tools — {url}", show_header=True, header_style="bold", show_lines=True
+    )
     tbl.add_column("Tool", style="bold cyan", no_wrap=True)
     tbl.add_column("Description")
     for tool in tools:
@@ -680,7 +718,8 @@ async def call_tool(
         Optional[str], Option(help="The authorization token to use")
     ] = None,
     client_id: Annotated[
-        Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
+        Optional[str],
+        Option(help="OAuth client ID (used when no --token or cached token)"),
     ] = None,
     redirect_port: Annotated[
         int, Option("--redirect-port", help="Local port for OAuth redirect listener")
@@ -849,14 +888,18 @@ async def run_test(
                 ld_expected=ld_expected,
             )
 
-        resolved, cache = _resolve_token(token, url, client_id, redirect_port, redirect_path)
+        resolved, cache = _resolve_token(
+            token, url, client_id, redirect_port, redirect_path
+        )
         try:
             await _do_remote(resolved)
         except TokenExpiredError:
             pp("[yellow]Token expired — refreshing...[/yellow]")
             new_token = _handle_token_expired(url, cache)
             if not new_token:
-                pp("[red]Token refresh failed.[/red]  Re-authenticate with --client-id or supply a new --token.")
+                pp(
+                    "[red]Token refresh failed.[/red]  Re-authenticate with --client-id or supply a new --token."
+                )
                 raise SystemExit(1)
             pp("[green]Token refreshed — retrying...[/green]")
             await _do_remote(new_token)
@@ -1166,16 +1209,25 @@ async def _run_smoketests(
         if check_remote_tools:
             pp("Checking remote tools in tools/list..", end=" ")
             static_tool_names = {
-                "RunSqlQuery", "GetUsefulSystemTableNames", "GetSchemaOfTable",
-                "GetDescriptionOfTableOrSchema", "GetTableOrViewLineage",
-                "SearchTableAndViews", "DiscoverDynamicTools", "CallDynamicTool",
+                "RunSqlQuery",
+                "GetUsefulSystemTableNames",
+                "GetSchemaOfTable",
+                "GetDescriptionOfTableOrSchema",
+                "GetTableOrViewLineage",
+                "SearchTableAndViews",
+                "DiscoverDynamicTools",
+                "CallDynamicTool",
             }
-            remote_tools = [t for t in tools_result.tools if t.name not in static_tool_names]
+            remote_tools = [
+                t for t in tools_result.tools if t.name not in static_tool_names
+            ]
             _assert(
                 len(remote_tools) > 0,
                 f"No remote tools found in tools/list (got {[t.name for t in tools_result.tools]})",
             )
-            pp(f"{len(remote_tools)} remote tool(s) found: {[t.name for t in remote_tools]}")
+            pp(
+                f"{len(remote_tools)} remote tool(s) found: {[t.name for t in remote_tools]}"
+            )
 
             # Call the first remote tool with no arguments to verify routing works
             first_remote = remote_tools[0]
