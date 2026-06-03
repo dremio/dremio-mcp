@@ -648,8 +648,6 @@ async def mcp_client_session(
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 yield session
-    except* TokenExpiredError:
-        raise  # already converted upstream — propagate as-is
     except* httpx.HTTPStatusError as eg:
         for exc in eg.exceptions:
             if exc.response.status_code == 401:
