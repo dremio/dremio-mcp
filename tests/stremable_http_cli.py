@@ -170,6 +170,7 @@ def _resolve_token(
     Returns ``(token, AuthCache)``.  The cache is empty when the caller supplied
     an explicit token.
     """
+    url = _normalize_url(url)
     if explicit_token is not None:
         return explicit_token, AuthCache()
 
@@ -211,6 +212,7 @@ def _handle_token_expired(url: str, cache: AuthCache) -> str | None:
     On success writes the new token to cache and returns it.
     Returns ``None`` if the cache lacks a refresh token or the refresh fails.
     """
+    url = _normalize_url(url)
     if not (cache.refresh_token and cache.client_id):
         return None
     try:
@@ -230,7 +232,7 @@ def _handle_token_expired(url: str, cache: AuthCache) -> str | None:
     return None
 
 
-def with_auth(fn: "Callable[..., Awaitable[Any]]") -> "Callable[..., Awaitable[Any]]":
+def with_auth(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
     """Decorator: resolve bearer token (explicit → cache → OAuth) and retry once on 401.
 
     The wrapped function's ``token`` kwarg is replaced with the resolved token
@@ -290,6 +292,17 @@ auth = Typer(
 )
 
 
+def _normalize_url(url: str) -> str:
+    """Canonicalize *url* so it is always usable as an unambiguous cache key.
+
+    * Prepends ``https://`` when no scheme is present.
+    * Strips a trailing ``/`` to avoid ``/mcp`` vs ``/mcp/`` mismatches.
+    """
+    if url and not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    return url.rstrip("/")
+
+
 def get_oauth_config(url: str) -> OAuthMetadata:
     u = urlparse(url)
     u = u._replace(path="/.well-known/oauth-authorization-server")
@@ -345,6 +358,7 @@ def check_auth(
         str, Option(help="Path for OAuth redirect (e.g. /Callback)")
     ] = "/",
 ) -> OAuth2Redirect:
+    url = _normalize_url(url or "http://127.0.0.1:8000/mcp")
     md = get_oauth_config(url)
     oauth = get_oauth2_tokens(
         client_id,
@@ -353,7 +367,7 @@ def check_auth(
         redirect_port,
         redirect_path,
     )
-    if url and oauth.access_token:
+    if oauth.access_token:
         cache_update(
             url=url,
             token=oauth.access_token,
@@ -546,6 +560,7 @@ def cache_update(
                           --refresh-token rrt_... \\
                           --client-id my-client-id
     """
+    url = _normalize_url(url)
     _write_auth_cache(
         url,
         AuthCache(token=token, refresh_token=refresh_token, client_id=client_id),
@@ -560,6 +575,8 @@ def cache_show(
     ] = None,
 ):
     """Display the current auth cache contents (tokens are redacted)."""
+    if url:
+        url = _normalize_url(url)
     store = _read_auth_store()
     if not store.root:
         pp("[dim]Auth cache is empty.[/dim]")
@@ -632,6 +649,12 @@ async def list_tools(
     client_id: Annotated[
         Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
     ] = None,
+    redirect_port: Annotated[
+        int, Option("--redirect-port", help="Local port for OAuth redirect listener")
+    ] = 8976,
+    redirect_path: Annotated[
+        str, Option("--redirect-path", help="Path for OAuth redirect (e.g. /Callback)")
+    ] = "/",
 ):
     async with mcp_client_session(url, token) as session:
         result = await session.list_tools()
@@ -659,6 +682,12 @@ async def call_tool(
     client_id: Annotated[
         Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
     ] = None,
+    redirect_port: Annotated[
+        int, Option("--redirect-port", help="Local port for OAuth redirect listener")
+    ] = 8976,
+    redirect_path: Annotated[
+        str, Option("--redirect-path", help="Path for OAuth redirect (e.g. /Callback)")
+    ] = "/",
     args: Annotated[
         Optional[str], Option(help="The arguments to pass to the tool as a JSON")
     ] = None,
