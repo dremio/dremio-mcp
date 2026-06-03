@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Any, Awaitable, AsyncGenerator, Callable, Dict, Optional
 from urllib.parse import urlparse
 
+import httpx
 import jwt
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -195,37 +196,45 @@ def _handle_token_expired(url: str, cache: AuthCache) -> str | None:
     return None
 
 
-async def with_auth(
-    url: str,
-    explicit_token: str | None,
-    client_id: str | None,
-    op: "Callable[[str], Awaitable[Any]]",
-    redirect_port: int = 8976,
-    redirect_path: str = "/",
-) -> None:
-    """Resolve a bearer token, run ``await op(token)``, and retry once on 401.
+def with_auth(fn: "Callable[..., Awaitable[Any]]") -> "Callable[..., Awaitable[Any]]":
+    """Decorator: resolve bearer token (explicit → cache → OAuth) and retry once on 401.
 
-    Combines token resolution (explicit → cache → OAuth flow) with automatic
-    refresh-token retry so callers need not repeat the pattern themselves::
+    The wrapped function's ``token`` kwarg is replaced with the resolved token
+    before the call.  The function must accept ``url``, ``token``, and optionally
+    ``client_id``, ``redirect_port``, ``redirect_path``::
 
-        await with_auth(url, token, client_id, lambda tok: _do_stuff(url, tok))
+        @cli.command("list-tools")
+        @async_command
+        @with_auth
+        async def list_tools(url=..., token=None, client_id=None):
+            async with mcp_client_session(url, token) as session:
+                ...  # token is already resolved here
     """
-    resolved_token, cache = _resolve_token(
-        explicit_token, url, client_id, redirect_port, redirect_path
-    )
-    try:
-        await op(resolved_token)
-    except TokenExpiredError:
-        pp("[yellow]Token expired — refreshing...[/yellow]")
-        new_token = _handle_token_expired(url, cache)
-        if not new_token:
-            pp(
-                "[red]Token refresh failed.[/red]  "
-                "Re-authenticate with --client-id or supply a new --token."
-            )
-            raise SystemExit(1)
-        pp("[green]Token refreshed — retrying...[/green]")
-        await op(new_token)
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        url = kwargs.get("url") or "http://127.0.0.1:8000/mcp"
+        redirect_port = kwargs.get("redirect_port", 8976)
+        redirect_path = kwargs.get("redirect_path", "/")
+
+        resolved, cache = _resolve_token(
+            kwargs.get("token"), url, kwargs.get("client_id"),
+            redirect_port, redirect_path,
+        )
+        try:
+            return await fn(*args, **{**kwargs, "token": resolved})
+        except TokenExpiredError:
+            pp("[yellow]Token expired — refreshing...[/yellow]")
+            new_token = _handle_token_expired(url, cache)
+            if not new_token:
+                pp(
+                    "[red]Token refresh failed.[/red]  "
+                    "Re-authenticate with --client-id or supply a new --token."
+                )
+                raise SystemExit(1)
+            pp("[green]Token refreshed — retrying...[/green]")
+            return await fn(*args, **{**kwargs, "token": new_token})
+
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -484,11 +493,6 @@ cli = Typer(
 )
 
 
-def _is_auth_error(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return "401" in msg or "unauthorized" in msg or "unauthenticated" in msg
-
-
 @asynccontextmanager
 async def mcp_client_session(
     url: str, token: Optional[str] = None
@@ -505,14 +509,21 @@ async def mcp_client_session(
                 yield session
     except TokenExpiredError:
         raise  # already converted — let it propagate
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            raise TokenExpiredError(str(exc)) from exc
+        raise
     except Exception as exc:
-        if _is_auth_error(exc):
+        # Fallback for non-httpx transports that signal auth failures via message text
+        msg = str(exc).lower()
+        if "401" in msg or "unauthorized" in msg:
             raise TokenExpiredError(str(exc)) from exc
         raise
 
 
 @cli.command("list-tools")
 @async_command
+@with_auth
 async def list_tools(
     url: Annotated[
         Optional[str], Option(help="The URL of the MCP server")
@@ -524,16 +535,14 @@ async def list_tools(
         Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
     ] = None,
 ):
-    async def _run(tok: str) -> None:
-        async with mcp_client_session(url, tok) as session:
-            for tool in await session.list_tools():
-                pp(tool)
-
-    await with_auth(url, token, client_id, _run)
+    async with mcp_client_session(url, token) as session:
+        for tool in await session.list_tools():
+            pp(tool)
 
 
 @cli.command("call-tool")
 @async_command
+@with_auth
 async def call_tool(
     tool: Annotated[str, Option(help="The tool to call")],
     url: Annotated[
@@ -549,16 +558,13 @@ async def call_tool(
         Optional[str], Option(help="The arguments to pass to the tool as a JSON")
     ] = None,
 ):
-    async def _run(tok: str) -> None:
-        async with mcp_client_session(url, tok) as session:
-            result = await session.call_tool(tool, json.loads(args) if args else None)
-            if result.isError:
-                pp("[red]Error[/red]")
-                pp(result.content)
-                return
-            pp(result.structuredContent["result"])
-
-    await with_auth(url, token, client_id, _run)
+    async with mcp_client_session(url, token) as session:
+        result = await session.call_tool(tool, json.loads(args) if args else None)
+        if result.isError:
+            pp("[red]Error[/red]")
+            pp(result.content)
+            return
+        pp(result.structuredContent["result"])
 
 
 def _assert(condition: bool, msg: str):
@@ -696,7 +702,7 @@ async def run_test(
     ] = "/",
 ):
     if not local:
-        # Remote mode — with_auth handles token resolution and 401 retry.
+        # Remote mode — resolve token then run smoketests, retry once on 401.
         async def _do_remote(tok: str) -> None:
             await _run_smoketests(
                 url,
@@ -709,7 +715,17 @@ async def run_test(
                 ld_expected=ld_expected,
             )
 
-        await with_auth(url, token, client_id, _do_remote, redirect_port, redirect_path)
+        resolved, cache = _resolve_token(token, url, client_id, redirect_port, redirect_path)
+        try:
+            await _do_remote(resolved)
+        except TokenExpiredError:
+            pp("[yellow]Token expired — refreshing...[/yellow]")
+            new_token = _handle_token_expired(url, cache)
+            if not new_token:
+                pp("[red]Token refresh failed.[/red]  Re-authenticate with --client-id or supply a new --token.")
+                raise SystemExit(1)
+            pp("[green]Token refreshed — retrying...[/green]")
+            await _do_remote(new_token)
         return
 
     # Local mode: start a local MCP server and test against it
