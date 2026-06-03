@@ -626,28 +626,18 @@ cli = Typer(
 )
 
 
-def _unwrap_401(exc: BaseException) -> httpx.HTTPStatusError | None:
-    """Return the first HTTPStatusError with status 401 buried inside *exc*.
-
-    ``streamablehttp_client`` runs streams inside an anyio/asyncio TaskGroup,
-    so transport-level errors arrive wrapped in an ``ExceptionGroup``.  This
-    function recursively unwraps both plain exceptions and ExceptionGroups to
-    find the culprit.
-    """
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc if exc.response.status_code == 401 else None
-    if isinstance(exc, BaseExceptionGroup):
-        for sub in exc.exceptions:
-            found = _unwrap_401(sub)
-            if found is not None:
-                return found
-    return None
-
-
 @asynccontextmanager
 async def mcp_client_session(
     url: str, token: Optional[str] = None
 ) -> AsyncGenerator[ClientSession, None]:
+    """Open a ``ClientSession`` against *url*, converting 401 responses to
+    :class:`TokenExpiredError` so that :func:`with_auth` can refresh and retry.
+
+    ``streamablehttp_client`` runs its read/write streams inside an anyio
+    ``TaskGroup``, so ``httpx.HTTPStatusError`` arrives wrapped in a
+    ``BaseExceptionGroup``.  The ``except*`` syntax (PEP 654) handles both the
+    bare and the group-wrapped case transparently.
+    """
     headers = {"Authorization": f"Bearer {token}"} if token is not None else None
     try:
         async with streamablehttp_client(url=url, headers=headers) as (
@@ -658,17 +648,13 @@ async def mcp_client_session(
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 yield session
-    except TokenExpiredError:
-        raise  # already converted — let it propagate
-    except BaseException as exc:
-        # streamablehttp_client wraps transport errors in ExceptionGroup; unwrap
-        # to find any 401 HTTPStatusError before falling back to text matching.
-        if found := _unwrap_401(exc):
-            raise TokenExpiredError(str(found)) from found
-        msg = str(exc).lower()
-        if "401" in msg or "unauthorized" in msg:
-            raise TokenExpiredError(str(exc)) from exc
-        raise
+    except* TokenExpiredError:
+        raise  # already converted upstream — propagate as-is
+    except* httpx.HTTPStatusError as eg:
+        for exc in eg.exceptions:
+            if exc.response.status_code == 401:
+                raise TokenExpiredError(str(exc)) from exc
+        raise  # non-401 HTTP errors propagate unchanged
 
 
 @cli.command("list-tools")
