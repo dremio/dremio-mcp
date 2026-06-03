@@ -62,6 +62,75 @@ class InvokeToolResponse(BaseModel):
         return self.result is None and self.error is None
 
 
+# ---------------------------------------------------------------------------
+# Semantic-layer response models
+# ---------------------------------------------------------------------------
+
+class RelationshipUsage(BaseModel):
+    """Historical usage count for a table relationship in a given month."""
+
+    year: str
+    month: str
+    count: int
+
+
+class TableRelationship(BaseModel):
+    """A join relationship between two tables, as returned by ``getTableRelationShips``."""
+
+    source_table_id: str = Field(alias="sourceTableId")
+    source_table_name: str = Field(alias="sourceTableName")
+    source_table_alias: Optional[str] = Field(None, alias="sourceTableAlias")
+    source_column_name: str = Field(alias="sourceColumnName")
+    target_table_id: str = Field(alias="targetTableId")
+    target_table_name: str = Field(alias="targetTableName")
+    target_table_alias: Optional[str] = Field(None, alias="targetTableAlias")
+    target_column_name: str = Field(alias="targetColumnName")
+    join_cardinality: Optional[str] = Field(None, alias="joinCardinality")
+    description: Optional[str] = None
+    usage_metrics: List[RelationshipUsage] = Field(default_factory=list, alias="usageMetrics")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class MetricUsage(BaseModel):
+    """Historical usage count for a metric in a given month."""
+
+    year: str
+    month: str
+    count: int
+
+
+class MetricColumn(BaseModel):
+    """A column referenced by a metric's SQL formula."""
+
+    table_name: Optional[str] = Field(None, alias="tableName")
+    column_name: str = Field(alias="columnName")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class Metric(BaseModel):
+    """A semantic-layer metric returned by ``searchMetrics``."""
+
+    name: str
+    description: Optional[str] = None
+    sql_formula: str = Field(alias="sqlFormula")
+    columns: List[MetricColumn] = Field(default_factory=list)
+    synonyms: List[str] = Field(default_factory=list)
+    usage_metrics: List[MetricUsage] = Field(default_factory=list, alias="usageMetrics")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class MetricsSearchResult(BaseModel):
+    """Top-level payload inside ``InvokeToolResponse.result`` for ``searchMetrics``."""
+
+    error_message: Optional[str] = Field(None, alias="errorMessage")
+    metrics: List[Metric] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 async def list_tools() -> ListToolsResponse:
     try:
         client = AsyncHttpClient()
@@ -93,3 +162,24 @@ async def invoke_tool(tool_name: str, args: Dict[str, Any]) -> InvokeToolRespons
     except Exception:
         log.exception("Failed to invoke AI tool '%s'", tool_name)
         return InvokeToolResponse(error=f"Unexpected error invoking tool '{tool_name}'")
+
+
+_SEMANTIC_TOOL_NAMES = frozenset({"searchMetrics", "getTableRelationships"})
+
+
+async def get_semantic_layer_tool_descriptions() -> dict[str, str]:
+    """Return the descriptions for ``searchMetrics`` and ``getTableRelationships``
+    as advertised by Dremio's AI tool registry.
+
+    Used by :class:`SearchTableAndViews` to enrich its own tool description with
+    live, server-supplied text when ``enable_semantic_layer`` is configured.
+    Returns an empty dict when the registry is unavailable or returns an error.
+    """
+    response = await list_tools()
+    if response.error or not response.tools:
+        return {}
+    return {
+        t.name: (t.description or "")
+        for t in response.tools
+        if t.name in _SEMANTIC_TOOL_NAMES
+    }

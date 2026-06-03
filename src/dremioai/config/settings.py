@@ -324,7 +324,7 @@ class Dremio(FlagAwareModel):
         ),
     )
     search_topN: Annotated[Optional[int], RuntimeMutable()] = Field(
-        default=50,
+        default=10,
         description="Server-side upper limit on the number of TABLE/VIEW results returned by SearchTableAndViews.",
     )
 

@@ -524,34 +524,40 @@ class SearchTableAndViews(Tools):
         ]
     ]
 
-    _SEMANTIC_LAYER_ADDENDUM = """
-
-When ``enable_semantic_layer`` is configured, this tool additionally:
-- Enriches each result with relationship metadata by calling the ``getTableRelationShips``
-  remote tool in parallel across all found tables/views.
-- Searches for relevant metrics via the ``searchMetrics`` remote tool; metric results are
-  included in the returned list with ``"result_type": "METRIC"`` set.
-
-The search is not exhaustive.  The ``topN`` parameter (default 10) controls how many
-TABLE/VIEW results are returned.  The server-side upper limit is set by
-``dremio.search_topN`` (default 50)."""
-
     def get_description(self) -> str:
+        import asyncio
+
         base = type(self).__dict__["invoke"].__doc__ or ""
-        if settings.instance().dremio.get("enable_semantic_layer"):
-            return base + self._SEMANTIC_LAYER_ADDENDUM
-        return base
+        if not settings.instance().dremio.get("enable_semantic_layer"):
+            return base
+        try:
+            descriptions = asyncio.run(ai_tools.get_semantic_layer_tool_descriptions())
+        except RuntimeError:
+            # Already inside a running event loop (e.g. called at request time)
+            descriptions = {}
+        parts = [base, "\nWhen semantic layer is enabled, this tool additionally enriches results:"]
+        if sm_desc := descriptions.get("searchMetrics"):
+            parts.append(f"- **searchMetrics**: {sm_desc}")
+        if rel_desc := descriptions.get("getTableRelationships"):
+            parts.append(f"- **getTableRelationships**: {rel_desc}")
+        parts.append(
+            "\nMetric results are included with \"result_type\": \"METRIC\"."
+            " TABLE/VIEW results include a \"relationships\" key when relationship data is available."
+            " The search returns at most topN results (default set by dremio.search_topN)."
+        )
+        return "\n".join(parts)
 
     @secured
     @with_metrics
-    async def invoke(self, query: str, topN: int = 10) -> Dict[str, Any]:
+    async def invoke(self, query: str, topN: Optional[int] = None) -> Dict[str, Any]:
         """Runs a semantic search on the Dremio cluster to find tables and views that match
         the query.  This is not an exhaustive search; at most ``topN`` results are returned
-        (default 10, capped by the server-side ``dremio.search_topN`` setting).
+        (defaults to the server-side ``dremio.search_topN`` setting, which defaults to 10).
 
         Args:
             query: The search query describing the data you are looking for.
-            topN: Maximum number of TABLE/VIEW results to return (default 10).
+            topN: Maximum number of TABLE/VIEW results to return.  Defaults to the
+                  server-side ``dremio.search_topN`` limit.  Cannot exceed that limit.
 
         Returns:
             A dict with a "results" key containing a list of objects that describe the found
@@ -561,8 +567,8 @@ TABLE/VIEW results are returned.  The server-side upper limit is set by
             The schema is included so you can avoid a separate GetSchemaOfTable call.
         """
         cfg = settings.instance().dremio
-        search_topN = cfg.get("search_topN")
-        max_results = min(topN, search_topN if search_topN is not None else 50)
+        server_limit: int = cfg.get("search_topN") or 10
+        max_results = min(topN, server_limit) if topN is not None else server_limit
         enable_semantic = bool(cfg.get("enable_semantic_layer"))
 
         search_tasks = [
@@ -600,20 +606,42 @@ TABLE/VIEW results are returned.  The server-side upper limit is set by
             for r in records:
                 if r.get("path"):
                     resp = next(rel_iter)
-                    if resp and not resp.error:
-                        r["relationships"] = resp.result
+                    if resp and not resp.error and resp.result:
+                        try:
+                            rels = [
+                                ai_tools.TableRelationship.model_validate(item)
+                                for item in resp.result
+                            ]
+                            r["relationships"] = [
+                                rel.model_dump(by_alias=False, exclude_none=True)
+                                for rel in rels
+                            ]
+                        except Exception:
+                            logger.exception("Failed to parse TableRelationship response")
+                            r["relationships"] = resp.result  # fallback to raw
 
         results: List[Dict[str, Any]] = records
 
         if enable_semantic and metric_response and not metric_response.error:
             raw = metric_response.result
-            if isinstance(raw, list):
-                metric_items = raw
-            elif isinstance(raw, dict):
-                metric_items = raw.get("metrics") or raw.get("results") or [raw]
-            else:
-                metric_items = []
-            results = results + [{"result_type": "METRIC", **m} for m in metric_items]
+            if isinstance(raw, dict):
+                try:
+                    metrics_result = ai_tools.MetricsSearchResult.model_validate(raw)
+                    if metrics_result.error_message:
+                        logger.warning(
+                            "searchMetrics returned an error",
+                            error=metrics_result.error_message,
+                        )
+                    else:
+                        results = results + [
+                            {
+                                "result_type": "METRIC",
+                                **m.model_dump(by_alias=False, exclude_none=True),
+                            }
+                            for m in metrics_result.metrics
+                        ]
+                except Exception:
+                    logger.exception("Failed to parse MetricsSearchResult response")
 
         return {"results": results}
 
