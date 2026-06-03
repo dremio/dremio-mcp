@@ -105,15 +105,20 @@ class Tool:
 
 
 class Tools:
+    # Set to True in subclasses whose description should be refreshed on every
+    # list_tools() call (e.g. because it embeds live server-side information).
+    dynamic_description: ClassVar[bool] = False
+
     async def invoke(self):
         raise NotImplementedError("Subclasses should implement this method")
 
-    def get_description(self) -> str:
+    async def get_description(self) -> str:
         """Return the description for this tool.
 
         Override in subclasses that need to generate a description dynamically
-        (e.g. based on runtime feature-flag state).  The default implementation
-        returns the raw docstring of the ``invoke`` method.
+        at list_tools() time (e.g. based on live server data or feature-flag
+        state).  The default implementation returns the raw docstring of the
+        ``invoke`` method and is never called during server init.
         """
         return type(self).__dict__.get("invoke", None).__doc__ or ""
 
@@ -523,18 +528,14 @@ class SearchTableAndViews(Tools):
             ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS | ToolType.EXPERIMENTAL,
         ]
     ]
+    dynamic_description: ClassVar[bool] = True
 
-    def get_description(self) -> str:
-        import asyncio
-
+    @secured
+    async def get_description(self) -> str:
         base = type(self).__dict__["invoke"].__doc__ or ""
         if not settings.instance().dremio.get("enable_semantic_layer"):
             return base
-        try:
-            descriptions = asyncio.run(ai_tools.get_semantic_layer_tool_descriptions())
-        except RuntimeError:
-            # Already inside a running event loop (e.g. called at request time)
-            descriptions = {}
+        descriptions = await ai_tools.get_semantic_layer_tool_descriptions()
         parts = [base, "\nWhen semantic layer is enabled, this tool additionally enriches results:"]
         if sm_desc := descriptions.get("searchMetrics"):
             parts.append(f"- **searchMetrics**: {sm_desc}")
