@@ -14,6 +14,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Optional, AsyncGenerator, Callable, Any, Dict
 from urllib.parse import urlparse
 
@@ -23,6 +24,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.auth import OAuthMetadata
 import requests
 import uvicorn
+import yaml
 from rich import print as pp
 from rich.table import Table
 from typer import Typer, Option
@@ -47,6 +49,151 @@ def async_command(func: Callable) -> Callable:
 
     return wrapper
 
+
+# ---------------------------------------------------------------------------
+# Auth-cache helpers
+# ---------------------------------------------------------------------------
+
+_AUTH_CACHE_PATH = Path.home() / ".config" / "dremioai" / ".auth.yaml"
+
+
+class _TokenExpiredError(Exception):
+    """Raised when a 401 Unauthorized is detected from the MCP server."""
+
+
+def _read_auth_cache() -> dict:
+    """Read ~/.config/dremioai/.auth.yaml; returns {} when absent or malformed."""
+    if not _AUTH_CACHE_PATH.exists():
+        return {}
+    try:
+        data = yaml.safe_load(_AUTH_CACHE_PATH.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_auth_cache(
+    token: str,
+    refresh_token: str | None = None,
+    client_id: str | None = None,
+) -> None:
+    """Persist token (and optionally refresh-token / client-id) to the auth cache."""
+    _AUTH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    data: dict = {"token": token}
+    if refresh_token:
+        data["refresh-token"] = refresh_token
+    if client_id:
+        data["client-id"] = client_id
+    _AUTH_CACHE_PATH.write_text(yaml.safe_dump(data))
+
+
+def _do_token_refresh(
+    token_endpoint: str, client_id: str, refresh_token: str
+) -> tuple[str | None, str | None]:
+    """POST to *token_endpoint* to exchange *refresh_token* for a new access token.
+
+    Returns ``(new_access_token, new_refresh_token)``.  The new refresh token
+    may be ``None`` when the server does not rotate refresh tokens.
+    """
+    try:
+        resp = requests.post(
+            token_endpoint,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            body = resp.json()
+            return body.get("access_token"), body.get("refresh_token")
+        pp(f"[yellow]Token refresh returned HTTP {resp.status_code}[/yellow]")
+    except Exception as exc:
+        pp(f"[yellow]Token refresh request failed: {exc}[/yellow]")
+    return None, None
+
+
+def _resolve_token(
+    explicit_token: str | None,
+    url: str,
+    client_id: str | None,
+    redirect_port: int,
+    redirect_path: str,
+) -> tuple[str, dict]:
+    """Return the bearer token to use, in priority order:
+
+    1. *explicit_token* (``--token`` flag) — cache is bypassed entirely.
+    2. ``~/.config/dremioai/.auth.yaml`` ``token:`` key.
+    3. Full OAuth PKCE flow (requires *client_id*); writes result to cache.
+
+    Returns ``(token, cache_dict)``.  *cache_dict* is empty when the caller
+    supplied an explicit token.
+    """
+    if explicit_token is not None:
+        return explicit_token, {}
+
+    cache = _read_auth_cache()
+    cached_token = cache.get("token")
+    if cached_token:
+        pp("[dim]Using cached token (~/.config/dremioai/.auth.yaml)[/dim]")
+        return cached_token, cache
+
+    # No cached token — try the OAuth flow.
+    if not client_id:
+        pp(
+            "[red]No token available.[/red]  "
+            "Provide --token, or use --client-id to authenticate via OAuth."
+        )
+        raise SystemExit(1)
+
+    pp("No cached token found. Starting OAuth flow..")
+    oauth_meta = get_oauth_config(url)
+    oauth = get_oauth2_tokens(
+        client_id,
+        str(oauth_meta.authorization_endpoint),
+        str(oauth_meta.token_endpoint),
+        redirect_port,
+        redirect_path,
+    )
+    if not oauth.access_token:
+        pp("[red]OAuth flow did not return a token.[/red]")
+        raise SystemExit(1)
+
+    _write_auth_cache(oauth.access_token, oauth.refresh_token, client_id)
+    pp(
+        "[green]Authenticated.[/green]  "
+        "Token cached at ~/.config/dremioai/.auth.yaml"
+    )
+    return oauth.access_token, _read_auth_cache()
+
+
+def _handle_token_expired(url: str, cache: dict) -> str | None:
+    """Attempt a token refresh using the cached refresh token.
+
+    On success writes the new token to cache and returns it.
+    Returns ``None`` if the cache lacks a refresh token or the refresh fails.
+    """
+    refresh_tok = cache.get("refresh-token")
+    client_id = cache.get("client-id")
+    if not (refresh_tok and client_id):
+        return None
+    try:
+        oauth_meta = get_oauth_config(url)
+        new_token, new_refresh = _do_token_refresh(
+            str(oauth_meta.token_endpoint), client_id, refresh_tok
+        )
+        if new_token:
+            _write_auth_cache(new_token, new_refresh or refresh_tok, client_id)
+            return new_token
+    except Exception as exc:
+        pp(f"[yellow]Token refresh failed: {exc}[/yellow]")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Typer apps
+# ---------------------------------------------------------------------------
 
 app = Typer(
     no_args_is_help=True,
@@ -126,6 +273,7 @@ def check_auth(
         redirect_port,
         redirect_path,
     )
+    _write_auth_cache(oauth.access_token, oauth.refresh_token, client_id)
     pp(oauth.access_token)
     return oauth
 
@@ -299,19 +447,31 @@ cli = Typer(
 )
 
 
+def _is_auth_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "401" in msg or "unauthorized" in msg or "unauthenticated" in msg
+
+
 @asynccontextmanager
 async def mcp_client_session(
     url: str, token: Optional[str] = None
 ) -> AsyncGenerator[ClientSession, None]:
     headers = {"Authorization": f"Bearer {token}"} if token is not None else None
-    async with streamablehttp_client(url=url, headers=headers) as (
-        read_stream,
-        write_stream,
-        gid,
-    ):
-        async with ClientSession(read_stream, write_stream) as session:
-            await session.initialize()
-            yield session
+    try:
+        async with streamablehttp_client(url=url, headers=headers) as (
+            read_stream,
+            write_stream,
+            gid,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                yield session
+    except _TokenExpiredError:
+        raise  # already converted — let it propagate
+    except Exception as exc:
+        if _is_auth_error(exc):
+            raise _TokenExpiredError(str(exc)) from exc
+        raise
 
 
 @cli.command("list-tools")
@@ -323,11 +483,27 @@ async def list_tools(
     token: Annotated[
         Optional[str], Option(help="The authorization token to use")
     ] = None,
+    client_id: Annotated[
+        Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
+    ] = None,
 ):
-    async with mcp_client_session(url, token) as session:
-        tools = await session.list_tools()
-        for tool in tools:
-            pp(tool)
+    resolved_token, cache = _resolve_token(token, url, client_id, 8976, "/")
+
+    async def _do(tok: str) -> None:
+        async with mcp_client_session(url, tok) as session:
+            tools = await session.list_tools()
+            for tool in tools:
+                pp(tool)
+
+    try:
+        await _do(resolved_token)
+    except _TokenExpiredError:
+        pp("[yellow]Token expired — refreshing...[/yellow]")
+        new_token = _handle_token_expired(url, cache)
+        if not new_token:
+            pp("[red]Refresh failed. Re-authenticate with --client-id.[/red]")
+            raise SystemExit(1)
+        await _do(new_token)
 
 
 @cli.command("call-tool")
@@ -340,17 +516,33 @@ async def call_tool(
     token: Annotated[
         Optional[str], Option(help="The authorization token to use")
     ] = None,
+    client_id: Annotated[
+        Optional[str], Option(help="OAuth client ID (used when no --token or cached token)")
+    ] = None,
     args: Annotated[
         Optional[str], Option(help="The arguments to pass to the tool as a JSON")
     ] = None,
 ):
-    async with mcp_client_session(url, token) as session:
-        result = await session.call_tool(tool, json.loads(args) if args else None)
-        if result.isError:
-            pp("[red]Error[/red]")
-            pp(result.content)
-            return
-        pp(result.structuredContent["result"])
+    resolved_token, cache = _resolve_token(token, url, client_id, 8976, "/")
+
+    async def _do(tok: str) -> None:
+        async with mcp_client_session(url, tok) as session:
+            result = await session.call_tool(tool, json.loads(args) if args else None)
+            if result.isError:
+                pp("[red]Error[/red]")
+                pp(result.content)
+                return
+            pp(result.structuredContent["result"])
+
+    try:
+        await _do(resolved_token)
+    except _TokenExpiredError:
+        pp("[yellow]Token expired — refreshing...[/yellow]")
+        new_token = _handle_token_expired(url, cache)
+        if not new_token:
+            pp("[red]Refresh failed. Re-authenticate with --client-id.[/red]")
+            raise SystemExit(1)
+        await _do(new_token)
 
 
 def _assert(condition: bool, msg: str):
@@ -488,29 +680,36 @@ async def run_test(
     ] = "/",
 ):
     if not local:
-        # Remote mode: connect directly to the URL
-        if token is None and client_id is None:
-            pp(
-                "[red]FAIL[/red] Provide either --client-id (for OAuth) or --token (for direct auth)"
-            )
-            raise SystemExit(1)
-        if token is None:
-            pp("Checking auth..", end=" ")
-            a = check_auth(client_id, url, redirect_port, redirect_path)
-            token = a.access_token
-            pp("[green]OK[/green]")
-        else:
-            pp("Using provided token, skipping OAuth..")
-        await _run_smoketests(
-            url,
-            token,
-            check_annotations,
-            check_new_contract,
-            check_remote_tools=check_remote_tools,
-            ld_sdk_key=ld_sdk_key,
-            ld_flag=ld_flag,
-            ld_expected=ld_expected,
+        # Remote mode — resolve the token, then run smoketests with 401 retry.
+        resolved_token, cache = _resolve_token(
+            token, url, client_id, redirect_port, redirect_path
         )
+
+        async def _do_remote_tests(tok: str) -> None:
+            await _run_smoketests(
+                url,
+                tok,
+                check_annotations,
+                check_new_contract,
+                check_remote_tools=check_remote_tools,
+                ld_sdk_key=ld_sdk_key,
+                ld_flag=ld_flag,
+                ld_expected=ld_expected,
+            )
+
+        try:
+            await _do_remote_tests(resolved_token)
+        except _TokenExpiredError:
+            pp("[yellow]Token expired — refreshing...[/yellow]")
+            new_token = _handle_token_expired(url, cache)
+            if not new_token:
+                pp(
+                    "[red]Token refresh failed.[/red]  "
+                    "Re-authenticate with --client-id or supply a new --token."
+                )
+                raise SystemExit(1)
+            pp("[green]Token refreshed — retrying...[/green]")
+            await _do_remote_tests(new_token)
         return
 
     # Local mode: start a local MCP server and test against it
