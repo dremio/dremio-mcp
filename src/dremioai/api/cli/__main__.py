@@ -23,6 +23,7 @@ import asyncio
 from dremioai.log import configure, set_level
 from dremioai.config import settings
 
+from dremioai.api.cli.ai_tools import app as ai_tools_app
 from dremioai.api.cli.engines import app as engines_app
 from dremioai.api.cli.prometheus import app as prometheus_app
 from dremioai.api.cli.search import app as search_app
@@ -51,6 +52,7 @@ app.add_typer(engines_app, callback=common_args)
 app.add_typer(prometheus_app, callback=common_args)
 app.add_typer(search_app, callback=common_args)
 app.add_typer(oauth_app, callback=common_args)
+app.add_typer(ai_tools_app, callback=common_args)
 
 
 @catalog_app.command(name="lineage")

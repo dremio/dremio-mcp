@@ -457,6 +457,12 @@ async def run_test(
             help="Check new-contract changes (param rename, input validation, etc.)"
         ),
     ] = True,
+    check_remote_tools: Annotated[
+        bool,
+        Option(
+            help="Verify remote Dremio tools appear in tools/list and can be called directly"
+        ),
+    ] = False,
     local: Annotated[
         bool, Option(help="Start a local MCP server for running the tests")
     ] = False,
@@ -500,6 +506,7 @@ async def run_test(
             token,
             check_annotations,
             check_new_contract,
+            check_remote_tools=check_remote_tools,
             ld_sdk_key=ld_sdk_key,
             ld_flag=ld_flag,
             ld_expected=ld_expected,
@@ -539,6 +546,7 @@ async def run_test(
             token,
             check_annotations,
             check_new_contract,
+            check_remote_tools=check_remote_tools,
             ld_sdk_key=ld_sdk_key,
             ld_flag=ld_flag,
             ld_expected=ld_expected,
@@ -567,6 +575,7 @@ async def _run_smoketests(
     token: str,
     check_annotations: bool,
     check_new_contract: bool,
+    check_remote_tools: bool = False,
     ld_sdk_key: str | None = None,
     ld_flag: str | None = None,
     ld_expected: str | None = None,
@@ -803,7 +812,34 @@ async def _run_smoketests(
             pp("[green]OK[/green]")
 
         # ------------------------------------------------------------------
-        # 12. LaunchDarkly flag evaluation (optional, requires --ld-sdk-key)
+        # 12. Remote tools: verify they appear in tools/list (optional)
+        # ------------------------------------------------------------------
+        if check_remote_tools:
+            pp("Checking remote tools in tools/list..", end=" ")
+            static_tool_names = {
+                "RunSqlQuery", "GetUsefulSystemTableNames", "GetSchemaOfTable",
+                "GetDescriptionOfTableOrSchema", "GetTableOrViewLineage",
+                "SearchTableAndViews", "DiscoverDynamicTools", "CallDynamicTool",
+            }
+            remote_tools = [t for t in tools_result.tools if t.name not in static_tool_names]
+            _assert(
+                len(remote_tools) > 0,
+                f"No remote tools found in tools/list (got {[t.name for t in tools_result.tools]})",
+            )
+            pp(f"{len(remote_tools)} remote tool(s) found: {[t.name for t in remote_tools]}")
+
+            # Call the first remote tool with no arguments to verify routing works
+            first_remote = remote_tools[0]
+            pp(f"Calling remote tool '{first_remote.name}'..", end=" ")
+            result = await session.call_tool(first_remote.name, {})
+            _assert(
+                result.structuredContent is not None or not result.isError,
+                f"Remote tool call failed: {result.content}",
+            )
+            pp("[green]OK[/green]")
+
+        # ------------------------------------------------------------------
+        # 13. LaunchDarkly flag evaluation (optional, requires --ld-sdk-key)
         # ------------------------------------------------------------------
         if ld_sdk_key and ld_flag:
             pp(f"Checking LD flag '{ld_flag}'..", end=" ")
