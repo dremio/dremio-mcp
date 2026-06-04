@@ -26,6 +26,7 @@ from typing import (
     get_args,
     get_type_hints,
     Callable,
+    Tuple,
     TypeVar,
     ParamSpec,
     Awaitable,
@@ -143,8 +144,7 @@ def _df_to_json_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     df = df.where(pd.notnull(df), None)
     records = df.to_dict(orient="records")
     return [
-        {key: _json_safe_value(value) for key, value in row.items()}
-        for row in records
+        {key: _json_safe_value(value) for key, value in row.items()} for row in records
     ]
 
 
@@ -457,9 +457,9 @@ class GetUsefulSystemTableNames(Tools):
                 "Be sure to filter out SYSTEM_TABLE for looking at user tables. "
                 "You must encapsulate TABLES in double quotes."
             ),
-            'sys.project.jobs_recent': "Recent job execution history including status, duration, user, and error details.",
-            'sys.project.engines': "Engine configuration and status for the project.",
-            'sys.organization.users': "Organization user information.",
+            "sys.project.jobs_recent": "Recent job execution history including status, duration, user, and error details.",
+            "sys.project.engines": "Engine configuration and status for the project.",
+            "sys.organization.users": "Organization user information.",
             'INFORMATION_SCHEMA."COLUMNS"': "Column-level metadata for all tables and views.",
             'INFORMATION_SCHEMA."VIEWS"': "View definitions and metadata.",
         }
@@ -485,11 +485,15 @@ class GetSchemaOfTable(Tools):
         """
         if isinstance(table_name, list):
             if not table_name:
-                return {"error": "table_name must not be empty. Provide a list of path components, e.g. ['source', 'schema', 'table']."}
+                return {
+                    "error": "table_name must not be empty. Provide a list of path components, e.g. ['source', 'schema', 'table']."
+                }
             paths = table_name
         else:
             if not table_name or not table_name.strip():
-                return {"error": "table_name must not be empty. Provide a dot-separated name, e.g. '\"source\".\"schema\".\"table\"'."}
+                return {
+                    "error": 'table_name must not be empty. Provide a dot-separated name, e.g. \'"source"."schema"."table"\'.'
+                }
             paths = list(reader(StringIO(table_name), delimiter="."))
         result = await get_schema(paths[0], include_tags=True)
         if result and "sql" in result:
@@ -536,17 +540,26 @@ class SearchTableAndViews(Tools):
         if not settings.instance().dremio.get("enable_semantic_layer"):
             return base
         descriptions = await ai_tools.get_semantic_layer_tool_descriptions()
-        parts = [base, "\nWhen semantic layer is enabled, this tool additionally enriches results:"]
+        parts = [
+            base,
+            "\nWhen semantic layer is enabled, this tool additionally enriches results:",
+        ]
         if sm_desc := descriptions.get("searchMetrics"):
             parts.append(f"- **searchMetrics**: {sm_desc}")
         if rel_desc := descriptions.get("getTableRelationships"):
             parts.append(f"- **getTableRelationships**: {rel_desc}")
         parts.append(
-            "\nMetric results are included with \"result_type\": \"METRIC\"."
-            " TABLE/VIEW results include a \"relationships\" key when relationship data is available."
+            '\nMetric results are included with "result_type": "METRIC".'
+            ' TABLE/VIEW results include a "relationships" key when relationship data is available.'
             " The search returns at most topN results (default set by dremio.search_topN)."
         )
         return "\n".join(parts)
+
+    async def get_relationships(
+        self, path: List[str]
+    ) -> Tuple[List[str], Optional[List[ai_tools.TableRelationship]]]:
+        result = await ai_tools.get_relationships(path)
+        return path, result
 
     @secured
     @with_metrics
@@ -579,70 +592,42 @@ class SearchTableAndViews(Tools):
             )
             for category in (search.Category.TABLE, search.Category.VIEW)
         ]
-
         if enable_semantic:
-            all_results = await run_in_parallel(
-                search_tasks + [ai_tools.invoke_tool("searchMetrics", {"query": query})]
+            search_tasks.append(ai_tools.get_metrics(query))
+
+        res = await run_in_parallel(search_tasks)
+        # concat only non-empty DataFrames; both searches may return nothing
+        non_empty = [df for df in res[:2] if isinstance(df, pd.DataFrame) and not df.empty]
+        table_and_views = pd.concat(non_empty) if non_empty else pd.DataFrame()
+
+        rel_map: Dict[tuple, list] = {}
+        metric_response: Optional[List[ai_tools.Metric]] = None
+        if enable_semantic:
+            metric_response = res[2]
+            # path column holds lists (unhashable) — deduplicate via tuples
+            paths = (
+                [list(p) for p in {tuple(p) for p in table_and_views["path"].dropna()}]
+                if "path" in table_and_views.columns
+                else []
             )
-            table_df, view_df = all_results[0], all_results[1]
-            metric_response = all_results[2]
-        else:
-            table_df, view_df = await run_in_parallel(search_tasks)
-            metric_response = None
-
-        frames = [df for df in (table_df, view_df) if not df.empty]
-        records: List[Dict[str, Any]] = (
-            _df_to_json_records(pd.concat(frames)) if frames else []
-        )
-
-        if enable_semantic and records:
-            rel_responses = await run_in_parallel(
-                [
-                    ai_tools.invoke_tool("getTableRelationShips", {"path": r["path"]})
-                    for r in records
-                    if r.get("path")
-                ]
+            rel = await run_in_parallel(
+                [self.get_relationships(p) for p in paths]
             )
-            rel_iter = iter(rel_responses)
-            for r in records:
-                if r.get("path"):
-                    resp = next(rel_iter)
-                    if resp and not resp.error and resp.result:
-                        try:
-                            rels = [
-                                ai_tools.TableRelationship.model_validate(item)
-                                for item in resp.result
-                            ]
-                            r["relationships"] = [
-                                rel.model_dump(by_alias=False, exclude_none=True)
-                                for rel in rels
-                            ]
-                        except Exception:
-                            logger.exception("Failed to parse TableRelationship response")
-                            r["relationships"] = resp.result  # fallback to raw
+            for path, relationships in rel:
+                rel_map[tuple(path)] = relationships or []
 
-        results: List[Dict[str, Any]] = records
+        results = []
+        if not table_and_views.empty and "name" in table_and_views.columns:
+            for row in table_and_views.to_dict(orient="records"):
+                entry = {k: row.get(k) for k in ("name", "type", "tags", "description", "schema")}
+                if enable_semantic:
+                    if rels := rel_map.get(tuple(row.get("path") or [])):
+                        entry["relationships"] = [r.model_dump(by_alias=False) for r in rels]
+                results.append(entry)
 
-        if enable_semantic and metric_response and not metric_response.error:
-            raw = metric_response.result
-            if isinstance(raw, dict):
-                try:
-                    metrics_result = ai_tools.MetricsSearchResult.model_validate(raw)
-                    if metrics_result.error_message:
-                        logger.warning(
-                            "searchMetrics returned an error",
-                            error=metrics_result.error_message,
-                        )
-                    else:
-                        results = results + [
-                            {
-                                "result_type": "METRIC",
-                                **m.model_dump(by_alias=False, exclude_none=True),
-                            }
-                            for m in metrics_result.metrics
-                        ]
-                except Exception:
-                    logger.exception("Failed to parse MetricsSearchResult response")
+        if metric_response:
+            for metric in metric_response:
+                results.append({"result_type": "METRIC", **metric.model_dump(by_alias=False)})
 
         return {"results": results}
 
@@ -650,9 +635,7 @@ class SearchTableAndViews(Tools):
 class SearchMetrics(Tools):
     """Search for metrics in the Dremio semantic layer using a natural-language query."""
 
-    For: ClassVar[
-        Annotated[ToolType, ToolType.FOR_DATA_PATTERNS | ToolType.EXPERIMENTAL]
-    ]
+    For: ClassVar[Annotated[ToolType, ToolType.DYNAMIC_REMOTE_TOOLS]]
 
     @secured
     @with_metrics
@@ -669,19 +652,23 @@ class SearchMetrics(Tools):
             A dict with the metric search results from the Dremio semantic layer.
         """
         if not settings.instance().dremio.get("enable_semantic_layer"):
-            return {"error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."}
+            return {
+                "error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."
+            }
         result = await ai_tools.invoke_tool("searchMetrics", {"query": query})
         if result.error:
             return {"error": result.error}
-        return result.result if isinstance(result.result, dict) else {"results": result.result}
+        return (
+            result.result
+            if isinstance(result.result, dict)
+            else {"results": result.result}
+        )
 
 
 class GetTableRelationships(Tools):
     """Retrieve relationship metadata for a table or view from the Dremio semantic layer."""
 
-    For: ClassVar[
-        Annotated[ToolType, ToolType.FOR_DATA_PATTERNS | ToolType.EXPERIMENTAL]
-    ]
+    For: ClassVar[Annotated[ToolType, ToolType.DYNAMIC_REMOTE_TOOLS]]
 
     @secured
     @with_metrics
@@ -698,11 +685,17 @@ class GetTableRelationships(Tools):
             A dict describing the relationships of the specified table or view.
         """
         if not settings.instance().dremio.get("enable_semantic_layer"):
-            return {"error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."}
+            return {
+                "error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."
+            }
         result = await ai_tools.invoke_tool("getTableRelationShips", {"path": path})
         if result.error:
             return {"error": result.error}
-        return result.result if isinstance(result.result, dict) else {"result": result.result}
+        return (
+            result.result
+            if isinstance(result.result, dict)
+            else {"result": result.result}
+        )
 
 
 class DiscoverDynamicTools(Tools):
