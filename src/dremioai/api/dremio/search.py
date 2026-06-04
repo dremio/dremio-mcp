@@ -25,7 +25,8 @@ from typing import (
     Any,
     List,
     Union,
-    Optional, Dict,
+    Optional,
+    Dict,
 )
 from dremioai.api.util import UStrEnum
 from datetime import datetime
@@ -161,16 +162,19 @@ class EnterpriseSearchCatalogObject(BaseModel):
     modified_at: Optional[datetime] = Field(default=None, alias="lastModifiedAt")
     func_sql: Optional[str] = Field(default=None, alias="functionSql")
     owner: Optional[EnterpriseSearchUserOrRoleObject] = None
-    schema: Optional[Dict[str, Any]] = None
+    dremio_schema: Optional[Dict[str, Any]] = Field(default=None, alias="schema")
 
     async def populate_schemas(self):
         if self.path:
             try:
-                data = await get_schema(dataset_path_or_id=self.path, include_tags=True, flatten=True)
-                self.schema = data.get('schema') if data else None
+                data = await get_schema(
+                    dataset_path_or_id=self.path, include_tags=True, flatten=True
+                )
+                self.dremio_schema = data.get("schema") if data else None
             except Exception as e:
-                logger.error("Schema not found for search",
-                             path=self.path, reason=str(e))
+                logger.error(
+                    "Schema not found for search", path=self.path, reason=str(e)
+                )
 
     def as_df_dict(self):
         return {
@@ -179,7 +183,7 @@ class EnterpriseSearchCatalogObject(BaseModel):
             "type": self.type,
             "tags": ",".join(self.labels),
             "description": self.wiki,
-            "schema": self.schema,
+            "schema": self.dremio_schema,
         }
 
 
@@ -231,8 +235,9 @@ class EnterpriseSearchResultsWrapper(BaseModel):
 
 
 async def get_search_results(
-    search: str | Search, use_df: bool = False,
-    remove_catalog_name: Optional[bool] = True
+    search: str | Search,
+    use_df: bool = False,
+    remove_catalog_name: Optional[bool] = True,
 ) -> EnterpriseSearchResultsWrapper | pd.DataFrame:
     if isinstance(search, str):
         search = Search(query=search)
@@ -253,9 +258,19 @@ async def get_search_results(
         deser=EnterpriseSearchResults,
         params=params,
     )
-    while response.results and response.error is None and response.more is None:
-        result.extend(response.results)
-        if response.next_page_token is None:
+    while (
+        response.results
+        and response.error is None
+        and response.more is None
+        and len(result) <= search.max_results
+    ):
+        rem = abs(len(result) - search.max_results)
+        result.extend(
+            r
+            for r in response.results[:rem]
+            if r.category in (Category.TABLE, Category.VIEW)
+        )
+        if response.next_page_token is None or len(result) >= search.max_results:
             break
         search.next_page_token = response.next_page_token
         response = await client.post(
@@ -264,7 +279,7 @@ async def get_search_results(
             deser=EnterpriseSearchResults,
             params=params,
         )
-    result = [r for r in result if r.category in (Category.TABLE, Category.VIEW)]
+    # result = [r for r in result if r.category in (Category.TABLE, Category.VIEW)]
     tasks = [r.catalog.populate_schemas() for r in result]
     await asyncio.gather(*tasks, return_exceptions=True)
 

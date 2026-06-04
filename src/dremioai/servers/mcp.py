@@ -44,6 +44,7 @@ from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
 from mcp.server.lowlevel.server import request_ctx
@@ -51,7 +52,7 @@ from mcp.server.streamable_http import (
     MCP_PROTOCOL_VERSION_HEADER,
     MCP_SESSION_ID_HEADER,
 )
-from mcp.types import ToolAnnotations
+from mcp.types import ContentBlock, Tool as MCPTool, ToolAnnotations
 from pydantic import AnyHttpUrl
 from pydantic.networks import AnyUrl
 from rich import console, table
@@ -68,6 +69,7 @@ from typer import Argument, BadParameter, Option, Typer
 from yaml import dump
 
 from dremioai import log
+from dremioai.api.dremio import ai_tools
 from dremioai.api.oauth2 import get_oauth2_tokens
 from dremioai.api.oauth_metadata import (
     OAuthMetadataRFC8414,
@@ -79,7 +81,7 @@ from dremioai.metrics.registry import get_metrics_app
 from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
 from dremioai.servers.jwks_verifier import JWKSVerifier, TokenExpiredError
 from dremioai.tools import tools
-from dremioai.tools.tools import ProjectIdMiddleware
+from dremioai.tools.tools import ProjectIdMiddleware, secured
 
 
 class MCPTransportLoggingMiddleware:
@@ -318,6 +320,8 @@ def build_protected_resource_metadata(
 
 
 class FastMCPServerWithAuthToken(FastMCP):
+    _logger = log.logger("FastMCPServerWithAuthToken")
+
     class DelegatingTokenVerifier(TokenVerifier):
         logger = log.logger("DelegatingTokenVerifier")
 
@@ -404,6 +408,89 @@ class FastMCPServerWithAuthToken(FastMCP):
                 expires_at=expires_at,
             )
 
+    @secured
+    async def _list_remote_tools(self) -> "ai_tools.ListToolsResponse":
+        return await ai_tools.list_tools()
+
+    @secured
+    async def _invoke_remote_tool(
+        self, tool_name: str, args: Dict[str, Any]
+    ) -> "ai_tools.InvokeToolResponse":
+        return await ai_tools.invoke_tool(tool_name, args)
+
+    def expose_remote_tools(self) -> bool:
+        if not settings.instance().dremio.get("enable_remote_tools"):
+            return False
+        mode = settings.instance().tools.server_mode
+        return mode & tools.ToolType.DYNAMIC_REMOTE_TOOLS != 0
+
+    async def list_tools(self) -> list[MCPTool]:
+        static_tools = await super().list_tools()
+
+        # Refresh descriptions for tools that advertise dynamic_description=True.
+        # This is done per-request so the LLM always sees up-to-date server text
+        # (e.g. SearchTableAndViews embeds live semantic-layer tool descriptions).
+        if self._dynamic_description_tools:
+            refreshed = []
+            for t in static_tools:
+                if t.name in self._dynamic_description_tools:
+                    try:
+                        new_desc = await self._dynamic_description_tools[
+                            t.name
+                        ].get_description()
+                        refreshed.append(t.model_copy(update={"description": new_desc}))
+                    except Exception:
+                        self._logger.exception(
+                            "failed to refresh description for tool", tool=t.name
+                        )
+                        refreshed.append(t)
+                else:
+                    refreshed.append(t)
+            static_tools = refreshed
+
+        if not self.expose_remote_tools():
+            return static_tools
+        try:
+            response = await self._list_remote_tools()
+            if response.error:
+                self._logger.warning("remote tool listing failed", error=response.error)
+                return static_tools
+            static_names = {t.name for t in static_tools}
+            remote_tools = []
+            for rt in response.tools:
+                if rt.name in static_names:
+                    self._logger.warning(
+                        "remote tool name collides with static tool, skipping",
+                        name=rt.name,
+                    )
+                    continue
+                remote_tools.append(
+                    MCPTool(
+                        name=rt.name,
+                        description=rt.description,
+                        inputSchema=rt.input_schema,
+                    )
+                )
+            return static_tools + remote_tools
+        except Exception:
+            self._logger.exception("error fetching remote tools")
+            return static_tools
+
+    async def call_tool(
+        self, name: str, arguments: dict
+    ) -> list[ContentBlock] | dict[str, Any]:
+        static_names = {t.name for t in await super().list_tools()}
+        if name in static_names:
+            return await super().call_tool(name, arguments)
+
+        if not self.expose_remote_tools():
+            raise ToolError(f"Tool '{name}' not found (remote tools not enabled)")
+
+        result = await self._invoke_remote_tool(name, arguments)
+        if result.error:
+            raise ToolError(result.error)
+        return result.model_dump(exclude_none=True)
+
     def streamable_http_app(self):
         if self._mock_token_verifier is not None:
             token_verifier = self._mock_token_verifier
@@ -452,6 +539,10 @@ class FastMCPServerWithAuthToken(FastMCP):
         super().__init__(*args, **kwargs)
         self.support_project_id_endpoints = False
         self._mock_token_verifier = None
+        # Populated by init(): tool name → Tools instance for tools that carry
+        # dynamic_description=True.  list_tools() refreshes their descriptions
+        # per-request so the LLM always sees live server-side text.
+        self._dynamic_description_tools: Dict[str, "tools.Tools"] = {}
 
 
 def _make_mock_invoke(tool_class_name: str, original_doc: str):
@@ -599,13 +690,20 @@ def init(
                 else make_logged_invoke(tool.__name__, tool_instance.invoke)
             ),
             name=tool.__name__,
-            description=tool_instance.invoke.__doc__,
+            # Use the static docstring at init time.  Tools with
+            # dynamic_description=True have their descriptions refreshed per-
+            # request inside list_tools() using the live server-side text.
+            description=tool_instance.invoke.__doc__ or "",
             annotations=ToolAnnotations(
                 readOnlyHint=not (is_sql_tool and allow_dml),
                 destructiveHint=bool(is_sql_tool and allow_dml),
             ),
             structured_output=False,
         )
+        if tool_instance.dynamic_description and isinstance(
+            mcp, FastMCPServerWithAuthToken
+        ):
+            mcp._dynamic_description_tools[tool.__name__] = tool_instance
 
     for resource in tools.get_resources(For=mode):
         resource_instance = resource()
