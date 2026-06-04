@@ -610,12 +610,12 @@ def init(
     for resource in tools.get_resources(For=mode):
         resource_instance = resource()
         mcp.add_resource(
-            FunctionResource(
-                uri=AnyUrl(resource_instance.resource_path),
+            FunctionResource.from_function(
+                resource_instance.invoke,
+                uri=resource_instance.resource_path,
                 name=resource.__name__,
                 description=resource.__doc__,
                 mime_type="application/json",
-                fn=resource_instance.invoke,
             )
         )
     # if mode is None or (mode & tools.ToolType.FOR_SELF) != 0:
