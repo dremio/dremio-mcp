@@ -23,6 +23,7 @@ from dremioai.api.dremio.ai_tools import AiTool, InvokeToolResponse, ListToolsRe
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.servers.mcp import FastMCPServerWithAuthToken
+from mcp.server.fastmcp.exceptions import ToolError
 
 
 def _make_server() -> FastMCPServerWithAuthToken:
@@ -161,16 +162,14 @@ async def test_static_tool_wins_name_collision():
 
 @pytest.mark.asyncio
 async def test_call_unknown_tool_returns_error():
-    """Unknown remote tool → invoke_tool returns error dict."""
+    """Unknown remote tool → invoke_tool error propagates as ToolError (isError=True)."""
     server = _make_server()
 
     invoke_response = InvokeToolResponse(error="tool 'nonexistent_tool' not found")
 
     with patch.object(server, "_invoke_remote_tool", new=AsyncMock(return_value=invoke_response)):
-        result = await server.call_tool("nonexistent_tool", {})
-
-    assert isinstance(result, dict)
-    assert "error" in result
+        with pytest.raises(ToolError, match="nonexistent_tool"):
+            await server.call_tool("nonexistent_tool", {})
 
 
 @pytest.mark.asyncio
@@ -188,12 +187,10 @@ async def test_remote_tool_api_error_handled():
 
 
 @pytest.mark.asyncio
-async def test_remote_tools_disabled_call_returns_error_dict():
-    """call_tool for non-static tool when enable_remote_tools=False returns an error dict."""
+async def test_remote_tools_disabled_call_raises_tool_error():
+    """call_tool for non-static tool when remote tools disabled raises ToolError (isError=True)."""
     settings.set_base_settings(_make_settings(enable_remote_tools=False))
     server = _make_server()
 
-    result = await server.call_tool("any_remote_tool", {})
-
-    assert isinstance(result, dict)
-    assert "error" in result
+    with pytest.raises(ToolError):
+        await server.call_tool("any_remote_tool", {})

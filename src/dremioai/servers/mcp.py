@@ -43,6 +43,7 @@ from mcp.server.auth.middleware.auth_context import (
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
 from mcp.server.lowlevel.server import request_ctx
@@ -469,10 +470,12 @@ class FastMCPServerWithAuthToken(FastMCP):
         if name in static_names:
             return await super().call_tool(name, arguments)
 
-        if not settings.instance().dremio.get("enable_remote_tools"):
-            return {"error": f"Tool '{name}' not found (remote tools disabled)"}
+        if not self.expose_remote_tools():
+            raise ToolError(f"Tool '{name}' not found (remote tools not enabled)")
 
         result = await self._invoke_remote_tool(name, arguments)
+        if result.error:
+            raise ToolError(result.error)
         return result.model_dump(exclude_none=True)
 
     def streamable_http_app(self):

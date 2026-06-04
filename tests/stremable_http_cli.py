@@ -1219,7 +1219,8 @@ async def _run_smoketests(
             pp(f"Calling remote tool '{first_remote.name}'..", end=" ")
             result = await session.call_tool(first_remote.name, {})
             _assert(
-                result.structuredContent is not None or not result.isError,
+                not result.isError
+                and "error" not in (result.structuredContent or {}),
                 f"Remote tool call failed: {result.content}",
             )
             pp("[green]OK[/green]")
