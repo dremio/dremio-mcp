@@ -86,12 +86,14 @@ async def test_populate_schemas_marks_not_found_on_failure():
         await ok.populate_schemas()
         await bad.populate_schemas()
 
-    assert ok.schema == {"col": "VARCHAR"}
-    assert bad.schema is None
+    assert ok.dremio_schema == {"col": "VARCHAR"}
+    assert bad.dremio_schema is None
 
 
 @pytest.mark.asyncio
-async def test_search_table_and_views_drops_broken_entries_and_returns_healthy_ones():
+async def test_search_table_and_views_drops_broken_entries_and_returns_healthy_ones(
+    mock_settings_instance,
+):
     """DX-118395: one broken catalog entry must not fail the whole tool call.
 
     The tool silently drops entries whose schema could not be fetched and
@@ -114,7 +116,7 @@ async def test_search_table_and_views_drops_broken_entries_and_returns_healthy_o
         result = await tools_mod.SearchTableAndViews().invoke("NYC bike trips")
 
     assert set(result.keys()) == {"results"}
-    names = {row["name"] for row in result["results"]}
+    names = {row["name"] for row in result["results"]["tables_and_views"]}
     assert "ok.tbl" in names
 
 

@@ -194,10 +194,12 @@ async def test_invoke_tool_url_encodes_name(mock_settings_instance):
         # The encoded name "my%2Ftool" should appear in the URL
         mock.add_mock_response(
             r"/v1/projects/[^/]+/ai/tools/my%2Ftool:invoke$",
-            {"result": "ok", "error": None},
+            {"result": {"status": "ok"}},
         )
         result = await invoke_tool("my/tool", {})
-    assert result.result == "ok"
+    # The key assertion is that the URL was encoded correctly (call succeeded).
+    assert bool(result)
+    assert result.result["status"] == "ok"
 
 
 @pytest.mark.asyncio

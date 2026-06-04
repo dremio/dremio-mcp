@@ -26,6 +26,7 @@ from typing import (
     get_args,
     get_type_hints,
     Callable,
+    Tuple,
     TypeVar,
     ParamSpec,
     Awaitable,
@@ -105,8 +106,22 @@ class Tool:
 
 
 class Tools:
+    # Set to True in subclasses whose description should be refreshed on every
+    # list_tools() call (e.g. because it embeds live server-side information).
+    dynamic_description: ClassVar[bool] = False
+
     async def invoke(self):
         raise NotImplementedError("Subclasses should implement this method")
+
+    async def get_description(self) -> str:
+        """Return the description for this tool.
+
+        Override in subclasses that need to generate a description dynamically
+        at list_tools() time (e.g. based on live server data or feature-flag
+        state).  The default implementation returns the raw docstring of the
+        ``invoke`` method and is never called during server init.
+        """
+        return type(self).__dict__.get("invoke", None).__doc__ or ""
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -129,8 +144,7 @@ def _df_to_json_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     df = df.where(pd.notnull(df), None)
     records = df.to_dict(orient="records")
     return [
-        {key: _json_safe_value(value) for key, value in row.items()}
-        for row in records
+        {key: _json_safe_value(value) for key, value in row.items()} for row in records
     ]
 
 
@@ -443,9 +457,9 @@ class GetUsefulSystemTableNames(Tools):
                 "Be sure to filter out SYSTEM_TABLE for looking at user tables. "
                 "You must encapsulate TABLES in double quotes."
             ),
-            'sys.project.jobs_recent': "Recent job execution history including status, duration, user, and error details.",
-            'sys.project.engines': "Engine configuration and status for the project.",
-            'sys.organization.users': "Organization user information.",
+            "sys.project.jobs_recent": "Recent job execution history including status, duration, user, and error details.",
+            "sys.project.engines": "Engine configuration and status for the project.",
+            "sys.organization.users": "Organization user information.",
             'INFORMATION_SCHEMA."COLUMNS"': "Column-level metadata for all tables and views.",
             'INFORMATION_SCHEMA."VIEWS"': "View definitions and metadata.",
         }
@@ -471,11 +485,15 @@ class GetSchemaOfTable(Tools):
         """
         if isinstance(table_name, list):
             if not table_name:
-                return {"error": "table_name must not be empty. Provide a list of path components, e.g. ['source', 'schema', 'table']."}
+                return {
+                    "error": "table_name must not be empty. Provide a list of path components, e.g. ['source', 'schema', 'table']."
+                }
             paths = table_name
         else:
             if not table_name or not table_name.strip():
-                return {"error": "table_name must not be empty. Provide a dot-separated name, e.g. '\"source\".\"schema\".\"table\"'."}
+                return {
+                    "error": 'table_name must not be empty. Provide a dot-separated name, e.g. \'"source"."schema"."table"\'.'
+                }
             paths = list(reader(StringIO(table_name), delimiter="."))
         result = await get_schema(paths[0], include_tags=True)
         if result and "sql" in result:
@@ -514,35 +532,210 @@ class SearchTableAndViews(Tools):
             ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS | ToolType.EXPERIMENTAL,
         ]
     ]
+    dynamic_description: ClassVar[bool] = True
+
+    @secured
+    async def get_description(self) -> str:
+        base = type(self).__dict__["invoke"].__doc__ or ""
+        if not settings.instance().dremio.get("enable_semantic_layer"):
+            return base
+        descriptions = await ai_tools.get_semantic_layer_tool_descriptions()
+        parts = [
+            base,
+            "\nWhen semantic layer is enabled, this tool additionally enriches results:",
+        ]
+        if sm_desc := descriptions.get("searchMetrics"):
+            parts.append(f"- **searchMetrics**: {sm_desc}")
+        if rel_desc := descriptions.get("getTableRelationships"):
+            parts.append(f"- **getTableRelationships**: {rel_desc}")
+        parts.append(
+            '\nMetric results are included with "result_type": "METRIC".'
+            ' TABLE/VIEW results include a "relationships" key when relationship data is available.'
+            " The search returns at most topN results (default set by dremio.search_topN)."
+        )
+        return "\n".join(parts)
+
+    async def get_relationships(
+        self, path: List[str]
+    ) -> Tuple[List[str], Optional[ai_tools.TableRelationshipsResponse]]:
+        result = await ai_tools.get_relationships(path)
+        if result and not result.is_empty:
+            return path, result
+        return None, None
+
+    async def get_relationships_for_paths(
+        self, paths: List[List[str]]
+    ) -> List[Tuple[List[str], Optional[ai_tools.TableRelationshipsResponse]]]:
+        results = await run_in_parallel(
+            [self.get_relationships(path) for path in paths]
+        )
+        return [(p, r) for p, r in results if r is not None]
+
+    @secured
+    @with_metrics
+    async def invoke(self, query: str, topN: Optional[int] = None) -> Dict[str, Any]:
+        """Runs a semantic search on the Dremio cluster to find tables and views that match
+        the query.  This is not an exhaustive search; at most ``topN`` results are returned
+        (defaults to the server-side ``dremio.search_topN`` setting, which defaults to 10).
+
+        Args:
+            query: The search query describing the data you are looking for.
+            topN: Maximum number of TABLE/VIEW results to return.  Defaults to the
+                  server-side ``dremio.search_topN`` limit.  Cannot exceed that limit.
+
+        Returns:
+            A dict with a "results" key containing
+            1. "table_and_views" key - that has a list of objects that describe the found
+            tables, views, and
+            Each TABLE/VIEW object has "name", "type", "tags", "description", "schema", and optionally
+            "relationships" keys - that tell how this table is related to others.
+            The schema is included so you can avoid a separate GetSchemaOfTable call.
+            2. (when semantic layer is enabled) "metrics" key with list of approved metrics
+            along with their definitions
+            3. "note" key with truncation notice if topN was more than server limit.
+
+        You *must* trust relationships and metrics if available and give it more
+        weight when figuring out which tables/views/objectives you are looking for.
+        """
+        max_results = settings.instance().dremio.get("search_topN")
+        truncated = False
+        if topN is not None:
+            if topN < max_results:
+                max_results = topN
+            else:
+                truncated = True
+
+        enable_semantic = ai_tools.is_semantic_layer_enabled()
+
+        search_tasks = [
+            search.get_search_results(
+                search.Search(query=query, filter=category, maxResults=max_results),
+                use_df=True,
+            )
+            for category in (search.Category.TABLE, search.Category.VIEW)
+        ]
+        if enable_semantic:
+            search_tasks.append(ai_tools.get_metrics(query))
+
+        res = await run_in_parallel(search_tasks)
+        # concat only non-empty DataFrames; both searches may return nothing
+        non_empty = [
+            df for df in res[:2] if isinstance(df, pd.DataFrame) and not df.empty
+        ]
+        table_and_views = pd.concat(non_empty) if non_empty else pd.DataFrame()
+
+        rel_map: Dict[tuple, list] = {}
+        metric_response: Optional[List[ai_tools.Metric]] = None
+        if enable_semantic:
+            metric_response = res[2]
+            # path column holds lists (unhashable) — deduplicate via tuples
+            paths = (
+                table_and_views["path"].dropna().tolist()
+                if "path" in table_and_views.columns
+                else []
+            )
+            relationship_responses: List[ai_tools.TableRelationshipsResponse] = (
+                await self.get_relationships_for_paths(paths)
+            )
+            rel_map = {
+                tuple(path): relationship_response
+                for path, relationship_response in relationship_responses
+                if relationship_response and not relationship_response.is_empty
+            }
+
+        results = []
+        if not table_and_views.empty and "name" in table_and_views.columns:
+            for row in table_and_views.to_dict(orient="records"):
+                path = tuple(row.get("path") or [])
+                if enable_semantic:
+                    if (rels := rel_map.get(path)) and not rels.is_empty:
+                        row["relationships"] = rels.model_dump(exclude_none=True)
+                    else:
+                        row["relationships"] = None
+                results.append(row)
+
+        ret = {"results": {"tables_and_views": results}}
+        if truncated:
+            ret["results"][
+                "NOTE"
+            ] = f"Search results truncated and capped to {max_results}"
+
+        if metric_response and not metric_response.is_empty:
+            ret["results"]["metrics"] = metric_response.model_dump(
+                by_alias=True, exclude_none=True
+            )
+
+        return ret
+
+
+class SearchMetrics(Tools):
+    """Search for metrics in the Dremio semantic layer using a natural-language query."""
+
+    For: ClassVar[Annotated[ToolType, ToolType.DYNAMIC_REMOTE_TOOLS]]
 
     @secured
     @with_metrics
     async def invoke(self, query: str) -> Dict[str, Any]:
-        """Runs a semantic search on the Dremio cluster to find tables and views that match the query.
+        """Search for metrics in the Dremio semantic layer that match a natural-language query.
+
+        Requires ``enable_semantic_layer`` to be configured.  Returns an empty result when
+        the feature is not enabled.
 
         Args:
-            query: The query to run
+            query: Natural-language description of the metrics you are looking for.
 
         Returns:
-            A dict with "results" key that is a list of objects that describe the found tables and views.
-            Each object has "name", "type" (TABLE or VIEW), "tags", "description" keys, along with "schema"
-            key that lists the entire schema of the table or view. You can rely on this schema and avoid
-            calling GetSchemaOfTable tool.
+            A dict with the metric search results from the Dremio semantic layer.
         """
-        res = await run_in_parallel(
-            [
-                search.get_search_results(
-                    search.Search(query=query, filter=category), use_df=True
-                )
-                for category in (search.Category.TABLE, search.Category.VIEW)
-            ]
+        if not ai_tools.is_semantic_layer_enabled():
+            return {
+                "error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."
+            }
+        result = await ai_tools.invoke_tool("searchMetrics", {"query": query})
+        if result.error:
+            return {"error": result.error}
+        return (
+            result.result
+            if isinstance(result.result, dict)
+            else {"results": result.result}
         )
-        res = pd.concat(res)
-        return {"results": res.to_dict(orient="records")}
+
+
+class GetTableRelationships(Tools):
+    """Retrieve relationship metadata for a table or view from the Dremio semantic layer."""
+
+    For: ClassVar[Annotated[ToolType, ToolType.DYNAMIC_REMOTE_TOOLS]]
+
+    @secured
+    @with_metrics
+    async def invoke(self, path: List[str]) -> Dict[str, Any]:
+        """Retrieve relationship metadata for a table or view in the Dremio semantic layer.
+
+        Requires ``enable_semantic_layer`` to be configured.
+
+        Args:
+            path: The fully-qualified path of the table or view as a list of name components,
+                  e.g. ``["Samples", "my_schema", "my_table"]``.
+
+        Returns:
+            A dict describing the relationships of the specified table or view.
+        """
+        if not ai_tools.is_semantic_layer_enabled():
+            return {
+                "error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."
+            }
+        result = await ai_tools.invoke_tool("getTableRelationShips", {"path": path})
+        if result.error:
+            return {"error": result.error}
+        return (
+            result.result
+            if isinstance(result.result, dict)
+            else {"result": result.result}
+        )
 
 
 class DiscoverDynamicTools(Tools):
-    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
+    For: ClassVar[Annotated[ToolType, ToolType.DYNAMIC_REMOTE_TOOLS]]
 
     @secured
     @with_metrics
@@ -557,7 +750,7 @@ class DiscoverDynamicTools(Tools):
 
 
 class CallDynamicTool(Tools):
-    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
+    For: ClassVar[Annotated[ToolType, ToolType.DYNAMIC_REMOTE_TOOLS]]
 
     @secured
     @with_metrics

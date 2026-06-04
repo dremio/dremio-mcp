@@ -315,6 +315,18 @@ class Dremio(FlagAwareModel):
         default=False,
         description="Enable dynamic registration of remote tools from Dremio's Java-side tool registry",
     )
+    enable_semantic_layer: Annotated[Optional[bool], RuntimeMutable()] = Field(
+        default=False,
+        description=(
+            "Enable semantic layer enrichment in SearchTableAndViews: calls getTableRelationShips "
+            "on results and searchMetrics in parallel, and exposes SearchMetrics / "
+            "GetTableRelationships as standalone MCP tools."
+        ),
+    )
+    search_topN: Annotated[Optional[int], RuntimeMutable()] = Field(
+        default=10,
+        description="Server-side upper limit on the number of TABLE/VIEW results returned by SearchTableAndViews.",
+    )
 
     @field_serializer("raw_pat")
     def serialize_pat(self, pat: str):
