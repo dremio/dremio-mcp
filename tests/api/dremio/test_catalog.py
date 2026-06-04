@@ -91,7 +91,9 @@ async def test_populate_schemas_marks_not_found_on_failure():
 
 
 @pytest.mark.asyncio
-async def test_search_table_and_views_drops_broken_entries_and_returns_healthy_ones():
+async def test_search_table_and_views_drops_broken_entries_and_returns_healthy_ones(
+    mock_settings_instance,
+):
     """DX-118395: one broken catalog entry must not fail the whole tool call.
 
     The tool silently drops entries whose schema could not be fetched and
