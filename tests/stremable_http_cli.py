@@ -1289,6 +1289,10 @@ app.add_typer(cli)
 app.add_typer(auth)
 
 
-if __name__ == "__main__":
+def main():
     log.configure(enable_json_logging=False, to_file=False)
     app()
+
+
+if __name__ == "__main__":
+    main()

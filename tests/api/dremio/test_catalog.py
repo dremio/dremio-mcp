@@ -86,8 +86,8 @@ async def test_populate_schemas_marks_not_found_on_failure():
         await ok.populate_schemas()
         await bad.populate_schemas()
 
-    assert ok.schema == {"col": "VARCHAR"}
-    assert bad.schema is None
+    assert ok.dremio_schema == {"col": "VARCHAR"}
+    assert bad.dremio_schema is None
 
 
 @pytest.mark.asyncio

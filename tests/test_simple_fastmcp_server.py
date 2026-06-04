@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 import pandas as pd
 import pytest
 
-from dremioai.api.dremio.ai_tools import InvokeToolResponse, ListToolsResponse
+from dremioai.api.dremio.ai_tools import InvokeToolResponse, InvokeToolResponseResult, ListToolsResponse
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.servers import mcp as mcp_server
@@ -266,7 +266,7 @@ class TestDynamicTools:
             with patch(
                 "dremioai.tools.tools.ai_tools.invoke_tool",
                 new_callable=AsyncMock,
-                return_value=InvokeToolResponse(result="hello"),
+                return_value=InvokeToolResponse(result=InvokeToolResponseResult.model_validate({"value": "hello"})),
             ) as mock_invoke:
                 result = await server.call_tool(
                     "CallDynamicTool",

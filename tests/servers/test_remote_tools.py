@@ -89,13 +89,14 @@ async def test_call_remote_tool_directly():
     """call_tool() routes to _invoke_remote_tool for remote tools; returns dict result."""
     server = _make_server()
 
-    invoke_response = InvokeToolResponse(result="hello from remote")
+    from dremioai.api.dremio.ai_tools import InvokeToolResponseResult
+    invoke_response = InvokeToolResponse(result=InvokeToolResponseResult.model_validate({"message": "hello from remote"}))
 
     with patch.object(server, "_invoke_remote_tool", new=AsyncMock(return_value=invoke_response)):
         result = await server.call_tool("my_remote", {})
 
     assert isinstance(result, dict)
-    assert result.get("result") == "hello from remote"
+    assert result.get("result", {}).get("message") == "hello from remote"
 
 
 @pytest.mark.asyncio

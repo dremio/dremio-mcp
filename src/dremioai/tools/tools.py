@@ -557,9 +557,19 @@ class SearchTableAndViews(Tools):
 
     async def get_relationships(
         self, path: List[str]
-    ) -> Tuple[List[str], Optional[List[ai_tools.TableRelationship]]]:
+    ) -> Tuple[List[str], Optional[ai_tools.TableRelationshipsResponse]]:
         result = await ai_tools.get_relationships(path)
-        return path, result
+        if result and not result.is_empty:
+            return path, result
+        return None, None
+
+    async def get_relationships_for_paths(
+        self, paths: List[List[str]]
+    ) -> List[Tuple[List[str], Optional[ai_tools.TableRelationshipsResponse]]]:
+        results = await run_in_parallel(
+            [self.get_relationships(path) for path in paths]
+        )
+        return [(p, r) for p, r in results if r is not None]
 
     @secured
     @with_metrics
@@ -581,13 +591,13 @@ class SearchTableAndViews(Tools):
             The schema is included so you can avoid a separate GetSchemaOfTable call.
         """
         cfg = settings.instance().dremio
-        server_limit: int = cfg.get("search_topN") or 10
+        server_limit: int = cfg.get("search_topN")
         max_results = min(topN, server_limit) if topN is not None else server_limit
         enable_semantic = bool(cfg.get("enable_semantic_layer"))
 
         search_tasks = [
             search.get_search_results(
-                search.Search(query=query, filter=category, max_results=max_results),
+                search.Search(query=query, filter=category, maxResults=max_results),
                 use_df=True,
             )
             for category in (search.Category.TABLE, search.Category.VIEW)
@@ -597,7 +607,9 @@ class SearchTableAndViews(Tools):
 
         res = await run_in_parallel(search_tasks)
         # concat only non-empty DataFrames; both searches may return nothing
-        non_empty = [df for df in res[:2] if isinstance(df, pd.DataFrame) and not df.empty]
+        non_empty = [
+            df for df in res[:2] if isinstance(df, pd.DataFrame) and not df.empty
+        ]
         table_and_views = pd.concat(non_empty) if non_empty else pd.DataFrame()
 
         rel_map: Dict[tuple, list] = {}
@@ -606,28 +618,37 @@ class SearchTableAndViews(Tools):
             metric_response = res[2]
             # path column holds lists (unhashable) — deduplicate via tuples
             paths = (
-                [list(p) for p in {tuple(p) for p in table_and_views["path"].dropna()}]
+                table_and_views["path"].dropna().tolist()
                 if "path" in table_and_views.columns
                 else []
             )
-            rel = await run_in_parallel(
-                [self.get_relationships(p) for p in paths]
+            relationship_responses: List[ai_tools.TableRelationshipsResponse] = (
+                await self.get_relationships_for_paths(paths)
             )
-            for path, relationships in rel:
-                rel_map[tuple(path)] = relationships or []
+            rel_map = {
+                tuple(path): relationship_response
+                for path, relationship_response in relationship_responses
+                if relationship_response and not relationship_response.is_empty
+            }
 
         results = []
         if not table_and_views.empty and "name" in table_and_views.columns:
             for row in table_and_views.to_dict(orient="records"):
-                entry = {k: row.get(k) for k in ("name", "type", "tags", "description", "schema")}
+                path = tuple(row.get("path") or [])
                 if enable_semantic:
-                    if rels := rel_map.get(tuple(row.get("path") or [])):
-                        entry["relationships"] = [r.model_dump(by_alias=False) for r in rels]
-                results.append(entry)
+                    if (rels := rel_map.get(path)) and not rels.is_empty:
+                        row["relationships"] = rels.model_dump(exclude_none=True)
+                    else:
+                        row["relationships"] = None
+                results.append(row)
 
-        if metric_response:
-            for metric in metric_response:
-                results.append({"result_type": "METRIC", **metric.model_dump(by_alias=False)})
+        if metric_response and not metric_response.is_empty:
+            results.append(
+                {
+                    "result_type": "METRICS",
+                    **metric_response.model_dump(by_alias=True, exclude_none=True),
+                }
+            )
 
         return {"results": results}
 

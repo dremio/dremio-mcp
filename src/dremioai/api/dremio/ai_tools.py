@@ -15,7 +15,7 @@
 #
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TypeVar
 from urllib.parse import quote
 
 from aiohttp import ClientResponseError
@@ -44,9 +44,38 @@ class ListToolsResponse(BaseModel):
         return self.error is None
 
 
+class InvokeToolResponseResult(BaseModel):
+    """Wraps the ``result`` object returned by an AI-tool invocation.
+
+    Extra fields from the server (e.g. ``columns``, ``rows``) are stored in
+    ``model_extra`` and exposed via dict-style access so callers can write
+    ``response.result["columns"]`` without changing their code.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    # Inner-result level error (Java uses "errorMessage" here)
+    error: Optional[str] = Field(default=None, alias="errorMessage")
+
+    def __bool__(self) -> bool:
+        return self.error is None
+
+    def __getitem__(self, key: str) -> Any:
+        """Allow dict-style read access to extra fields: ``result["columns"]``."""
+        if key in self.__class__.model_fields:
+            return getattr(self, key)
+        return self.model_extra[key]
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, dict):
+            return self.model_extra == other
+        return super().__eq__(other)
+
+
 class InvokeToolResponse(BaseModel):
 
-    result: Optional[Any] = None
+    result: Optional[InvokeToolResponseResult] = None
+    # Top-level error key from Dremio is "error" (not "errorMessage")
     error: Optional[str] = None
 
     def __bool__(self):
@@ -65,6 +94,7 @@ class InvokeToolResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Semantic-layer response models
 # ---------------------------------------------------------------------------
+
 
 class RelationshipUsage(BaseModel):
     """Historical usage count for a table relationship in a given month."""
@@ -87,9 +117,25 @@ class TableRelationship(BaseModel):
     target_column_name: str = Field(alias="targetColumnName")
     join_cardinality: Optional[str] = Field(None, alias="joinCardinality")
     description: Optional[str] = None
-    usage_metrics: List[RelationshipUsage] = Field(default_factory=list, alias="usageMetrics")
+    usage_metrics: List[RelationshipUsage] = Field(
+        default_factory=list, alias="usageMetrics"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+class TableRelationshipsResponse(BaseModel):
+    relationships: Optional[List[TableRelationship]] = Field(default_factory=list)
+    error: Optional[str] = Field(None, alias="errorMessage")
+
+    def __bool__(self):
+        return self.error is None
+
+    @property
+    def is_empty(self) -> bool:
+        return self.error is None and (
+            self.relationships is None or len(self.relationships) == 0
+        )
 
 
 class MetricUsage(BaseModel):
@@ -125,8 +171,15 @@ class Metric(BaseModel):
 class MetricsSearchResult(BaseModel):
     """Top-level payload inside ``InvokeToolResponse.result`` for ``searchMetrics``."""
 
-    error_message: Optional[str] = Field(None, alias="errorMessage")
+    error: Optional[str] = Field(None, alias="errorMessage")
     metrics: List[Metric] = Field(default_factory=list)
+
+    def __bool__(self):
+        return self.error is None
+
+    @property
+    def is_empty(self) -> bool:
+        return self.error is None and (self.metrics is None or len(self.metrics) == 0)
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -162,6 +215,36 @@ async def invoke_tool(tool_name: str, args: Dict[str, Any]) -> InvokeToolRespons
     except Exception:
         log.exception("Failed to invoke AI tool '%s'", tool_name)
         return InvokeToolResponse(error=f"Unexpected error invoking tool '{tool_name}'")
+
+
+DeserT = TypeVar("DeserT", bound=BaseModel)
+
+
+async def invoke_tool_with_deser(
+    tool_name: str, args: Dict[str, Any], deser: DeserT
+) -> Optional[List[DeserT]]:
+    if resp := await invoke_tool(tool_name, args):
+        if resp.is_empty:
+            return []
+        try:
+            return deser.model_validate(resp.result.model_extra)
+        except:
+            log.exception(f"Failed to process {tool_name} ({args})")
+    else:
+        log.error(f"Failed {tool_name} for {args}: {resp}")
+    return None
+
+
+async def get_relationships(path: List[str]) -> Optional[TableRelationshipsResponse]:
+    return await invoke_tool_with_deser(
+        "getTableRelationships", {"path": path}, TableRelationshipsResponse
+    )
+
+
+async def get_metrics(query: str) -> Optional[List[Metric]]:
+    return await invoke_tool_with_deser(
+        "searchMetrics", {"query": query}, MetricsSearchResult
+    )
 
 
 _SEMANTIC_TOOL_NAMES = frozenset({"searchMetrics", "getTableRelationships"})
