@@ -722,7 +722,10 @@ async def call_tool(
             pp("[red]Error[/red]")
             pp(result.content)
             return
-        pj(data=result.structuredContent["result"])
+        if result.structuredContent is not None:
+            pj(data=result.structuredContent.get("result", result.structuredContent))
+        else:
+            pj(result.content[0].text if result.content else "null")
 
 
 def _assert(condition: bool, msg: str):
