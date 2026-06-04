@@ -10,6 +10,7 @@ import contextlib
 import functools
 import json
 import random
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ from mcp.shared.auth import OAuthMetadata
 import requests
 import uvicorn
 import yaml
-from rich import print as pp
+from rich import print as pp, print_json as pj
 from rich.markdown import Markdown
 from rich.table import Table
 from typer import Typer, Option
@@ -176,7 +177,7 @@ def _resolve_token(
 
     cache = _read_auth_cache(url)
     if cache.token:
-        pp(f"[dim]Using cached token for {url}[/dim]")
+        pp(f"[dim]Using cached token for {url}[/dim]", file=sys.stderr)
         return cache.token, cache
 
     # No cached token — try the OAuth flow.
@@ -721,7 +722,7 @@ async def call_tool(
             pp("[red]Error[/red]")
             pp(result.content)
             return
-        pp(result.structuredContent["result"])
+        pj(data=result.structuredContent["result"])
 
 
 def _assert(condition: bool, msg: str):

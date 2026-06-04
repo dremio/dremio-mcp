@@ -37,7 +37,7 @@ def _make_settings(enable_remote_tools: bool = True):
                 "pat": "test-pat",
                 "enable_remote_tools": enable_remote_tools,
             },
-            "tools": {"server_mode": ToolType.FOR_SELF.name},
+            "tools": {"server_mode": ToolType.DYNAMIC_REMOTE_TOOLS.name},
         }
     )
 

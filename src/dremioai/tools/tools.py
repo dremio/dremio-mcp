@@ -584,16 +584,28 @@ class SearchTableAndViews(Tools):
                   server-side ``dremio.search_topN`` limit.  Cannot exceed that limit.
 
         Returns:
-            A dict with a "results" key containing a list of objects that describe the found
-            tables, views, and (when semantic layer is enabled) metrics.  Each TABLE/VIEW
-            object has "name", "type", "tags", "description", "schema", and optionally
-            "relationships" keys.  Metric objects carry a "result_type" key set to "METRIC".
+            A dict with a "results" key containing
+            1. "table_and_views" key - that has a list of objects that describe the found
+            tables, views, and
+            Each TABLE/VIEW object has "name", "type", "tags", "description", "schema", and optionally
+            "relationships" keys - that tell how this table is related to others.
             The schema is included so you can avoid a separate GetSchemaOfTable call.
+            2. (when semantic layer is enabled) "metrics" key with list of approved metrics
+            along with their definitions
+            3. "note" key with truncation notice if topN was more than server limit.
+
+        You *must* trust relationships and metrics if available and give it more
+        weight when figuring out which tables/views/objectives you are looking for.
         """
-        cfg = settings.instance().dremio
-        server_limit: int = cfg.get("search_topN")
-        max_results = min(topN, server_limit) if topN is not None else server_limit
-        enable_semantic = bool(cfg.get("enable_semantic_layer"))
+        max_results = settings.instance().dremio.get("search_topN")
+        truncated = False
+        if topN is not None:
+            if topN < max_results:
+                max_results = topN
+            else:
+                truncated = True
+
+        enable_semantic = ai_tools.is_semantic_layer_enabled()
 
         search_tasks = [
             search.get_search_results(
@@ -642,15 +654,18 @@ class SearchTableAndViews(Tools):
                         row["relationships"] = None
                 results.append(row)
 
+        ret = {"results": {"tables_and_views": results}}
+        if truncated:
+            ret["results"][
+                "NOTE"
+            ] = f"Search results truncated and capped to {max_results}"
+
         if metric_response and not metric_response.is_empty:
-            results.append(
-                {
-                    "result_type": "METRICS",
-                    **metric_response.model_dump(by_alias=True, exclude_none=True),
-                }
+            ret["results"]["metrics"] = metric_response.model_dump(
+                by_alias=True, exclude_none=True
             )
 
-        return {"results": results}
+        return ret
 
 
 class SearchMetrics(Tools):
@@ -672,7 +687,7 @@ class SearchMetrics(Tools):
         Returns:
             A dict with the metric search results from the Dremio semantic layer.
         """
-        if not settings.instance().dremio.get("enable_semantic_layer"):
+        if not ai_tools.is_semantic_layer_enabled():
             return {
                 "error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."
             }
@@ -705,7 +720,7 @@ class GetTableRelationships(Tools):
         Returns:
             A dict describing the relationships of the specified table or view.
         """
-        if not settings.instance().dremio.get("enable_semantic_layer"):
+        if not ai_tools.is_semantic_layer_enabled():
             return {
                 "error": "Semantic layer is not enabled (dremio.enable_semantic_layer)."
             }

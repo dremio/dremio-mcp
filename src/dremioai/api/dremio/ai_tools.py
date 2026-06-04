@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 from aiohttp import ClientResponseError
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
-from dremioai.config import settings
+from dremioai.config import settings, feature_flags
 from dremioai.log import logger
 
 log = logger(__name__)
@@ -42,6 +42,12 @@ class ListToolsResponse(BaseModel):
 
     def __bool__(self):
         return self.error is None
+
+
+def is_semantic_layer_enabled() -> bool:
+    return feature_flags.FeatureFlagManager.instance().get_flag(
+        "ai_semantic_layer.enabled", False
+    ) or settings.instance().dremio.get("enable_semantic_layer")
 
 
 class InvokeToolResponseResult(BaseModel):

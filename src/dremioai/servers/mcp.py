@@ -399,8 +399,16 @@ class FastMCPServerWithAuthToken(FastMCP):
         return await ai_tools.list_tools()
 
     @secured
-    async def _invoke_remote_tool(self, tool_name: str, args: Dict[str, Any]) -> "ai_tools.InvokeToolResponse":
+    async def _invoke_remote_tool(
+        self, tool_name: str, args: Dict[str, Any]
+    ) -> "ai_tools.InvokeToolResponse":
         return await ai_tools.invoke_tool(tool_name, args)
+
+    def expose_remote_tools(self) -> bool:
+        if not settings.instance().dremio.get("enable_remote_tools"):
+            return False
+        mode = settings.instance().tools.server_mode
+        return mode & tools.ToolType.DYNAMIC_REMOTE_TOOLS != 0
 
     async def list_tools(self) -> list[MCPTool]:
         static_tools = await super().list_tools()
@@ -413,7 +421,9 @@ class FastMCPServerWithAuthToken(FastMCP):
             for t in static_tools:
                 if t.name in self._dynamic_description_tools:
                     try:
-                        new_desc = await self._dynamic_description_tools[t.name].get_description()
+                        new_desc = await self._dynamic_description_tools[
+                            t.name
+                        ].get_description()
                         refreshed.append(t.model_copy(update={"description": new_desc}))
                     except Exception:
                         self._logger.exception(
@@ -424,7 +434,7 @@ class FastMCPServerWithAuthToken(FastMCP):
                     refreshed.append(t)
             static_tools = refreshed
 
-        if not settings.instance().dremio.get("enable_remote_tools"):
+        if not self.expose_remote_tools():
             return static_tools
         try:
             response = await self._list_remote_tools()
@@ -452,7 +462,9 @@ class FastMCPServerWithAuthToken(FastMCP):
             self._logger.exception("error fetching remote tools")
             return static_tools
 
-    async def call_tool(self, name: str, arguments: dict) -> list[ContentBlock] | dict[str, Any]:
+    async def call_tool(
+        self, name: str, arguments: dict
+    ) -> list[ContentBlock] | dict[str, Any]:
         static_names = {t.name for t in await super().list_tools()}
         if name in static_names:
             return await super().call_tool(name, arguments)
@@ -661,7 +673,9 @@ def init(
                 destructiveHint=bool(is_sql_tool and allow_dml),
             ),
         )
-        if tool_instance.dynamic_description and isinstance(mcp, FastMCPServerWithAuthToken):
+        if tool_instance.dynamic_description and isinstance(
+            mcp, FastMCPServerWithAuthToken
+        ):
             mcp._dynamic_description_tools[tool.__name__] = tool_instance
 
     for resource in tools.get_resources(For=mode):
