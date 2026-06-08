@@ -22,17 +22,24 @@ RUN uv build --wheel -o /dist
 FROM python:3.13-slim
 
 # Create non-root user
-RUN useradd -m -u 1001 appuser
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends quilt \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1001 appuser
 
 WORKDIR /app
 
 # Copy wheel from builder
 COPY --from=builder /dist/*.whl /dist/requirements.txt /tmp/
+COPY patches/ /tmp/patches/
 
 # Install the wheel and dependencies
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 RUN pip install --no-cache-dir /tmp/dremioai*.whl
-RUN rm /tmp/*.whl /tmp/requirements.txt
+RUN export QUILT_PATCHES=/tmp/patches \
+    && cd / \
+    && quilt push -a \
+    && rm -rf /tmp/patches /tmp/*.whl /tmp/requirements.txt
 
 USER 1001
 
