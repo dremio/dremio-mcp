@@ -16,6 +16,7 @@
 
 from pydantic import BaseModel, Field
 from typing import List, Dict, Union, Optional, Any
+from dataclasses import dataclass
 
 from enum import auto
 from datetime import datetime
@@ -159,7 +160,12 @@ class JobResultsParams(BaseModel):
 
 
 async def _fetch_results(
-    uri: str, pat: str, project_id: str, job_id: str, off: int, limit: int
+    uri: Optional[str],
+    pat: Optional[str],
+    project_id: str,
+    job_id: str,
+    off: int,
+    limit: int,
 ) -> JobResults:
     client = AsyncHttpClient()
     params = JobResultsParams(offset=off, limit=limit)
@@ -169,6 +175,31 @@ async def _fetch_results(
         params=params.model_dump(),
         deser=JobResults,
     )
+
+
+async def _wait_for_job(
+    client: AsyncHttpClient, endpoint: str, job_id: str
+) -> Job:
+    delay = settings.instance().dremio.api.get("polling_interval")
+
+    job: Job = await client.get(f"{endpoint}/job/{job_id}", deser=Job)
+    while not job.done:
+        await asyncio.sleep(delay)
+        job = await client.get(f"{endpoint}/job/{job_id}", deser=Job)
+
+    if not job.succeeded:
+        emsg = (
+            job.error_message
+            if job.error_message
+            else (
+                job.cancellation_reason
+                if job.job_state == JobState.CANCELED
+                else "Unknown error"
+            )
+        )
+        raise RuntimeError(f"Job {job_id} failed: {emsg}")
+
+    return job
 
 
 async def get_results(
@@ -185,25 +216,8 @@ async def get_results(
     if client is None:
         client = AsyncHttpClient()
 
-    delay = settings.instance().dremio.api.get("polling_interval")
-
     endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
-    job: Job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)
-    while not job.done:
-        await asyncio.sleep(delay)
-        job = await client.get(f"{endpoint}/job/{qs.id}", deser=Job)
-
-    if not job.succeeded:
-        emsg = (
-            job.error_message
-            if job.error_message
-            else (
-                job.cancellation_reason
-                if job.job_state == JobState.CANCELED
-                else "Unknown error"
-            )
-        )
-        raise RuntimeError(f"Job {qs.id} failed: {emsg}")
+    job = await _wait_for_job(client, endpoint, qs.id)
 
     if job.row_count == 0:
         return pd.DataFrame() if use_df else JobResultsWrapper([])
@@ -251,3 +265,76 @@ async def run_query(
         deser=QuerySubmission,
     )
     return await get_results(project_id, qs, use_df=use_df, client=client)
+
+
+@dataclass
+class QueryResult:
+    rows: List[Dict[str, Any]]
+    total_rows: int
+    returned_rows: int
+    pages_fetched: int
+    result_schema: Optional[List[ResultSchema]] = None
+
+    @property
+    def truncated(self) -> bool:
+        return self.returned_rows < self.total_rows
+
+
+async def run_query_capped(
+    query: Union[Query, str], max_rows: int = 500
+) -> QueryResult:
+    """Submit a query and fetch at most *max_rows* rows (0 = unlimited)."""
+    client = AsyncHttpClient()
+    if not isinstance(query, Query):
+        engine_name = (
+            settings.instance().dremio.wlm.engine_name
+            if settings.instance().dremio.wlm is not None
+            else None
+        )
+        query = Query(sql=query, engineName=engine_name)
+
+    project_id = settings.instance().dremio.project_id
+    endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
+    qs: QuerySubmission = await client.post(
+        f"{endpoint}/sql",
+        body=query.model_dump(by_alias=True, exclude_none=True),
+        deser=QuerySubmission,
+    )
+
+    job = await _wait_for_job(client, endpoint, qs.id)
+    total_rows = job.row_count or 0
+    if total_rows == 0:
+        return QueryResult(
+            rows=[],
+            total_rows=0,
+            returned_rows=0,
+            pages_fetched=0,
+            result_schema=None,
+        )
+
+    fetch_rows = total_rows if max_rows == 0 else min(total_rows, max_rows)
+    page_size = min(500, fetch_rows)
+    rows: List[Dict[str, Any]] = []
+    result_schema: Optional[List[ResultSchema]] = None
+    pages_fetched = 0
+
+    for off in range(0, fetch_rows, page_size):
+        remaining = fetch_rows - len(rows)
+        page_limit = min(page_size, remaining)
+        page = await _fetch_results(None, None, project_id, qs.id, off, page_limit)
+        pages_fetched += 1
+        if result_schema is None:
+            result_schema = page.result_schema
+        if not page.rows:
+            break
+        rows.extend(page.rows[:remaining])
+        if len(rows) >= fetch_rows:
+            break
+
+    return QueryResult(
+        rows=rows,
+        total_rows=total_rows,
+        returned_rows=len(rows),
+        pages_fetched=pages_fetched,
+        result_schema=result_schema,
+    )

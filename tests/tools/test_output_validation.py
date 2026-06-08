@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 from unittest.mock import AsyncMock, patch
 from mcp.server.fastmcp.utilities.func_metadata import func_metadata
+from dremioai.api.dremio.sql import QueryResult
 from dremioai.config import settings
 from dremioai.tools.tools import (
     GetUsefulSystemTableNames,
@@ -74,8 +75,8 @@ async def test_get_schema_of_table_validation():
 @pytest.mark.asyncio
 async def test_run_sql_query_json_safe_output():
     tool = RunSqlQuery()
-    df = pd.DataFrame(
-        [
+    qr = QueryResult(
+        rows=[
             {
                 "ts": pd.Timestamp("2024-01-02T03:04:05"),
                 "latency_ms": np.int64(150),
@@ -83,13 +84,17 @@ async def test_run_sql_query_json_safe_output():
                 "amount": Decimal("10.25"),
                 "maybe_null": pd.NA,
             }
-        ]
+        ],
+        total_rows=1,
+        returned_rows=1,
+        pages_fetched=1,
+        result_schema=None,
     )
 
     with patch(
-        "dremioai.tools.tools.sql.run_query", new_callable=AsyncMock
-    ) as mock_run_query:
-        mock_run_query.return_value = df
+        "dremioai.tools.tools.sql.run_query_capped", new_callable=AsyncMock
+    ) as mock_run_query_capped:
+        mock_run_query_capped.return_value = qr
         token = settings.push_settings_override(
             settings.Settings.model_validate({"dremio": {"uri": "https://test"}})
         )
@@ -102,3 +107,39 @@ async def test_run_sql_query_json_safe_output():
     assert "result" in result
     payload = json.dumps(result)
     assert "2024-01-02T03:04:05" in payload
+
+
+@pytest.mark.asyncio
+async def test_run_sql_query_byte_limit_truncates_validation():
+    tool = RunSqlQuery()
+    qr = QueryResult(
+        rows=[{"value": "a" * 80}, {"value": "b" * 80}],
+        total_rows=2,
+        returned_rows=2,
+        pages_fetched=1,
+        result_schema=None,
+    )
+
+    with patch(
+        "dremioai.tools.tools.sql.run_query_capped", new_callable=AsyncMock
+    ) as mock_run_query_capped:
+        mock_run_query_capped.return_value = qr
+        token = settings.push_settings_override(
+            settings.Settings.model_validate(
+                {
+                    "dremio": {
+                        "uri": "https://test",
+                        "max_result_rows": 500,
+                        "max_result_bytes": 100,
+                    }
+                }
+            )
+        )
+        try:
+            result = await tool.invoke("SELECT 1")
+        finally:
+            settings.pop_settings_override(token)
+
+    assert result["truncated"] is True
+    assert result["truncation_reason"] == "byte_limit"
+    assert result["returned_rows"] == 1

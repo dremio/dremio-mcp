@@ -79,6 +79,10 @@ async def test_metrics_format(mock_config_dir, logging_server, logging_level):
                 assert "# TYPE mcp_tool_invocations_total counter" in content
                 assert "# HELP mcp_tool_invocation_duration" in content
                 assert "# TYPE mcp_tool_invocation_duration histogram" in content
+                assert "# HELP mcp_runsql_total_rows" in content
+                assert "# TYPE mcp_runsql_total_rows histogram" in content
+                assert "# HELP mcp_runsql_response_bytes" in content
+                assert "# TYPE mcp_runsql_response_bytes histogram" in content
 
                 # But should NOT contain any actual metric values (lines with numbers)
                 lines = content.strip().split("\n")
@@ -125,3 +129,7 @@ async def test_metrics_with_tool_invocation(
                     "mcp_tool_invocations" in content
                     and "mcp_tool_invocation_duration" in content
                 )
+                assert "mcp_runsql_total_rows" in content
+                assert "mcp_runsql_returned_rows" in content
+                assert "mcp_runsql_response_bytes" in content
+                assert "mcp_runsql_pages_fetched" in content

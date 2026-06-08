@@ -58,7 +58,15 @@ from sqlglot import parse_one
 from sqlglot import expressions
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
-from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
+from dremioai.metrics.tool_metrics import (
+    invocation_counter,
+    invocation_duration,
+    sql_result_pages_fetched,
+    sql_result_response_bytes,
+    sql_result_returned_rows,
+    sql_result_total_rows,
+    sql_result_truncations,
+)
 from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
@@ -148,6 +156,10 @@ def _df_to_json_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     ]
 
 
+def _json_safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: _json_safe_value(value) for key, value in row.items()}
+
+
 class ProjectIdMiddleware(BaseHTTPMiddleware):
     pat = re.compile(r"/mcp/([\da-z-]+)(/?.*)")
     logger = log.logger("ProjectIdMiddleware")
@@ -167,7 +179,7 @@ class ProjectIdMiddleware(BaseHTTPMiddleware):
             ProjectIdMiddleware.project_id_context.set(m.group(1))
             FeatureFlagManager.set_project_id(m.group(1))
         else:
-            ProjectIdMiddleware.logger.debug(
+            ProjectIdMiddleware.logger.info(
                 f"Path {request.url.path} ({request.url!r}) doesn't match"
             )
 
@@ -369,11 +381,19 @@ class RunSqlQuery(Tools):
 
     @secured
     @with_metrics
-    async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
+    async def invoke(
+        self, query: str
+    ) -> Dict[str, Union[List[Dict[Any, Any]], str, bool, int]]:
         """Run a SQL query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
         If a DML query is not allowed, this will return an error.
+
+        Results are capped at max_result_rows rows (default 500) and max_result_bytes bytes
+        (default 200 KB). When truncated, the response includes 'truncated', 'total_rows',
+        'returned_rows', and 'truncation_reason' fields. To reduce result size, add LIMIT or
+        GROUP BY to your query. Configure limits via dremio.max_result_rows and
+        dremio.max_result_bytes settings. Set either to 0 for unlimited.
 
         Args:
         query: sql query
@@ -385,9 +405,53 @@ class RunSqlQuery(Tools):
                 "error": "Only SELECT queries are allowed. DML statements are not permitted.",
             }
         try:
-            query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
-            df = await sql.run_query(query=query, use_df=True)
-            return {"result": _df_to_json_records(df)}
+            tagged_query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            dremio_settings = settings.instance().dremio
+            max_rows = dremio_settings.get("max_result_rows")
+            if max_rows is None:
+                max_rows = 500
+            max_bytes = dremio_settings.get("max_result_bytes")
+            if max_bytes is None:
+                max_bytes = 204_800
+
+            qr = await sql.run_query_capped(query=tagged_query, max_rows=max_rows)
+            project_id = dremio_settings.project_id
+            sql_result_total_rows.labels(project_id=project_id).observe(qr.total_rows)
+            sql_result_pages_fetched.labels(project_id=project_id).observe(
+                qr.pages_fetched
+            )
+            records = []
+            response_bytes = 0
+            truncation_reason = "row_limit" if qr.truncated else None
+
+            for row in qr.rows:
+                record = _json_safe_row(row)
+                if max_bytes > 0:
+                    record_bytes = len(json.dumps(record).encode("utf-8"))
+                    if response_bytes + record_bytes > max_bytes:
+                        truncation_reason = "byte_limit"
+                        break
+                    response_bytes += record_bytes
+                records.append(record)
+
+            sql_result_returned_rows.labels(project_id=project_id).observe(len(records))
+            sql_result_response_bytes.labels(project_id=project_id).observe(
+                response_bytes
+            )
+
+            if truncation_reason:
+                sql_result_truncations.labels(
+                    project_id=project_id, reason=truncation_reason
+                ).inc()
+                return {
+                    "result": records,
+                    "truncated": True,
+                    "total_rows": qr.total_rows,
+                    "returned_rows": len(records),
+                    "truncation_reason": truncation_reason,
+                }
+
+            return {"result": records}
         except RuntimeError as e:
             return {
                 "error": str(e),

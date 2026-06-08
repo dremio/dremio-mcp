@@ -20,6 +20,7 @@ import asyncio
 import socket
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Dict, Any, Optional, Union, TextIO, List, Coroutine, Callable
 from unittest.mock import MagicMock
 from aiohttp import ClientSession, ClientResponseError
@@ -35,6 +36,11 @@ from pydantic import BaseModel, ConfigDict
 import uvicorn
 import threading
 from dremioai import log
+
+LARGE_SQL_MARKER = "MOCK_LARGE_SQL"
+LARGE_SQL_JOB_ID = "test-job-large"
+LARGE_SQL_TOTAL_ROWS = 1200
+LARGE_SQL_PAYLOAD_WIDTH = 256
 
 
 class MockResponse:
@@ -142,8 +148,9 @@ class HttpMockFramework:
 
     def _get_mock_response(self, url: str, method: str = "GET") -> MockResponse:
         """Get mock response for a URL"""
+        parsed_path = urlparse(url).path
         for endpoint, (body, status) in self.mock_responses.items():
-            if re.search(endpoint, url):
+            if re.search(endpoint, url) or re.search(endpoint, parsed_path):
                 return MockResponse(body, status=status)
 
         # Default response if no mock found
@@ -258,12 +265,60 @@ def create_catch_all_handler(mock_data: Optional[OrderedDict[str, str]] = None):
         for endpoint, filename in mock_data.items():
             http_framework.load_mock_data(endpoint, filename)
 
+    def _large_sql_submission() -> Dict[str, Any]:
+        return {"id": LARGE_SQL_JOB_ID}
+
+    def _large_sql_status() -> Dict[str, Any]:
+        return {
+            "jobState": "COMPLETED",
+            "rowCount": LARGE_SQL_TOTAL_ROWS,
+            "errorMessage": "",
+            "queryType": "REST",
+            "cancellationReason": "",
+        }
+
+    def _large_sql_results(offset: int, limit: int) -> Dict[str, Any]:
+        start = max(offset, 0)
+        stop = min(offset + max(limit, 0), LARGE_SQL_TOTAL_ROWS)
+        rows = []
+        for idx in range(start, stop):
+            rows.append(
+                {
+                    "row_id": idx,
+                    "payload": f"row-{idx}-" + ("x" * LARGE_SQL_PAYLOAD_WIDTH),
+                }
+            )
+        return {
+            "rows": rows,
+            "schema": [
+                {"name": "row_id", "type": {"name": "INTEGER"}},
+                {"name": "payload", "type": {"name": "VARCHAR"}},
+            ],
+            "rowCount": len(rows),
+        }
+
     async def handler(request: Request):
         """Handle the request using mock framework or default response."""
+        if request.url.path.endswith("/sql") and request.method == "POST":
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            if LARGE_SQL_MARKER in str(body.get("sql", "")):
+                return JSONResponse(_large_sql_submission(), status_code=200)
+
+        if request.url.path.endswith(f"/job/{LARGE_SQL_JOB_ID}") and request.method == "GET":
+            return JSONResponse(_large_sql_status(), status_code=200)
+
+        if request.url.path.endswith(f"/job/{LARGE_SQL_JOB_ID}/results") and request.method == "GET":
+            offset = int(request.query_params.get("offset", "0"))
+            limit = int(request.query_params.get("limit", "500"))
+            return JSONResponse(_large_sql_results(offset, limit), status_code=200)
+
         if http_framework:
             # Use the HTTP framework to get a mock response
             mock_response = http_framework._get_mock_response(
-                request.url.path, request.method
+                str(request.url), request.method
             )
 
             response_data = await mock_response.json()
