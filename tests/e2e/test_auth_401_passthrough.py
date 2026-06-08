@@ -126,8 +126,10 @@ async def test_dremio_401_is_swallowed_as_200_tool_result(
                 result1: CallToolResult = await session.call_tool(
                     "RunSqlQuery", {"query": "SELECT 1"}
                 )
-                assert result1.structuredContent is not None
-                assert result1.structuredContent["result"]["result"][0]["test_column"] == 1
+                assert not result1.isError
+                assert result1.content and len(result1.content) > 0
+                data = json.loads(result1.content[0].text)
+                assert data["result"][0]["test_column"] == 1
 
                 # Second query: Dremio returns 401, but MCP client sees 200
                 result2: CallToolResult = await session.call_tool(
