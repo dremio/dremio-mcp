@@ -285,15 +285,16 @@ async def run_query_capped(
 ) -> QueryResult:
     """Submit a query and fetch at most *max_rows* rows (0 = unlimited)."""
     client = AsyncHttpClient()
+    dremio_settings = settings.instance().dremio
     if not isinstance(query, Query):
         engine_name = (
-            settings.instance().dremio.wlm.engine_name
-            if settings.instance().dremio.wlm is not None
+            dremio_settings.wlm.engine_name
+            if dremio_settings is not None and dremio_settings.wlm is not None
             else None
         )
         query = Query(sql=query, engineName=engine_name)
 
-    project_id = settings.instance().dremio.project_id
+    project_id = dremio_settings.project_id if dremio_settings is not None else None
     endpoint = f"/v0/projects/{project_id}" if project_id else "/api/v3"
     qs: QuerySubmission = await client.post(
         f"{endpoint}/sql",
