@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import json
 import os
 import subprocess
 import gc
@@ -60,8 +61,9 @@ async def test_run_sql_query_large_mock_soak(
                         "RunSqlQuery",
                         {"query": f"SELECT 1 /* {LARGE_SQL_MARKER} */"},
                     )
-                    assert result is not None and result.structuredContent is not None
-                    payload = result.structuredContent["result"]
+                    assert result is not None
+                    assert result.structuredContent is None
+                    payload = json.loads(result.content[0].text)
                     assert len(payload["result"]) == 1200
                     del payload
                     del result

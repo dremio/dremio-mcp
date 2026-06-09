@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import json
 import pytest
 from mcp.types import CallToolResult
 
@@ -38,9 +39,10 @@ async def test_run_sql_query_large_mock_fetches_multiple_pages(
                 {"query": f"SELECT 1 /* {LARGE_SQL_MARKER} */"},
             )
 
-        assert result is not None and result.structuredContent is not None
+        assert result is not None
         assert not result.isError
-        payload = result.structuredContent["result"]
+        assert result.structuredContent is None
+        payload = json.loads(result.content[0].text)
         assert payload["result"][0]["row_id"] == 0
         assert payload["result"][-1]["row_id"] == 1199
         assert len(payload["result"]) == 1200
@@ -73,11 +75,13 @@ async def test_run_sql_query_large_mock_truncation_sets_tool_error(
                 {"query": f"SELECT 1 /* {LARGE_SQL_MARKER} */"},
             )
 
-        assert result is not None and result.structuredContent is not None
+        assert result is not None
         assert result.isError
-        payload = result.structuredContent["result"]
+        assert result.structuredContent is None
+        payload = json.loads(result.content[0].text)
         assert payload["truncated"] is True
         assert payload["truncation_reason"] == "row_limit"
-        assert payload["returned_rows"] == 1000
+        assert payload["returned_rows"] == 0
         assert payload["total_rows"] == 1200
+        assert payload["result"] == []
         assert "returned too much data" in result.content[0].text

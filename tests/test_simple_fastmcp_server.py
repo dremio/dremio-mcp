@@ -113,8 +113,9 @@ class TestSimpleFastMCPServer:
                 assert result is not None
                 assert isinstance(result, CallToolResult)
                 assert not result.isError
-                assert result.structuredContent is not None
-                assert result.structuredContent["result"]["result"][0]["test_column"] == 1
+                assert result.structuredContent is None
+                payload = json.loads(result.content[0].text)
+                assert payload["result"][0]["test_column"] == 1
                 print(f"✓ Successfully invoked RunSqlQuery tool")
 
                 # Verify the mock was called

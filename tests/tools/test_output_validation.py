@@ -106,8 +106,8 @@ async def test_run_sql_query_json_safe_output():
 
     assert isinstance(result, CallToolResult)
     assert not result.isError
-    assert result.structuredContent is not None
-    payload = json.dumps(result.structuredContent["result"])
+    assert result.structuredContent is None
+    payload = result.content[0].text
     assert "2024-01-02T03:04:05" in payload
 
 
@@ -144,9 +144,10 @@ async def test_run_sql_query_byte_limit_truncates_validation():
 
     assert isinstance(result, CallToolResult)
     assert result.isError
-    assert result.structuredContent is not None
-    payload = result.structuredContent["result"]
+    assert result.structuredContent is None
+    payload = json.loads(result.content[0].text)
     assert payload["truncated"] is True
     assert payload["truncation_reason"] == "byte_limit"
-    assert payload["returned_rows"] == 1
+    assert payload["returned_rows"] == 0
+    assert payload["result"] == []
     assert "returned too much data" in result.content[0].text

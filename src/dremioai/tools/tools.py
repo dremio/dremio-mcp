@@ -174,7 +174,9 @@ def _json_payload_bytes(payload: Any) -> int:
     return len(rendered)
 
 
-def _call_tool_result(payload: Dict[str, Any], *, is_error: bool) -> CallToolResult:
+def _call_tool_result(
+    payload: Dict[str, Any], *, is_error: bool, include_structured: bool = True
+) -> CallToolResult:
     return CallToolResult(
         content=[
             TextContent(
@@ -184,7 +186,7 @@ def _call_tool_result(payload: Dict[str, Any], *, is_error: bool) -> CallToolRes
                 ),
             )
         ],
-        structuredContent={"result": payload},
+        structuredContent={"result": payload} if include_structured else None,
         isError=is_error,
     )
 
@@ -459,11 +461,10 @@ class RunSqlQuery(Tools):
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
         If a DML query is not allowed, this will return an error.
 
-        Results are capped at max_result_rows rows (default 500) and max_result_bytes bytes
-        (default 200 KB). When truncated, the response includes 'truncated', 'total_rows',
-        'returned_rows', and 'truncation_reason' fields. To reduce result size, add LIMIT or
-        GROUP BY to your query. Configure limits via dremio.max_result_rows and
-        dremio.max_result_bytes settings. Set either to 0 for unlimited.
+        Results are capped at server-decided row and byte limits. If the query returns too much
+        data, this tool returns an error instructing the client to retry with a narrower query,
+        for example by selecting fewer columns, filtering more aggressively, aggregating, or
+        fetching the data in stages.
 
         Args:
         query: sql query
@@ -476,6 +477,7 @@ class RunSqlQuery(Tools):
                     "error": "Only SELECT queries are allowed. DML statements are not permitted.",
                 },
                 is_error=True,
+                include_structured=False,
             )
         try:
             tagged_query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
@@ -523,16 +525,19 @@ class RunSqlQuery(Tools):
                             "different strategy that reduces the selected data, "
                             "such as adding LIMIT, filtering, or aggregating."
                         ),
-                        "result": records,
+                        "result": [],
                         "truncated": True,
                         "total_rows": qr.total_rows,
-                        "returned_rows": len(records),
+                        "returned_rows": 0,
                         "truncation_reason": truncation_reason,
                     },
                     is_error=True,
+                    include_structured=False,
                 )
 
-            return _call_tool_result({"result": records}, is_error=False)
+            return _call_tool_result(
+                {"result": records}, is_error=False, include_structured=False
+            )
         except RuntimeError as e:
             return _call_tool_result(
                 {
@@ -540,6 +545,7 @@ class RunSqlQuery(Tools):
                     "message": "The query failed. Please check the syntax and try again",
                 },
                 is_error=True,
+                include_structured=False,
             )
 
 
