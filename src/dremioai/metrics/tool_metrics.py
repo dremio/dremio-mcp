@@ -28,6 +28,18 @@ invocation_duration = Histogram(
     ["tool", "project_id"],
     registry=_registry,
 )
+tool_response_bytes = Histogram(
+    "mcp_tool_response_bytes",
+    "UTF-8 serialized response payload bytes returned by a tool invocation",
+    ["tool", "project_id"],
+    registry=_registry,
+)
+tool_result_errors = Counter(
+    "mcp_tool_result_errors",
+    "Number of tool invocations that returned or raised an error",
+    ["tool", "project_id"],
+    registry=_registry,
+)
 sql_result_total_rows = Histogram(
     "mcp_runsql_total_rows",
     "Total row count reported by Dremio jobs invoked via RunSqlQuery",

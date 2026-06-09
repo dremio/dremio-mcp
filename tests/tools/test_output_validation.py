@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from unittest.mock import AsyncMock, patch
+from mcp.types import CallToolResult
 from mcp.server.fastmcp.utilities.func_metadata import func_metadata
 from dremioai.api.dremio.sql import QueryResult
 from dremioai.config import settings
@@ -103,9 +104,10 @@ async def test_run_sql_query_json_safe_output():
         finally:
             settings.pop_settings_override(token)
 
-    assert isinstance(result, dict)
-    assert "result" in result
-    payload = json.dumps(result)
+    assert isinstance(result, CallToolResult)
+    assert not result.isError
+    assert result.structuredContent is not None
+    payload = json.dumps(result.structuredContent["result"])
     assert "2024-01-02T03:04:05" in payload
 
 
@@ -140,6 +142,11 @@ async def test_run_sql_query_byte_limit_truncates_validation():
         finally:
             settings.pop_settings_override(token)
 
-    assert result["truncated"] is True
-    assert result["truncation_reason"] == "byte_limit"
-    assert result["returned_rows"] == 1
+    assert isinstance(result, CallToolResult)
+    assert result.isError
+    assert result.structuredContent is not None
+    payload = result.structuredContent["result"]
+    assert payload["truncated"] is True
+    assert payload["truncation_reason"] == "byte_limit"
+    assert payload["returned_rows"] == 1
+    assert "returned too much data" in result.content[0].text

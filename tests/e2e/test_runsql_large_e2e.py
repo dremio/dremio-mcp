@@ -39,6 +39,7 @@ async def test_run_sql_query_large_mock_fetches_multiple_pages(
             )
 
         assert result is not None and result.structuredContent is not None
+        assert not result.isError
         payload = result.structuredContent["result"]
         assert payload["result"][0]["row_id"] == 0
         assert payload["result"][-1]["row_id"] == 1199
@@ -53,3 +54,30 @@ async def test_run_sql_query_large_mock_fetches_multiple_pages(
         assert result_fetches[0].query_params == {"offset": "0", "limit": "500"}
         assert result_fetches[1].query_params == {"offset": "500", "limit": "500"}
         assert result_fetches[2].query_params == {"offset": "1000", "limit": "200"}
+
+
+@pytest.mark.asyncio
+async def test_run_sql_query_large_mock_truncation_sets_tool_error(
+    mock_config_dir, logging_server, logging_level
+):
+    async with http_streamable_mcp_server(
+        logging_server,
+        logging_level,
+        dremio_overrides={"max_result_rows": 1000, "max_result_bytes": 0},
+    ) as sf:
+        async with http_streamable_client_server(
+            sf.mcp_server, token="my-token"
+        ) as session:
+            result: CallToolResult = await session.call_tool(
+                "RunSqlQuery",
+                {"query": f"SELECT 1 /* {LARGE_SQL_MARKER} */"},
+            )
+
+        assert result is not None and result.structuredContent is not None
+        assert result.isError
+        payload = result.structuredContent["result"]
+        assert payload["truncated"] is True
+        assert payload["truncation_reason"] == "row_limit"
+        assert payload["returned_rows"] == 1000
+        assert payload["total_rows"] == 1200
+        assert "returned too much data" in result.content[0].text
