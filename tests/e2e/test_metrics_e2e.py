@@ -113,7 +113,7 @@ async def test_metrics_with_tool_invocation(
             result: CallToolResult = await session.call_tool(
                 "RunSqlQuery", {"query": "SELECT 1"}
             )
-            assert result is not None and result.structuredContent is not None
+            assert result is not None and not result.isError
 
         # Check metrics after tool invocation
         async with httpx.AsyncClient() as client:

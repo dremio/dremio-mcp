@@ -43,6 +43,7 @@ from mcp.server.auth.middleware.auth_context import (
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FunctionResource
@@ -270,9 +271,21 @@ def protected_resource_path_from_request(
 def build_resource_metadata_url(
     request: Request, resource_path: str | None = None
 ) -> str:
+    if resource_path is None:
+        # ProjectIdMiddleware rewrites /mcp/{project_id}[/...] to /mcp[/...] in-place,
+        # so request.url.path has already lost the project_id by the time this is called.
+        # Use the context vars stored by the middleware to reconstruct the original path.
+        if project_id := ProjectIdMiddleware.get_project_id():
+            resource_path = f"/mcp/{project_id}{ProjectIdMiddleware.get_remaining()}"
+        else:
+            log.logger("build_resource_metadata_url").warning(
+                "No project_id in context; falling back to request path",
+                path=request.url.path,
+            )
+            resource_path = request.url.path
     return (
         f"{request_base_url(request)}/.well-known/oauth-protected-resource"
-        f"{normalize_resource_path(resource_path or request.url.path)}"
+        f"{normalize_resource_path(resource_path)}"
     )
 
 
@@ -616,6 +629,7 @@ def init(
     mock: bool = False,
     mock_token_expiry: int = 3600,
     mock_refresh_token_expiry: int = 86400,
+    disable_dns_rebinding_protection: bool = False,
 ) -> FastMCP:
     mcp_cls = FastMCP if transport == Transports.stdio else FastMCPServerWithAuthToken
     log.logger("init").info(
@@ -624,6 +638,15 @@ def init(
     opts = {"log_level": "DEBUG", "debug": True, "lifespan": _server_lifespan}
     if transport == Transports.streamable_http:
         opts["stateless_http"] = True
+        if disable_dns_rebinding_protection:
+            # SDK 1.14+ auto-enables DNS rebinding protection when bound to
+            # localhost, which rejects any Host header that isn't 127.0.0.1
+            # /localhost/::1. That breaks reverse-proxy and tunneled access
+            # patterns. Auth is enforced separately via OAuth/PAT, so only
+            # disable when explicitly requested via --disable-dns-rebinding-protection.
+            opts["transport_security"] = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False
+            )
     if port is not None:
         opts["port"] = port
     if host is not None:
@@ -675,6 +698,7 @@ def init(
                 readOnlyHint=not (is_sql_tool and allow_dml),
                 destructiveHint=bool(is_sql_tool and allow_dml),
             ),
+            structured_output=False,
         )
         if tool_instance.dynamic_description and isinstance(
             mcp, FastMCPServerWithAuthToken
@@ -684,17 +708,22 @@ def init(
     for resource in tools.get_resources(For=mode):
         resource_instance = resource()
         mcp.add_resource(
-            FunctionResource(
-                uri=AnyUrl(resource_instance.resource_path),
+            FunctionResource.from_function(
+                resource_instance.invoke,
+                uri=resource_instance.resource_path,
                 name=resource.__name__,
                 description=resource.__doc__,
                 mime_type="application/json",
-                fn=resource_instance.invoke,
             )
         )
     # if mode is None or (mode & tools.ToolType.FOR_SELF) != 0:
     mcp.add_prompt(
-        Prompt.from_function(tools.system_prompt, "System Prompt", "System Prompt")
+        Prompt.from_function(
+            tools.system_prompt,
+            name="System Prompt",
+            title="System Prompt",
+            description="System-level instructions for Dremio analysis tasks",
+        )
     )
 
     if not mock:
@@ -879,6 +908,16 @@ def main(
         Optional[int],
         Option(help="Mock mode: refresh token expiry in seconds"),
     ] = 86400,
+    disable_dns_rebinding_protection: Annotated[
+        Optional[bool],
+        Option(
+            help=(
+                "Disable DNS rebinding protection for the streamable-HTTP transport. "
+                "Use when running behind a reverse proxy or port-forwarding tunnel "
+                "where the Host header differs from 127.0.0.1/localhost."
+            )
+        ),
+    ] = False,
 ):
     log.configure(enable_json_logging=enable_json_logging, to_file=log_to_file)
     log.set_level(log_level)
@@ -929,6 +968,7 @@ def main(
         mock=mock,
         mock_token_expiry=mock_token_expiry,
         mock_refresh_token_expiry=mock_refresh_token_expiry,
+        disable_dns_rebinding_protection=disable_dns_rebinding_protection,
     )
 
     # Create metrics server based on configuration

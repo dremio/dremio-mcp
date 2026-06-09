@@ -96,9 +96,9 @@ def reset_sse_starlette_app_status():
         # Import and reset the global state
         from sse_starlette.sse import AppStatus
 
-        AppStatus.should_exit_event = None
-    except ImportError:
-        # sse_starlette might not be available in all test environments
+        if hasattr(AppStatus, "should_exit_event"):
+            AppStatus.should_exit_event = None
+    except (ImportError, AttributeError):
         pass
 
     yield
@@ -107,8 +107,9 @@ def reset_sse_starlette_app_status():
     try:
         from sse_starlette.sse import AppStatus
 
-        AppStatus.should_exit_event = None
-    except ImportError:
+        if hasattr(AppStatus, "should_exit_event"):
+            AppStatus.should_exit_event = None
+    except (ImportError, AttributeError):
         pass
 
 

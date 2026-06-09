@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import json
 import uuid
 
 import httpx
@@ -43,10 +44,10 @@ async def test_tool_pat(mock_config_dir, logging_server, logging_level, project_
             result: CallToolResult = await session.call_tool(
                 "RunSqlQuery", {"query": "SELECT 1"}
             )
-            assert (
-                result is not None and result.structuredContent is not None
-            ), f"Error running tool {result}"
-            assert result.structuredContent["result"]["result"][0]["test_column"] == 1
+            assert result is not None and not result.isError, f"Error running tool {result}"
+            assert result.content and len(result.content) > 0
+            data = json.loads(result.content[0].text)
+            assert data["result"][0]["test_column"] == 1
             from rich import print as pp
 
             for le in logging_server.logs():
