@@ -394,7 +394,7 @@ class GetFailedJobDetails(Tools):
             where to_date(submitted_ts) >= current_date - interval '7' day
             and status in ('CANCELED', 'FAILED')"""
         try:
-            jdf = await sql.run_query(query=query, use_df=True)
+            jdf = await sql.run_query(query=query, use_df=True, with_guardrails=False)
             jdf["date"] = jdf["startTime"].dt.date
 
             # lookup only those who have erorrs to get detailed error messages
@@ -461,7 +461,7 @@ class RunSqlQuery(Tools):
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
         If a DML query is not allowed, this will return an error.
 
-        Results are capped at server-decided row and byte limits. If the query returns too much
+        Results are capped at a server-decided response size limit. If the query returns too much
         data, this tool returns an error instructing the client to retry with a narrower query,
         for example by selecting fewer columns, filtering more aggressively, aggregating, or
         fetching the data in stages.
@@ -482,14 +482,11 @@ class RunSqlQuery(Tools):
         try:
             tagged_query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
             dremio_settings = settings.instance().dremio
-            max_rows = dremio_settings.get("max_result_rows")
-            if max_rows is None:
-                max_rows = 500
             max_bytes = dremio_settings.get("max_result_bytes")
             if max_bytes is None:
                 max_bytes = 204_800
 
-            qr = await sql.run_query_capped(query=tagged_query, max_rows=max_rows)
+            qr = await sql.run_query(query=tagged_query, with_guardrails=True)
             project_id = dremio_settings.project_id
             sql_result_total_rows.labels(project_id=project_id).observe(qr.total_rows)
             sql_result_pages_fetched.labels(project_id=project_id).observe(
@@ -497,7 +494,7 @@ class RunSqlQuery(Tools):
             )
             records = []
             response_bytes = 0
-            truncation_reason = "row_limit" if qr.truncated else None
+            truncation_reason = None
 
             for row in qr.rows:
                 record = _json_safe_row(row)

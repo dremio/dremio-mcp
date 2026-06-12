@@ -154,7 +154,7 @@ async def test_error_metrics_with_truncated_tool_result(
     async with http_streamable_mcp_server(
         logging_server,
         logging_level,
-        dremio_overrides={"max_result_rows": 1, "max_result_bytes": 0},
+        dremio_overrides={"max_result_bytes": 100},
     ) as sf:
         import asyncio
 

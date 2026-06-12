@@ -246,6 +246,18 @@ async def get_results(
 
 
 async def run_query(
+    query: Union[Query, str], use_df: bool = False, with_guardrails: bool = True
+) -> Union[JobResultsWrapper, pd.DataFrame, "QueryResult"]:
+    if with_guardrails:
+        qr = await _run_query_result(query=query)
+        if use_df:
+            return _query_result_to_df(qr)
+        return qr
+
+    return await _run_query_uncapped(query=query, use_df=use_df)
+
+
+async def _run_query_uncapped(
     query: Union[Query, str], use_df: bool = False
 ) -> Union[JobResultsWrapper, pd.DataFrame]:
     client = AsyncHttpClient()
@@ -280,10 +292,22 @@ class QueryResult:
         return self.returned_rows < self.total_rows
 
 
-async def run_query_capped(
-    query: Union[Query, str], max_rows: int = 500
-) -> QueryResult:
-    """Submit a query and fetch at most *max_rows* rows (0 = unlimited)."""
+def _query_result_to_df(qr: QueryResult) -> pd.DataFrame:
+    if not qr.rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(
+        data=qr.rows,
+        columns=[rs.name for rs in qr.result_schema] if qr.result_schema else None,
+    )
+    if qr.result_schema:
+        for rs in qr.result_schema:
+            if rs.type.name == "TIMESTAMP":
+                df[rs.name] = pd.to_datetime(df[rs.name])
+    return df
+
+
+async def _run_query_result(query: Union[Query, str]) -> QueryResult:
     client = AsyncHttpClient()
     dremio_settings = settings.instance().dremio
     if not isinstance(query, Query):
@@ -313,7 +337,7 @@ async def run_query_capped(
             result_schema=None,
         )
 
-    fetch_rows = total_rows if max_rows == 0 else min(total_rows, max_rows)
+    fetch_rows = total_rows
     page_size = min(500, fetch_rows)
     rows: List[Dict[str, Any]] = []
     result_schema: Optional[List[ResultSchema]] = None

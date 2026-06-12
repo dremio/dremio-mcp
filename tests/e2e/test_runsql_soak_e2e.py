@@ -53,7 +53,7 @@ async def test_run_sql_query_large_mock_soak(
         async with http_streamable_mcp_server(
             logging_server,
             logging_level,
-            dremio_overrides={"max_result_rows": 1200, "max_result_bytes": 0},
+            dremio_overrides={"max_result_bytes": 0},
         ) as sf:
             async with http_streamable_client_server(sf.mcp_server, token="my-token") as session:
                 for i in range(1, iterations + 1):

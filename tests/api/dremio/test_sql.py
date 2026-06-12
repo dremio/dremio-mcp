@@ -23,10 +23,11 @@ from dremioai.api.dremio.sql import (
     JobResults,
     JobResultsWrapper,
     JobState,
+    QueryResult,
     QuerySubmission,
     QueryType,
     get_results,
-    run_query_capped,
+    run_query,
 )
 from dremioai.config import settings
 
@@ -96,7 +97,7 @@ def _make_job_results(rows):
 
 
 @pytest.mark.asyncio
-async def test_run_query_capped_under_limit():
+async def test_run_query_with_guardrails_under_limit():
     rows = [{"a": str(i)} for i in range(3)]
     job = _make_completed_job(3)
     client = AsyncMock()
@@ -110,7 +111,7 @@ async def test_run_query_capped_under_limit():
             new=AsyncMock(return_value=_make_job_results(rows)),
         ) as mock_fetch,
     ):
-        qr = await run_query_capped("SELECT 1", max_rows=10)
+        qr = await run_query("SELECT 1")
 
     assert qr.rows == rows
     assert qr.total_rows == 3
@@ -121,8 +122,8 @@ async def test_run_query_capped_under_limit():
 
 
 @pytest.mark.asyncio
-async def test_run_query_capped_row_limit_hit():
-    rows = [{"a": str(i)} for i in range(10)]
+async def test_run_query_with_guardrails_fetches_all_rows():
+    rows = [{"a": str(i)} for i in range(100)]
     job = _make_completed_job(100)
     client = AsyncMock()
     client.post.return_value = QuerySubmission(id="job-1")
@@ -135,18 +136,18 @@ async def test_run_query_capped_row_limit_hit():
             new=AsyncMock(return_value=_make_job_results(rows)),
         ) as mock_fetch,
     ):
-        qr = await run_query_capped("SELECT 1", max_rows=10)
+        qr = await run_query("SELECT 1")
 
-    assert qr.truncated is True
+    assert qr.truncated is False
     assert qr.total_rows == 100
-    assert qr.returned_rows == 10
+    assert qr.returned_rows == 100
     assert qr.pages_fetched == 1
-    assert len(qr.rows) == 10
+    assert len(qr.rows) == 100
     assert mock_fetch.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_run_query_capped_fetches_sequential_pages():
+async def test_run_query_with_guardrails_fetches_sequential_pages():
     job = _make_completed_job(700)
     page1 = _make_job_results([{"a": str(i)} for i in range(500)])
     page2 = _make_job_results([{"a": str(i)} for i in range(500, 700)])
@@ -161,7 +162,7 @@ async def test_run_query_capped_fetches_sequential_pages():
             new=AsyncMock(side_effect=[page1, page2]),
         ) as mock_fetch,
     ):
-        qr = await run_query_capped("SELECT 1", max_rows=700)
+        qr = await run_query("SELECT 1")
 
     assert qr.truncated is False
     assert qr.returned_rows == 700
@@ -169,3 +170,64 @@ async def test_run_query_capped_fetches_sequential_pages():
     assert mock_fetch.await_count == 2
     assert mock_fetch.await_args_list[0].args[-2:] == (0, 500)
     assert mock_fetch.await_args_list[1].args[-2:] == (500, 200)
+
+
+@pytest.mark.asyncio
+async def test_run_query_uses_guardrails_by_default():
+    rows = [{"a": str(i)} for i in range(3)]
+    job = _make_completed_job(3)
+    client = AsyncMock()
+    client.post.return_value = QuerySubmission(id="job-1")
+
+    settings.set_base_settings(
+        settings.Settings.model_validate(
+            {"dremio": {"uri": "https://test.dremio.cloud"}}
+        )
+    )
+
+    with (
+        patch("dremioai.api.dremio.sql.AsyncHttpClient", return_value=client),
+        patch("dremioai.api.dremio.sql._wait_for_job", new=AsyncMock(return_value=job)),
+        patch(
+            "dremioai.api.dremio.sql._fetch_results",
+            new=AsyncMock(return_value=_make_job_results(rows)),
+        ),
+    ):
+        qr = await run_query("SELECT 1")
+
+    assert isinstance(qr, QueryResult)
+    assert qr.rows == rows
+    assert qr.returned_rows == 3
+
+
+@pytest.mark.asyncio
+async def test_run_query_can_disable_guardrails_for_full_results():
+    rows = [{"a": str(i)} for i in range(3)]
+    running = Job(jobState=JobState.RUNNING, queryType=QueryType.REST)
+    complete = Job(
+        jobState=JobState.COMPLETED,
+        rowCount=3,
+        queryType=QueryType.REST,
+    )
+    client = AsyncMock()
+    client.post.return_value = QuerySubmission(id="job-1")
+    client.get.side_effect = [running, complete]
+
+    settings.set_base_settings(
+        settings.Settings.model_validate(
+            {"dremio": {"uri": "https://test.dremio.cloud", "api": {"polling_interval": 0}}}
+        )
+    )
+
+    with (
+        patch("asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "dremioai.api.dremio.sql._fetch_results",
+            new=AsyncMock(return_value=_make_job_results(rows)),
+        ),
+        patch("dremioai.api.dremio.sql.AsyncHttpClient", return_value=client),
+    ):
+        result = await run_query("SELECT 1", with_guardrails=False)
+
+    assert isinstance(result, JobResultsWrapper)
+    assert list(result)[0].rows == rows

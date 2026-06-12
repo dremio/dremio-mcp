@@ -94,9 +94,9 @@ class TestSimpleFastMCPServer:
 
             # Test RunSqlQuery tool with proper mocking
             with patch(
-                "dremioai.api.dremio.sql.run_query_capped", new_callable=AsyncMock
-            ) as mock_run_query_capped:
-                mock_run_query_capped.return_value = QueryResult(
+                "dremioai.api.dremio.sql.run_query", new_callable=AsyncMock
+            ) as mock_run_query:
+                mock_run_query.return_value = QueryResult(
                     rows=[{"test_column": 1}],
                     total_rows=1,
                     returned_rows=1,
@@ -119,7 +119,7 @@ class TestSimpleFastMCPServer:
                 print(f"✓ Successfully invoked RunSqlQuery tool")
 
                 # Verify the mock was called
-                mock_run_query_capped.assert_called_once()
+                mock_run_query.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_tool_invocation_with_basic_tools(self):

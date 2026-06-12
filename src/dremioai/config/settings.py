@@ -63,6 +63,7 @@ from datetime import datetime
 from types import NoneType
 from dremioai import log
 from dremioai.config.feature_flags import FeatureFlagManager
+from dataclasses import dataclass
 
 ProjectId = Union[UUID, Literal["DREMIO_DYNAMIC"]]
 
@@ -85,20 +86,22 @@ class NoFlag:
 
     pass
 
-
 class RuntimeMutable:
     """Mark a field as safe to update from a runtime config reload."""
-
     pass
 
 
-def _has_no_flag(model_cls: type, field_name: str) -> bool:
+@dataclass
+class FlagName:
+    name: str = None
+
+def _has_no_flag(model_cls: type[BaseModel], field_name: str) -> bool:
     """Check if a field has the NoFlag annotation marker."""
     info = model_cls.model_fields.get(field_name)
     return info is not None and any(isinstance(m, NoFlag) for m in info.metadata)
 
 
-def _has_runtime_mutable(model_cls: type, field_name: str) -> bool:
+def _has_runtime_mutable(model_cls: type[BaseModel], field_name: str) -> bool:
     """Check if a field has the RuntimeMutable annotation marker."""
     info = model_cls.model_fields.get(field_name)
     return info is not None and any(
@@ -309,13 +312,9 @@ class Dremio(FlagAwareModel):
         "Settable via LaunchDarkly. Default: 60.",
     )
     wlm: Optional[Wlm] = None
-    max_result_rows: Annotated[Optional[int], RuntimeMutable()] = Field(
-        default=500,
-        description="Maximum number of rows returned by RunSqlQuery. Use 0 for unlimited.",
-    )
     max_result_bytes: Annotated[Optional[int], RuntimeMutable()] = Field(
         default=204_800,
-        description="Maximum UTF-8 byte size of RunSqlQuery results. Enforced after row cap. Use 0 for unlimited.",
+        description="Maximum UTF-8 byte size of RunSqlQuery results returned to the MCP client. Use 0 for unlimited.",
     )
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None

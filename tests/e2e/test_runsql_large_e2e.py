@@ -29,7 +29,7 @@ async def test_run_sql_query_large_mock_fetches_multiple_pages(
     async with http_streamable_mcp_server(
         logging_server,
         logging_level,
-        dremio_overrides={"max_result_rows": 1200, "max_result_bytes": 0},
+        dremio_overrides={"max_result_bytes": 0},
     ) as sf:
         async with http_streamable_client_server(
             sf.mcp_server, token="my-token"
@@ -59,13 +59,13 @@ async def test_run_sql_query_large_mock_fetches_multiple_pages(
 
 
 @pytest.mark.asyncio
-async def test_run_sql_query_large_mock_truncation_sets_tool_error(
+async def test_run_sql_query_large_mock_byte_truncation_sets_tool_error(
     mock_config_dir, logging_server, logging_level
 ):
     async with http_streamable_mcp_server(
         logging_server,
         logging_level,
-        dremio_overrides={"max_result_rows": 1000, "max_result_bytes": 0},
+        dremio_overrides={"max_result_bytes": 100},
     ) as sf:
         async with http_streamable_client_server(
             sf.mcp_server, token="my-token"
@@ -80,7 +80,7 @@ async def test_run_sql_query_large_mock_truncation_sets_tool_error(
         assert result.structuredContent is None
         payload = json.loads(result.content[0].text)
         assert payload["truncated"] is True
-        assert payload["truncation_reason"] == "row_limit"
+        assert payload["truncation_reason"] == "byte_limit"
         assert payload["returned_rows"] == 0
         assert payload["total_rows"] == 1200
         assert payload["result"] == []

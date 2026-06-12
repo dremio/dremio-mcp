@@ -93,9 +93,9 @@ async def test_run_sql_query_json_safe_output():
     )
 
     with patch(
-        "dremioai.tools.tools.sql.run_query_capped", new_callable=AsyncMock
-    ) as mock_run_query_capped:
-        mock_run_query_capped.return_value = qr
+        "dremioai.tools.tools.sql.run_query", new_callable=AsyncMock
+    ) as mock_run_query:
+        mock_run_query.return_value = qr
         token = settings.push_settings_override(
             settings.Settings.model_validate({"dremio": {"uri": "https://test"}})
         )
@@ -123,15 +123,14 @@ async def test_run_sql_query_byte_limit_truncates_validation():
     )
 
     with patch(
-        "dremioai.tools.tools.sql.run_query_capped", new_callable=AsyncMock
-    ) as mock_run_query_capped:
-        mock_run_query_capped.return_value = qr
+        "dremioai.tools.tools.sql.run_query", new_callable=AsyncMock
+    ) as mock_run_query:
+        mock_run_query.return_value = qr
         token = settings.push_settings_override(
             settings.Settings.model_validate(
                 {
                     "dremio": {
                         "uri": "https://test",
-                        "max_result_rows": 500,
                         "max_result_bytes": 100,
                     }
                 }
