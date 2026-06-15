@@ -55,9 +55,20 @@ from io import StringIO
 import json
 from sqlglot import parse_one
 from sqlglot import expressions
+from mcp.types import CallToolResult, TextContent
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
-from dremioai.metrics.tool_metrics import invocation_counter, invocation_duration
+from dremioai.metrics.tool_metrics import (
+    invocation_counter,
+    invocation_duration,
+    tool_response_bytes,
+    tool_result_errors,
+    sql_result_pages_fetched,
+    sql_result_response_bytes,
+    sql_result_returned_rows,
+    sql_result_total_rows,
+    sql_result_truncations,
+)
 from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
@@ -126,6 +137,8 @@ class Tools:
 def _json_safe_value(value: Any) -> Any:
     if value is None or value is pd.NA or value is pd.NaT:
         return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", errors="replace")
     if isinstance(value, (pd.Timestamp, datetime)):
         return value.isoformat()
     if isinstance(value, (pd.Timedelta,)):
@@ -145,6 +158,51 @@ def _df_to_json_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return [
         {key: _json_safe_value(value) for key, value in row.items()} for row in records
     ]
+
+
+def _json_safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: _json_safe_value(value) for key, value in row.items()}
+
+
+def _json_payload_bytes(payload: Any) -> int:
+    try:
+        rendered = json.dumps(
+            payload, ensure_ascii=False, default=_json_safe_value
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        rendered = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    return len(rendered)
+
+
+def _call_tool_result(
+    payload: Dict[str, Any], *, is_error: bool, include_structured: bool = True
+) -> CallToolResult:
+    return CallToolResult(
+        content=[
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    payload, ensure_ascii=False, indent=2, default=_json_safe_value
+                ),
+            )
+        ],
+        structuredContent={"result": payload} if include_structured else None,
+        isError=is_error,
+    )
+
+
+def _tool_result_bytes(result: Any) -> int:
+    if isinstance(result, CallToolResult):
+        return _json_payload_bytes(result.model_dump(mode="json", by_alias=True))
+    return _json_payload_bytes(result)
+
+
+def _tool_result_is_error(result: Any) -> bool:
+    if isinstance(result, CallToolResult):
+        return result.isError
+    if isinstance(result, dict):
+        return bool(result.get("error"))
+    return False
 
 
 class ProjectIdMiddleware:
@@ -223,13 +281,24 @@ def with_metrics(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
         project_id = None
         if dremio := settings.instance().dremio:
             project_id = dremio.project_id
-        invocation_counter.labels(
-            project_id=project_id, tool=self.__class__.__name__
-        ).inc()
-        with invocation_duration.labels(
-            project_id=project_id, tool=self.__class__.__name__
-        ).time():
-            return await fn(self, *args, **kw)
+        tool_name = self.__class__.__name__
+        invocation_counter.labels(project_id=project_id, tool=tool_name).inc()
+        try:
+            with invocation_duration.labels(
+                project_id=project_id, tool=tool_name
+            ).time():
+                result = await fn(self, *args, **kw)
+            tool_response_bytes.labels(project_id=project_id, tool=tool_name).observe(
+                _tool_result_bytes(result)
+            )
+            if _tool_result_is_error(result):
+                tool_result_errors.labels(
+                    project_id=project_id, tool=tool_name
+                ).inc()
+            return result
+        except Exception:
+            tool_result_errors.labels(project_id=project_id, tool=tool_name).inc()
+            raise
 
     return _impl
 
@@ -325,7 +394,7 @@ class GetFailedJobDetails(Tools):
             where to_date(submitted_ts) >= current_date - interval '7' day
             and status in ('CANCELED', 'FAILED')"""
         try:
-            jdf = await sql.run_query(query=query, use_df=True)
+            jdf = await sql.run_query(query=query, use_df=True, with_guardrails=False)
             jdf["date"] = jdf["startTime"].dt.date
 
             # lookup only those who have erorrs to get detailed error messages
@@ -384,11 +453,18 @@ class RunSqlQuery(Tools):
 
     @secured
     @with_metrics
-    async def invoke(self, query: str) -> Dict[str, Union[List[Dict[Any, Any]] | str]]:
+    async def invoke(
+        self, query: str
+    ) -> CallToolResult:
         """Run a SQL query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
         If a DML query is not allowed, this will return an error.
+
+        Results are capped at a server-decided response size limit. If the query returns too much
+        data, this tool returns an error instructing the client to retry with a narrower query,
+        for example by selecting fewer columns, filtering more aggressively, aggregating, or
+        fetching the data in stages.
 
         Args:
         query: sql query
@@ -396,18 +472,78 @@ class RunSqlQuery(Tools):
         try:
             RunSqlQuery.ensure_query_allowed(query)
         except ValueError:
-            return {
-                "error": "Only SELECT queries are allowed. DML statements are not permitted.",
-            }
+            return _call_tool_result(
+                {
+                    "error": "Only SELECT queries are allowed. DML statements are not permitted.",
+                },
+                is_error=True,
+                include_structured=False,
+            )
         try:
-            query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
-            df = await sql.run_query(query=query, use_df=True)
-            return {"result": _df_to_json_records(df)}
+            tagged_query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            dremio_settings = settings.instance().dremio
+            max_bytes = dremio_settings.get("max_result_bytes")
+            if max_bytes is None:
+                max_bytes = 204_800
+
+            qr = await sql.run_query(query=tagged_query, with_guardrails=True)
+            project_id = dremio_settings.project_id
+            sql_result_total_rows.labels(project_id=project_id).observe(qr.total_rows)
+            sql_result_pages_fetched.labels(project_id=project_id).observe(
+                qr.pages_fetched
+            )
+            records = []
+            response_bytes = 0
+            truncation_reason = None
+
+            for row in qr.rows:
+                record = _json_safe_row(row)
+                if max_bytes > 0:
+                    record_bytes = len(json.dumps(record).encode("utf-8"))
+                    if response_bytes + record_bytes > max_bytes:
+                        truncation_reason = "byte_limit"
+                        break
+                    response_bytes += record_bytes
+                records.append(record)
+
+            sql_result_returned_rows.labels(project_id=project_id).observe(len(records))
+            sql_result_response_bytes.labels(project_id=project_id).observe(
+                response_bytes
+            )
+
+            if truncation_reason:
+                sql_result_truncations.labels(
+                    project_id=project_id, reason=truncation_reason
+                ).inc()
+                return _call_tool_result(
+                    {
+                        "error": (
+                            "This query returned too much data. Try again with a "
+                            "different strategy that reduces the selected data, "
+                            "such as adding LIMIT, filtering, or aggregating."
+                        ),
+                        "result": [],
+                        "truncated": True,
+                        "total_rows": qr.total_rows,
+                        "returned_rows": 0,
+                        "truncation_reason": truncation_reason,
+                    },
+                    is_error=True,
+                    include_structured=False,
+                )
+
+            return _call_tool_result(
+                {"result": records}, is_error=False, include_structured=False
+            )
         except RuntimeError as e:
-            return {
-                "error": str(e),
-                "message": "The query failed. Please check the syntax and try again",
-            }
+            return _call_tool_result(
+                {
+                    "error": str(e),
+                    "message": "The query failed. Please check the syntax and try again",
+                },
+                is_error=True,
+                include_structured=False,
+            )
 
 
 class BuildUsageReport(Tools):

@@ -28,3 +28,45 @@ invocation_duration = Histogram(
     ["tool", "project_id"],
     registry=_registry,
 )
+tool_response_bytes = Histogram(
+    "mcp_tool_response_bytes",
+    "UTF-8 serialized response payload bytes returned by a tool invocation",
+    ["tool", "project_id"],
+    registry=_registry,
+)
+tool_result_errors = Counter(
+    "mcp_tool_result_errors",
+    "Number of tool invocations that returned or raised an error",
+    ["tool", "project_id"],
+    registry=_registry,
+)
+sql_result_total_rows = Histogram(
+    "mcp_runsql_total_rows",
+    "Total row count reported by Dremio jobs invoked via RunSqlQuery",
+    ["project_id"],
+    registry=_registry,
+)
+sql_result_returned_rows = Histogram(
+    "mcp_runsql_returned_rows",
+    "Number of rows returned to the MCP client by RunSqlQuery after truncation",
+    ["project_id"],
+    registry=_registry,
+)
+sql_result_response_bytes = Histogram(
+    "mcp_runsql_response_bytes",
+    "UTF-8 JSON response payload bytes returned by RunSqlQuery",
+    ["project_id"],
+    registry=_registry,
+)
+sql_result_pages_fetched = Histogram(
+    "mcp_runsql_pages_fetched",
+    "Number of result pages fetched from Dremio for each RunSqlQuery invocation",
+    ["project_id"],
+    registry=_registry,
+)
+sql_result_truncations = Counter(
+    "mcp_runsql_truncations",
+    "Number of RunSqlQuery responses truncated by server-side guards",
+    ["project_id", "reason"],
+    registry=_registry,
+)

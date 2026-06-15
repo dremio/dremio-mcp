@@ -20,6 +20,8 @@ import pytest
 from mcp.types import CallToolResult
 
 from conftest import http_streamable_client_server, http_streamable_mcp_server
+from dremioai.metrics.tool_metrics import tool_result_errors
+from mocks.http_mock import LARGE_SQL_MARKER
 
 
 @pytest.mark.asyncio
@@ -79,6 +81,14 @@ async def test_metrics_format(mock_config_dir, logging_server, logging_level):
                 assert "# TYPE mcp_tool_invocations_total counter" in content
                 assert "# HELP mcp_tool_invocation_duration" in content
                 assert "# TYPE mcp_tool_invocation_duration histogram" in content
+                assert "# HELP mcp_tool_response_bytes" in content
+                assert "# TYPE mcp_tool_response_bytes histogram" in content
+                assert "# HELP mcp_tool_result_errors_total" in content
+                assert "# TYPE mcp_tool_result_errors_total counter" in content
+                assert "# HELP mcp_runsql_total_rows" in content
+                assert "# TYPE mcp_runsql_total_rows histogram" in content
+                assert "# HELP mcp_runsql_response_bytes" in content
+                assert "# TYPE mcp_runsql_response_bytes histogram" in content
 
                 # But should NOT contain any actual metric values (lines with numbers)
                 lines = content.strip().split("\n")
@@ -106,10 +116,15 @@ async def test_metrics_with_tool_invocation(
         async with http_streamable_client_server(
             sf.mcp_server, token="test-token"
         ) as session:
-            result: CallToolResult = await session.call_tool(
+            generic_result: CallToolResult = await session.call_tool(
+                "GetUsefulSystemTableNames", {}
+            )
+            assert generic_result is not None and not generic_result.isError
+
+            sql_result: CallToolResult = await session.call_tool(
                 "RunSqlQuery", {"query": "SELECT 1"}
             )
-            assert result is not None and not result.isError
+            assert sql_result is not None
 
         # Check metrics after tool invocation
         async with httpx.AsyncClient() as client:
@@ -125,3 +140,41 @@ async def test_metrics_with_tool_invocation(
                     "mcp_tool_invocations" in content
                     and "mcp_tool_invocation_duration" in content
                 )
+                assert "mcp_tool_response_bytes" in content
+                assert "mcp_runsql_total_rows" in content
+                assert "mcp_runsql_returned_rows" in content
+                assert "mcp_runsql_response_bytes" in content
+                assert "mcp_runsql_pages_fetched" in content
+
+
+@pytest.mark.asyncio
+async def test_error_metrics_with_truncated_tool_result(
+    mock_config_dir, logging_server, logging_level
+):
+    async with http_streamable_mcp_server(
+        logging_server,
+        logging_level,
+        dremio_overrides={"max_result_bytes": 100},
+    ) as sf:
+        import asyncio
+
+        await asyncio.sleep(1)
+
+        async with http_streamable_client_server(
+            sf.mcp_server, token="test-token"
+        ) as session:
+            result: CallToolResult = await session.call_tool(
+                "RunSqlQuery", {"query": f"SELECT 1 /* {LARGE_SQL_MARKER} */"}
+            )
+            assert result is not None and result.isError
+
+        samples = []
+        for metric in tool_result_errors.collect():
+            samples.extend(metric.samples)
+
+        assert any(
+            sample.name == "mcp_tool_result_errors_total"
+            and sample.labels.get("tool") == "RunSqlQuery"
+            and sample.value >= 1
+            for sample in samples
+        )

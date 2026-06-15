@@ -18,9 +18,10 @@ import uuid
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
-import pandas as pd
 import pytest
+from mcp.types import CallToolResult
 
+from dremioai.api.dremio.sql import QueryResult
 from dremioai.api.dremio.ai_tools import InvokeToolResponse, InvokeToolResponseResult, ListToolsResponse
 from dremioai.config import settings
 from dremioai.config.tools import ToolType
@@ -95,8 +96,13 @@ class TestSimpleFastMCPServer:
             with patch(
                 "dremioai.api.dremio.sql.run_query", new_callable=AsyncMock
             ) as mock_run_query:
-                mock_df = pd.DataFrame([{"test_column": 1}])
-                mock_run_query.return_value = mock_df
+                mock_run_query.return_value = QueryResult(
+                    rows=[{"test_column": 1}],
+                    total_rows=1,
+                    returned_rows=1,
+                    pages_fetched=1,
+                    result_schema=None,
+                )
 
                 # Call the tool
                 result = await fastmcp_server.call_tool(
@@ -105,6 +111,11 @@ class TestSimpleFastMCPServer:
 
                 # Verify result is not None
                 assert result is not None
+                assert isinstance(result, CallToolResult)
+                assert not result.isError
+                assert result.structuredContent is None
+                payload = json.loads(result.content[0].text)
+                assert payload["result"][0]["test_column"] == 1
                 print(f"✓ Successfully invoked RunSqlQuery tool")
 
                 # Verify the mock was called

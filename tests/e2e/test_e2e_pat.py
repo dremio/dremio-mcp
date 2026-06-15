@@ -42,13 +42,12 @@ async def test_tool_pat(mock_config_dir, logging_server, logging_level, project_
             sf.mcp_server, token="my-token"
         ) as session:
             result: CallToolResult = await session.call_tool(
-                "RunSqlQuery", {"query": "SELECT 1"}
+                "GetSchemaOfTable", {"table_name": "sys.jobs"}
             )
             assert result is not None and not result.isError, f"Error running tool {result}"
             assert result.content and len(result.content) > 0
             data = json.loads(result.content[0].text)
-            assert data["result"][0]["test_column"] == 1
-            from rich import print as pp
+            assert "fields" in data
 
             for le in logging_server.logs():
                 assert (

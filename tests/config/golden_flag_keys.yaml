@@ -13,6 +13,7 @@ flag_keys:
 - dremio.jwks_cache_lifespan
 - dremio.jwks_token_expiry_buffer_secs
 - dremio.jwks_uri
+- dremio.max_result_bytes
 - dremio.metrics.enabled
 - dremio.metrics.port
 - dremio.search_topN
