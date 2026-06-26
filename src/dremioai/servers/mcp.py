@@ -33,10 +33,7 @@ from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
 
 import jwt
 import uvicorn
-import anyio
-import inspect
 from click import Choice
-from anyio.abc import TaskStatus
 from mcp.cli.claude import get_claude_config_path
 from mcp.server.auth.json_response import PydanticJSONResponse
 from mcp.server.auth.middleware.auth_context import (
@@ -54,9 +51,7 @@ from mcp.server.lowlevel.server import request_ctx
 from mcp.server.streamable_http import (
     MCP_PROTOCOL_VERSION_HEADER,
     MCP_SESSION_ID_HEADER,
-    StreamableHTTPServerTransport,
 )
-from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import ContentBlock, Tool as MCPTool, ToolAnnotations
 from pydantic import AnyHttpUrl
 from pydantic.networks import AnyUrl
@@ -87,64 +82,6 @@ from dremioai.metrics.tool_metrics import invocation_counter, invocation_duratio
 from dremioai.servers.jwks_verifier import JWKSVerifier, TokenExpiredError
 from dremioai.tools import tools
 from dremioai.tools.tools import ProjectIdMiddleware, secured
-
-
-def _patch_stateless_http_task_lifecycle():
-    """Apply the upstream stateless Streamable HTTP task-lifecycle fix locally.
-
-    Until the MCP Python SDK merges the request-scoped task-group fix, patch the
-    stateless handler in-process so local runs and tests do not rely solely on the
-    Docker image's quilt-applied dependency patch.
-    """
-
-    if getattr(StreamableHTTPSessionManager, "_dremio_stateless_task_patch", False):
-        return
-
-    current = StreamableHTTPSessionManager._handle_stateless_request
-    try:
-        source = inspect.getsource(current)
-    except OSError:
-        source = ""
-
-    if "request_tg" in source and "cancel_scope.cancel" in source:
-        StreamableHTTPSessionManager._dremio_stateless_task_patch = True
-        return
-
-    async def _handle_stateless_request(self, scope: Scope, receive: Receive, send: Send) -> None:
-        self_logger = logging.getLogger("mcp.server.streamable_http_manager")
-        self_logger.debug("Stateless mode: Creating new transport for this request")
-        http_transport = StreamableHTTPServerTransport(
-            mcp_session_id=None,
-            is_json_response_enabled=self.json_response,
-            event_store=None,
-            security_settings=self.security_settings,
-        )
-
-        async def run_stateless_server(
-            *, task_status: TaskStatus[None] = anyio.TASK_STATUS_IGNORED
-        ):
-            async with http_transport.connect() as streams:
-                read_stream, write_stream = streams
-                task_status.started()
-                await self.app.run(
-                    read_stream,
-                    write_stream,
-                    self.app.create_initialization_options(),
-                    stateless=True,
-                )
-
-        async with anyio.create_task_group() as request_tg:
-            await request_tg.start(run_stateless_server)
-            try:
-                await http_transport.handle_request(scope, receive, send)
-            finally:
-                request_tg.cancel_scope.cancel()
-
-    StreamableHTTPSessionManager._handle_stateless_request = _handle_stateless_request
-    StreamableHTTPSessionManager._dremio_stateless_task_patch = True
-
-
-_patch_stateless_http_task_lifecycle()
 
 
 class MCPTransportLoggingMiddleware:
@@ -698,12 +635,7 @@ def init(
     log.logger("init").info(
         f"Initializing MCP server with mode={mode}, mock={mock}, class={mcp_cls.__name__}"
     )
-    lifespan = (
-        _stateless_http_lifespan
-        if transport == Transports.streamable_http
-        else _server_lifespan
-    )
-    opts = {"log_level": "DEBUG", "debug": True, "lifespan": lifespan}
+    opts = {"log_level": "DEBUG", "debug": True, "lifespan": _server_lifespan}
     if transport == Transports.streamable_http:
         opts["stateless_http"] = True
         if disable_dns_rebinding_protection:
@@ -909,16 +841,6 @@ async def _server_lifespan(app: FastMCP):
         yield
     finally:
         task.cancel()
-
-
-@contextlib.asynccontextmanager
-async def _stateless_http_lifespan(_app: FastMCP):
-    """No-op lifespan for stateless streamable HTTP requests.
-
-    The MCP SDK creates a fresh app.run() task per stateless request. Starting
-    background tasks here would create one long-lived task per call.
-    """
-    yield
 
 
 def run_with_metrics_server(
