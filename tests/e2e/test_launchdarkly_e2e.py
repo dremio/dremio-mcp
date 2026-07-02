@@ -55,7 +55,7 @@ def _build_jwt(aud: str) -> str:
     """Build a minimal unsigned JWT with the given ``aud`` claim."""
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*HMAC key.*")
-        return jwt.encode({"aud": aud}, key="", algorithm="HS256")
+        return jwt.encode({"aud": aud}, key=None, algorithm="none")
 
 
 def _inject_capturing_ld_client() -> list:
