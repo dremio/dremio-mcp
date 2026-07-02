@@ -16,6 +16,7 @@
 
 import json
 import uuid
+import warnings
 
 import jwt
 import pytest
@@ -52,7 +53,9 @@ def _make_mock_ld_client(flag_values: dict):
 
 def _build_jwt(aud: str) -> str:
     """Build a minimal unsigned JWT with the given ``aud`` claim."""
-    return jwt.encode({"aud": aud}, key=None, algorithm="none")
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*HMAC key.*")
+        return jwt.encode({"aud": aud}, key=None, algorithm="none")
 
 
 def _inject_capturing_ld_client() -> list:
