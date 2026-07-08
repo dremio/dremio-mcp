@@ -334,95 +334,6 @@ def is_tool_for(
     return False
 
 
-class GetFailedJobDetails(Tools):
-    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
-
-    def group_by(self, df, by):
-        return df.groupby(by).size().reset_index(name="count").to_dict(orient="records")
-
-    @secured
-    @with_metrics
-    async def invoke(self) -> Dict[str, Any]:
-        """Get the stats and details of failed or canceled jobs executed in the Dremio cluster in the past 7 days
-        along with a split by job type
-
-        Returns:
-            A dictionary with the following keys:
-            - Number of jobs in over 7 days
-            - Job categories: A list of dictionaries with the following keys:
-                - day: date of the job
-                - query_type: type of the job
-                - cnt: count of jobs
-            - Job count by day, queryType and engine: A list of dictionaries with the following keys
-                - day: date of the job
-                - queryType: type of the job
-                - engine: engine used
-                - count: count of jobs
-            - Job count by day, queryType and user: A list of dictionaries with the following keys
-                - day: date of the job
-                - queryType: type of the job
-                - user: user who submitted the job
-                - count: count of jobs
-            - Job count by day, queriedDataset and state: A list of dictionaries with the following keys
-                - day: date of the job
-                - queriedDataset: dataset queried
-                - state: state of the job
-                - count: count of jobs
-            - Job count by day, queryType and error: A list of dictionaries with the following keys
-                - day: date of the job
-                - queryType: type of the job
-                - error: error message
-                - count: count of jobs
-        """
-        table = (
-            "sys.project.jobs_recent"
-            if settings.instance().dremio.project_id
-            else "sys.jobs_recent"
-        )
-        query = f"""/* dremioai: submitter={self.__class__.__name__} */
-            select job_id as id,
-            query_type as queryType,
-            status as state,
-            submitted_ts as startTime,
-            query,
-            (final_state_epoch_millis - submitted_epoch_millis) / 1000 as duration,
-            queried_datasets as queriedDatasets,
-                    user_name as "user",
-            engine,
-            error_msg
-            from   {table}
-            where to_date(submitted_ts) >= current_date - interval '7' day
-            and status in ('CANCELED', 'FAILED')"""
-        try:
-            jdf = await sql.run_query(query=query, use_df=True, with_guardrails=False)
-            jdf["date"] = jdf["startTime"].dt.date
-
-            # lookup only those who have erorrs to get detailed error messages
-            return {
-                "Number of jobs over 7 days": jdf.shape[0],
-                "Job categories by day, queryType and state": self.group_by(
-                    jdf, ["date", "queryType", "state"]
-                ),
-                "Job count by day, queryType and engine": self.group_by(
-                    jdf, ["date", "queryType", "engine"]
-                ),
-                "Job count by day, queryType, user": self.group_by(
-                    jdf, ["date", "queryType", "user"]
-                ),
-                "Job count by day, queriedDataset and state": self.group_by(
-                    jdf.explode("queriedDatasets"), ["date", "queriedDatasets", "state"]
-                ),
-                "Job count by day, queryType and error": self.group_by(
-                    jdf, ["date", "queryType", "error_msg"]
-                ),
-            }
-        except RuntimeError as e:
-            return {
-                "error": str(e),
-                "message": "The query failed. Please check the syntax and try again",
-            }
-
-
 class RunSqlQuery(Tools):
     For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF | ToolType.FOR_DATA_PATTERNS]]
     _safe = [
@@ -572,14 +483,6 @@ class Resource(Tools):
     @property
     def resource_path(self):
         raise NotImplementedError("Subclasses should implement this method")
-
-
-class GetNameOfJobsRecentTable(Tools):
-    For: ClassVar[Annotated[ToolType, ToolType.FOR_SELF]]
-
-    async def invoke(self) -> Dict[str, str]:
-        """Gets the schema full name of the table that stores the jobs information"""
-        return {"name": "sys.project.jobs_recent"}
 
 
 class Hints(Resource):
