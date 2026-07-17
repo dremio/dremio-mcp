@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/dremio-dremio-mcp-badge.png)](https://mseep.ai/app/dremio-dremio-mcp)
+
 # Dremio MCP server
 
 Table of Contents
