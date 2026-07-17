@@ -24,6 +24,9 @@ from dremioai.tools.tools import get_tools
 from dremioai.config import settings
 from urllib.parse import urlparse
 from httpx import AsyncClient
+import time
+from unittest.mock import patch, MagicMock
+from jwt import PyJWKClient, PyJWKClientError, ExpiredSignatureError
 
 
 def _protected_resource_metadata_url(mcp_url: str) -> str:
@@ -187,3 +190,78 @@ async def test_wlm_engine_name(
                         assert (
                             le.json.get("engineName") == engine_name
                         ), f"{le.json} does not have the right engineName"
+
+
+_JWKS_URI = "https://example.com/.well-known/jwks.json"
+
+
+@pytest.mark.asyncio
+async def test_invalid_jwks_token_gets_invalid_token_challenge(
+    mock_config_dir, logging_server, logging_level
+):
+    """A token failing JWKS signature verification -> 401 + error="invalid_token"."""
+    async with http_streamable_mcp_server(
+        logging_server, logging_level, dremio_overrides={"jwks_uri": _JWKS_URI}
+    ) as sf:
+        metadata_url = _protected_resource_metadata_url(sf.mcp_server.url)
+        with patch.object(
+            PyJWKClient, "get_signing_key_from_jwt", side_effect=PyJWKClientError("no key")
+        ):
+            async with AsyncClient() as client:
+                r = await client.post(
+                    sf.mcp_server.url,
+                    headers={"Authorization": "Bearer bad-signature-token"},
+                )
+                assert r.status_code == 401
+                assert (
+                    r.headers["www-authenticate"]
+                    == f'Bearer resource_metadata="{metadata_url}", error="invalid_token"'
+                )
+
+
+@pytest.mark.asyncio
+async def test_expired_jwks_token_gets_invalid_token_challenge(
+    mock_config_dir, logging_server, logging_level
+):
+    """An expired token (decode raises ExpiredSignatureError) -> 401 + error="invalid_token"."""
+    async with http_streamable_mcp_server(
+        logging_server, logging_level, dremio_overrides={"jwks_uri": _JWKS_URI}
+    ) as sf:
+        metadata_url = _protected_resource_metadata_url(sf.mcp_server.url)
+        with patch.object(
+            PyJWKClient, "get_signing_key_from_jwt", return_value=MagicMock()
+        ), patch(
+            "dremioai.servers.jwks_verifier.pyjwt.decode",
+            side_effect=ExpiredSignatureError("expired"),
+        ):
+            async with AsyncClient() as client:
+                r = await client.post(
+                    sf.mcp_server.url, headers={"Authorization": "Bearer expired-token"}
+                )
+                assert r.status_code == 401
+                assert (
+                    r.headers["www-authenticate"]
+                    == f'Bearer resource_metadata="{metadata_url}", error="invalid_token"'
+                )
+
+
+@pytest.mark.asyncio
+async def test_valid_jwks_token_is_accepted(
+    mock_config_dir, logging_server, logging_level
+):
+    """A signature-valid, non-expired token is accepted end-to-end (list_tools succeeds)."""
+    claims = {"sub": "user-1", "aud": "org-1", "exp": int(time.time()) + 3600}
+    async with http_streamable_mcp_server(
+        logging_server, logging_level, dremio_overrides={"jwks_uri": _JWKS_URI}
+    ) as sf:
+        with patch.object(
+            PyJWKClient, "get_signing_key_from_jwt", return_value=MagicMock()
+        ), patch("dremioai.servers.jwks_verifier.pyjwt.decode", return_value=claims):
+            async with http_streamable_client_server(
+                sf.mcp_server, token="valid-jwks-token"
+            ) as session:
+                lts = await session.list_tools()
+                assert {t.name for t in lts.tools} == {
+                    t.__name__
+                    for t in get_tools(For=settings.instance().tools.server_mode)
+                }
