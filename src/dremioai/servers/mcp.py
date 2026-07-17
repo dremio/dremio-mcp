@@ -492,6 +492,13 @@ class FastMCPServerWithAuthToken(FastMCP):
         return result.model_dump(exclude_none=True)
 
     def streamable_http_app(self):
+        # DX-121842 (Phase 2): The SDK-native auth path (passing token_verifier= and
+        # auth=AuthSettings(...) to FastMCP.__init__ so BearerAuthBackend +
+        # AuthContextMiddleware + RequireAuthMiddleware are injected automatically) was
+        # evaluated and intentionally NOT adopted: request-derived, project-scoped OAuth
+        # discovery (DX-119494); the auth-server shim (DX-117899/DX-114676); and a
+        # middleware-ordering constraint requiring RequireAuthWithWWWAuthenticateMiddleware
+        # to run inside AuthenticationMiddleware. See the DX-121842 PR discussion.
         if self._mock_token_verifier is not None:
             token_verifier = self._mock_token_verifier
         else:
@@ -728,6 +735,8 @@ def init(
 
     if not mock:
 
+        # DX-121842 (Phase 2) re-evaluated replacing the block below with the SDK's native
+        # create_protected_resource_routes; not adopted (see the DX-121842 PR discussion).
         # FastMCP can expose RFC 9728 metadata from `settings.auth.resource_server_url`,
         # but this server does not currently populate AuthSettings and also needs the
         # path-inserted variant derived from the incoming request host/path. RFC 9728
