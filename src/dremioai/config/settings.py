@@ -86,14 +86,17 @@ class NoFlag:
 
     pass
 
+
 class RuntimeMutable:
     """Mark a field as safe to update from a runtime config reload."""
+
     pass
 
 
 @dataclass
 class FlagName:
     name: str = None
+
 
 def _has_no_flag(model_cls: type[BaseModel], field_name: str) -> bool:
     """Check if a field has the NoFlag annotation marker."""
@@ -213,6 +216,33 @@ class OAuth2(BaseModel):
         return self.expiry is not None and self.expiry < datetime.now()
 
 
+class BasicAuth(BaseModel):
+    """Username/password login for Dremio Software deployments that cannot
+    issue PATs (e.g. Community edition). The credentials are exchanged for a
+    session token via /apiv2/login, which the REST API also accepts as a
+    Bearer token. Not applicable to Dremio Cloud."""
+
+    username: str
+    raw_password: Annotated[str, NoFlag()] = Field(
+        alias="password",
+        description="Password for basic login (can be a file path with @ prefix or direct value)",
+    )
+    expiry: Optional[datetime] = None
+    model_config = ConfigDict(validate_assignment=True, populate_by_name=True)
+
+    @property
+    def password(self) -> str:
+        return _resolve_token_file(self.raw_password)
+
+    @field_serializer("raw_password")
+    def serialize_password(self, password: str):
+        return self.raw_password if password != self.raw_password else password
+
+    @property
+    def has_expired(self) -> bool:
+        return self.expiry is not None and self.expiry < datetime.now()
+
+
 class Wlm(FlagAwareModel):
     engine_name: Optional[str] = None
 
@@ -276,6 +306,7 @@ class Dremio(FlagAwareModel):
         description="enable experimental tools",
     )
     oauth2: Optional[OAuth2] = None
+    basic_auth: Optional[BasicAuth] = None
     allow_dml: Annotated[Optional[bool], RuntimeMutable()] = Field(default=False)
     extract_org_id_from_jwt: Optional[bool] = Field(
         default=False,
@@ -342,6 +373,10 @@ class Dremio(FlagAwareModel):
     @property
     def oauth_configured(self) -> bool:
         return self.oauth2 is not None
+
+    @property
+    def basic_auth_configured(self) -> bool:
+        return self.basic_auth is not None and not self.is_cloud
 
     @property
     def oauth_supported(self) -> bool:
@@ -559,6 +594,7 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
 
 # Module-level holder so configure() can pass the YAML path to the Settings constructor
 _yaml_file: Path | None = None
+
 
 @dataclass(frozen=True)
 class ConfigFingerprint:
