@@ -203,6 +203,8 @@ async def test_mcp_owned_equivalents_are_not_listed_or_invoked_remotely():
     with patch.object(server, "_invoke_remote_tool", new=AsyncMock()) as mock_invoke:
         with pytest.raises(ToolError, match="provided by this MCP server"):
             await server.call_tool("runSql", {"sqlText": "SELECT 1"})
+        with pytest.raises(ToolError, match="GetSchemaOfTable"):
+            await server.call_tool("getTableOrViewSchema", {"path": ["test_table"]})
         mock_invoke.assert_not_called()
 
 

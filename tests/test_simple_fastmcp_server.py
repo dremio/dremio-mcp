@@ -261,7 +261,11 @@ class TestDynamicTools:
         from dremioai.api.dremio.ai_tools import AiTool
 
         fake_response = ListToolsResponse(
-            tools=[AiTool(name="runSql"), AiTool(name="listEngines")]
+            tools=[
+                AiTool(name="runSql"),
+                AiTool(name="getTableOrViewSchema"),
+                AiTool(name="listEngines"),
+            ]
         )
 
         mode = ToolType.FOR_DATA_PATTERNS | ToolType.DYNAMIC_REMOTE_TOOLS
@@ -289,9 +293,17 @@ class TestDynamicTools:
                     "CallDynamicTool",
                     {"tool_name": "runSql", "tool_arguments": '{"sqlText":"SELECT 1"}'},
                 )
+                schema_result = await server.call_tool(
+                    "CallDynamicTool",
+                    {
+                        "tool_name": "getTableOrViewSchema",
+                        "tool_arguments": '{"path":["test_table"]}',
+                    },
+                )
                 mock_invoke.assert_not_called()
 
         assert "provided by this MCP server" in result[0].text
+        assert "GetSchemaOfTable" in schema_result[0].text
 
     @pytest.mark.asyncio
     async def test_discover_returns_error_on_dremio_failure(self):
