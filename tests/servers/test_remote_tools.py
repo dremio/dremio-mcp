@@ -161,6 +161,63 @@ async def test_static_tool_wins_name_collision():
 
 
 @pytest.mark.asyncio
+async def test_mcp_owned_equivalents_are_not_listed_or_invoked_remotely():
+    server = _make_server()
+
+    async def run_sql_query(query: str) -> str:
+        """Run SQL locally."""
+        return query
+
+    local_names = {
+        "RunSqlQuery",
+        "GetSchemaOfTable",
+        "GetTableOrViewLineage",
+        "SearchTableAndViews",
+        "GetDescriptionOfTableOrSchema",
+        "SearchMetrics",
+        "GetTableRelationships",
+    }
+    for name in local_names:
+        server.add_tool(run_sql_query, name=name)
+    response = ListToolsResponse(
+        tools=[
+            AiTool(name="runSql"),
+            AiTool(name="selectFromInfoSchema"),
+            AiTool(name="getTableOrViewSchema"),
+            AiTool(name="getLineage"),
+            AiTool(name="searchViewsAndTables"),
+            AiTool(name="getWiki"),
+            AiTool(name="searchMetrics"),
+            AiTool(name="getTableRelationships"),
+            AiTool(name="listEngines"),
+        ]
+    )
+
+    with patch.object(
+        server, "_list_remote_tools", new=AsyncMock(return_value=response)
+    ):
+        names = {tool.name for tool in await server.list_tools()}
+
+    assert names == local_names | {"listEngines"}
+
+    with patch.object(server, "_invoke_remote_tool", new=AsyncMock()) as mock_invoke:
+        with pytest.raises(ToolError, match="provided by this MCP server"):
+            await server.call_tool("runSql", {"sqlText": "SELECT 1"})
+        mock_invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_remote_equivalent_is_available_when_local_tool_is_inactive():
+    server = _make_server()
+    response = ListToolsResponse(tools=[AiTool(name="runSql")])
+
+    with patch.object(
+        server, "_list_remote_tools", new=AsyncMock(return_value=response)
+    ):
+        assert [tool.name for tool in await server.list_tools()] == ["runSql"]
+
+
+@pytest.mark.asyncio
 async def test_call_unknown_tool_returns_error():
     """Unknown remote tool → invoke_tool error propagates as ToolError (isError=True)."""
     server = _make_server()

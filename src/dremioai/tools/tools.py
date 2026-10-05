@@ -73,6 +73,23 @@ from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
 
+MCP_OWNED_REMOTE_TOOL_EQUIVALENTS = {
+    "runSql": "RunSqlQuery",
+    "selectFromInfoSchema": "RunSqlQuery",
+    "getTableOrViewSchema": "GetSchemaOfTable",
+    "getLineage": "GetTableOrViewLineage",
+    "searchViewsAndTables": "SearchTableAndViews",
+    "getWiki": "GetDescriptionOfTableOrSchema",
+    "searchMetrics": "SearchMetrics",
+    "getTableRelationships": "GetTableRelationships",
+}
+
+
+def mcp_tool_for_remote(remote_name: str, local_tool_names: set[str]) -> Optional[str]:
+    local_name = MCP_OWNED_REMOTE_TOOL_EQUIVALENTS.get(remote_name, remote_name)
+    return local_name if local_name in local_tool_names else None
+
+
 # Type variables for the secured decorator
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -800,7 +817,16 @@ class DiscoverDynamicTools(Tools):
         if not settings.instance().dremio.get("enable_remote_tools"):
             return "Remote tools are not enabled."
         result = await ai_tools.list_tools()
-        return result.model_dump_json()
+        local_tool_names = {
+            tool.__name__
+            for tool in get_tools(For=settings.instance().tools.server_mode)
+        }
+        visible_tools = [
+            tool
+            for tool in result.tools
+            if mcp_tool_for_remote(tool.name, local_tool_names) is None
+        ]
+        return result.model_copy(update={"tools": visible_tools}).model_dump_json()
 
 
 class CallDynamicTool(Tools):
@@ -817,6 +843,15 @@ class CallDynamicTool(Tools):
         """
         if not settings.instance().dremio.get("enable_remote_tools"):
             return "Remote tools are not enabled."
+        local_tool_names = {
+            tool.__name__
+            for tool in get_tools(For=settings.instance().tools.server_mode)
+        }
+        if local_name := mcp_tool_for_remote(tool_name, local_tool_names):
+            return (
+                f"Tool '{tool_name}' is provided by this MCP server. "
+                f"Use '{local_name}' instead."
+            )
         if isinstance(tool_arguments, str):
             try:
                 args = json.loads(tool_arguments)

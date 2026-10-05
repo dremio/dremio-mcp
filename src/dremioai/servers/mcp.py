@@ -458,10 +458,11 @@ class FastMCPServerWithAuthToken(FastMCP):
             static_names = {t.name for t in static_tools}
             remote_tools = []
             for rt in response.tools:
-                if rt.name in static_names:
+                if local_name := tools.mcp_tool_for_remote(rt.name, static_names):
                     self._logger.warning(
-                        "remote tool name collides with static tool, skipping",
+                        "remote tool overlaps with MCP tool, skipping",
                         name=rt.name,
+                        local_name=local_name,
                     )
                     continue
                 remote_tools.append(
@@ -482,6 +483,11 @@ class FastMCPServerWithAuthToken(FastMCP):
         static_names = {t.name for t in await super().list_tools()}
         if name in static_names:
             return await super().call_tool(name, arguments)
+
+        if local_name := tools.mcp_tool_for_remote(name, static_names):
+            raise ToolError(
+                f"Tool '{name}' is provided by this MCP server as '{local_name}'"
+            )
 
         if not self.expose_remote_tools():
             raise ToolError(f"Tool '{name}' not found (remote tools not enabled)")
