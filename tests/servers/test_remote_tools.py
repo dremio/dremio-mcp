@@ -138,8 +138,8 @@ async def test_different_project_ids_different_tools():
 
 
 @pytest.mark.asyncio
-async def test_static_tool_wins_name_collision():
-    """If a remote tool has the same name as a static tool, static wins and warning is logged."""
+async def test_remote_tool_wins_name_collision_in_listing():
+    """The AI tool is listed when it has the same name as an MCP-owned tool."""
     server = _make_server()
 
     async def colliding_tool() -> str:
@@ -152,16 +152,15 @@ async def test_static_tool_wins_name_collision():
     list_response = ListToolsResponse(tools=remote)
 
     with patch.object(server, "_list_remote_tools", new=AsyncMock(return_value=list_response)):
-        with patch.object(server._logger, "warning") as mock_warn:
-            result = await server.list_tools()
-            assert mock_warn.called
+        result = await server.list_tools()
 
     collision_tools = [t for t in result if t.name == "colliding_tool"]
     assert len(collision_tools) == 1
+    assert collision_tools[0].description == "remote"
 
 
 @pytest.mark.asyncio
-async def test_mcp_owned_equivalents_are_not_listed_or_invoked_remotely():
+async def test_ai_equivalents_replace_mcp_tools_in_listing_and_remain_callable():
     server = _make_server()
 
     async def run_sql_query(query: str) -> str:
@@ -198,25 +197,37 @@ async def test_mcp_owned_equivalents_are_not_listed_or_invoked_remotely():
     ):
         names = {tool.name for tool in await server.list_tools()}
 
-    assert names == local_names | {"listEngines"}
+    remote_names = {tool.name for tool in response.tools}
+    assert names == remote_names
 
-    with patch.object(server, "_invoke_remote_tool", new=AsyncMock()) as mock_invoke:
-        with pytest.raises(ToolError, match="provided by this MCP server"):
-            await server.call_tool("runSql", {"sqlText": "SELECT 1"})
-        with pytest.raises(ToolError, match="GetSchemaOfTable"):
-            await server.call_tool("getTableOrViewSchema", {"path": ["test_table"]})
-        mock_invoke.assert_not_called()
+    with patch.object(
+        server, "_invoke_remote_tool", new=AsyncMock(return_value=InvokeToolResponse())
+    ) as mock_invoke:
+        await server.call_tool("runSql", {"sqlText": "SELECT 1"})
+        await server.call_tool("getTableOrViewSchema", {"path": ["test_table"]})
+        mock_invoke.assert_any_await("runSql", {"sqlText": "SELECT 1"})
+        mock_invoke.assert_any_await("getTableOrViewSchema", {"path": ["test_table"]})
+
+    await server.call_tool("RunSqlQuery", {"query": "SELECT 1"})
 
 
 @pytest.mark.asyncio
-async def test_remote_equivalent_is_available_when_local_tool_is_inactive():
+async def test_mcp_tool_remains_when_ai_equivalent_is_unavailable():
     server = _make_server()
-    response = ListToolsResponse(tools=[AiTool(name="runSql")])
+
+    async def run_sql_query(query: str) -> str:
+        return query
+
+    server.add_tool(run_sql_query, name="RunSqlQuery")
+    response = ListToolsResponse(tools=[AiTool(name="selectFromInfoSchema")])
 
     with patch.object(
         server, "_list_remote_tools", new=AsyncMock(return_value=response)
     ):
-        assert [tool.name for tool in await server.list_tools()] == ["runSql"]
+        assert {tool.name for tool in await server.list_tools()} == {
+            "RunSqlQuery",
+            "selectFromInfoSchema",
+        }
 
 
 @pytest.mark.asyncio

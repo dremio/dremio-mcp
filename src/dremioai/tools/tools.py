@@ -73,9 +73,9 @@ from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
 
-MCP_OWNED_REMOTE_TOOL_EQUIVALENTS = {
+AI_PREFERRED_MCP_TOOL_EQUIVALENTS = {
     "runSql": "RunSqlQuery",
-    "selectFromInfoSchema": "RunSqlQuery",
+    # selectFromInfoSchema alone is too narrow to replace general SQL execution.
     "getTableOrViewSchema": "GetSchemaOfTable",
     "getLineage": "GetTableOrViewLineage",
     "searchViewsAndTables": "SearchTableAndViews",
@@ -85,9 +85,12 @@ MCP_OWNED_REMOTE_TOOL_EQUIVALENTS = {
 }
 
 
-def mcp_tool_for_remote(remote_name: str, local_tool_names: set[str]) -> Optional[str]:
-    local_name = MCP_OWNED_REMOTE_TOOL_EQUIVALENTS.get(remote_name, remote_name)
-    return local_name if local_name in local_tool_names else None
+def mcp_tools_replaced_by_remote(remote_tool_names: set[str]) -> set[str]:
+    return remote_tool_names | {
+        local_name
+        for remote_name, local_name in AI_PREFERRED_MCP_TOOL_EQUIVALENTS.items()
+        if remote_name in remote_tool_names
+    }
 
 
 # Type variables for the secured decorator
@@ -817,16 +820,7 @@ class DiscoverDynamicTools(Tools):
         if not settings.instance().dremio.get("enable_remote_tools"):
             return "Remote tools are not enabled."
         result = await ai_tools.list_tools()
-        local_tool_names = {
-            tool.__name__
-            for tool in get_tools(For=settings.instance().tools.server_mode)
-        }
-        visible_tools = [
-            tool
-            for tool in result.tools
-            if mcp_tool_for_remote(tool.name, local_tool_names) is None
-        ]
-        return result.model_copy(update={"tools": visible_tools}).model_dump_json()
+        return result.model_dump_json()
 
 
 class CallDynamicTool(Tools):
@@ -843,15 +837,6 @@ class CallDynamicTool(Tools):
         """
         if not settings.instance().dremio.get("enable_remote_tools"):
             return "Remote tools are not enabled."
-        local_tool_names = {
-            tool.__name__
-            for tool in get_tools(For=settings.instance().tools.server_mode)
-        }
-        if local_name := mcp_tool_for_remote(tool_name, local_tool_names):
-            return (
-                f"Tool '{tool_name}' is provided by this MCP server. "
-                f"Use '{local_name}' instead."
-            )
         if isinstance(tool_arguments, str):
             try:
                 args = json.loads(tool_arguments)

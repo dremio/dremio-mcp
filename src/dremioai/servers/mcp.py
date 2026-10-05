@@ -455,24 +455,20 @@ class FastMCPServerWithAuthToken(FastMCP):
             if response.error:
                 self._logger.warning("remote tool listing failed", error=response.error)
                 return static_tools
-            static_names = {t.name for t in static_tools}
-            remote_tools = []
-            for rt in response.tools:
-                if local_name := tools.mcp_tool_for_remote(rt.name, static_names):
-                    self._logger.warning(
-                        "remote tool overlaps with MCP tool, skipping",
-                        name=rt.name,
-                        local_name=local_name,
-                    )
-                    continue
-                remote_tools.append(
-                    MCPTool(
-                        name=rt.name,
-                        description=rt.description,
-                        inputSchema=rt.input_schema,
-                    )
+            remote_names = {rt.name for rt in response.tools}
+            replaced_names = tools.mcp_tools_replaced_by_remote(remote_names)
+            visible_static_tools = [
+                tool for tool in static_tools if tool.name not in replaced_names
+            ]
+            remote_tools = [
+                MCPTool(
+                    name=rt.name,
+                    description=rt.description,
+                    inputSchema=rt.input_schema,
                 )
-            return static_tools + remote_tools
+                for rt in response.tools
+            ]
+            return visible_static_tools + remote_tools
         except Exception:
             self._logger.exception("error fetching remote tools")
             return static_tools
@@ -483,11 +479,6 @@ class FastMCPServerWithAuthToken(FastMCP):
         static_names = {t.name for t in await super().list_tools()}
         if name in static_names:
             return await super().call_tool(name, arguments)
-
-        if local_name := tools.mcp_tool_for_remote(name, static_names):
-            raise ToolError(
-                f"Tool '{name}' is provided by this MCP server as '{local_name}'"
-            )
 
         if not self.expose_remote_tools():
             raise ToolError(f"Tool '{name}' not found (remote tools not enabled)")
