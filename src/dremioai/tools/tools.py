@@ -73,6 +73,26 @@ from dremioai.config.feature_flags import FeatureFlagManager
 
 logger = log.logger(__name__)
 
+AI_PREFERRED_MCP_TOOL_EQUIVALENTS = {
+    "runSql": "RunSqlQuery",
+    # selectFromInfoSchema alone is too narrow to replace general SQL execution.
+    "getTableOrViewSchema": "GetSchemaOfTable",
+    "getLineage": "GetTableOrViewLineage",
+    "searchViewsAndTables": "SearchTableAndViews",
+    "getWiki": "GetDescriptionOfTableOrSchema",
+    "searchMetrics": "SearchMetrics",
+    "getTableRelationships": "GetTableRelationships",
+}
+
+
+def mcp_tools_replaced_by_remote(remote_tool_names: set[str]) -> set[str]:
+    return remote_tool_names | {
+        local_name
+        for remote_name, local_name in AI_PREFERRED_MCP_TOOL_EQUIVALENTS.items()
+        if remote_name in remote_tool_names
+    }
+
+
 # Type variables for the secured decorator
 P = ParamSpec("P")
 T = TypeVar("T")

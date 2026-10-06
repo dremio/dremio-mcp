@@ -164,7 +164,11 @@ class TestDynamicTools:
     """Tests for the discover_dynamic_tools / call_dynamic_tool meta-tools"""
 
     @contextmanager
-    def mock_settings_for_dynamic_tools(self, enable_remote_tools: bool = True):
+    def mock_settings_for_dynamic_tools(
+        self,
+        enable_remote_tools: bool = True,
+        mode: ToolType = ToolType.FOR_DATA_PATTERNS,
+    ):
         """Create mock settings with remote tools enabled/disabled"""
         try:
             old = settings.instance()
@@ -179,7 +183,7 @@ class TestDynamicTools:
                             "enable_remote_tools": enable_remote_tools,
                         },
                         "tools": {
-                            "server_mode": ToolType.FOR_DATA_PATTERNS,
+                            "server_mode": mode,
                         },
                     }
                 )
@@ -251,6 +255,62 @@ class TestDynamicTools:
             names = {t["name"] for t in parsed["tools"]}
             assert "JavaTool1" in names
             assert "JavaTool2" in names
+
+    @pytest.mark.asyncio
+    async def test_discover_includes_ai_tools_overlapping_with_mcp(self):
+        from dremioai.api.dremio.ai_tools import AiTool
+
+        fake_response = ListToolsResponse(
+            tools=[
+                AiTool(name="runSql"),
+                AiTool(name="getTableOrViewSchema"),
+                AiTool(name="listEngines"),
+            ]
+        )
+
+        mode = ToolType.FOR_DATA_PATTERNS | ToolType.DYNAMIC_REMOTE_TOOLS
+        with self.mock_settings_for_dynamic_tools(enable_remote_tools=True, mode=mode):
+            server = mcp_server.init(mode=mode)
+            with patch(
+                "dremioai.tools.tools.ai_tools.list_tools",
+                new_callable=AsyncMock,
+                return_value=fake_response,
+            ):
+                result = await server.call_tool("DiscoverDynamicTools", {})
+
+        names = {tool["name"] for tool in json.loads(result[0].text)["tools"]}
+        assert names == {"runSql", "getTableOrViewSchema", "listEngines"}
+
+    @pytest.mark.asyncio
+    async def test_call_dynamic_tool_invokes_overlapping_ai_tool(self):
+        from dremioai.api.dremio.ai_tools import InvokeToolResponse
+
+        mode = ToolType.FOR_DATA_PATTERNS | ToolType.DYNAMIC_REMOTE_TOOLS
+        with self.mock_settings_for_dynamic_tools(enable_remote_tools=True, mode=mode):
+            server = mcp_server.init(mode=mode)
+            with patch(
+                "dremioai.tools.tools.ai_tools.invoke_tool",
+                new_callable=AsyncMock,
+                return_value=InvokeToolResponse(),
+            ) as mock_invoke:
+                result = await server.call_tool(
+                    "CallDynamicTool",
+                    {"tool_name": "runSql", "tool_arguments": '{"sqlText":"SELECT 1"}'},
+                )
+                schema_result = await server.call_tool(
+                    "CallDynamicTool",
+                    {
+                        "tool_name": "getTableOrViewSchema",
+                        "tool_arguments": '{"path":["test_table"]}',
+                    },
+                )
+                mock_invoke.assert_any_await("runSql", {"sqlText": "SELECT 1"})
+                mock_invoke.assert_any_await(
+                    "getTableOrViewSchema", {"path": ["test_table"]}
+                )
+
+        assert result is not None
+        assert schema_result is not None
 
     @pytest.mark.asyncio
     async def test_discover_returns_error_on_dremio_failure(self):

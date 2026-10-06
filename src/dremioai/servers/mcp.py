@@ -455,23 +455,20 @@ class FastMCPServerWithAuthToken(FastMCP):
             if response.error:
                 self._logger.warning("remote tool listing failed", error=response.error)
                 return static_tools
-            static_names = {t.name for t in static_tools}
-            remote_tools = []
-            for rt in response.tools:
-                if rt.name in static_names:
-                    self._logger.warning(
-                        "remote tool name collides with static tool, skipping",
-                        name=rt.name,
-                    )
-                    continue
-                remote_tools.append(
-                    MCPTool(
-                        name=rt.name,
-                        description=rt.description,
-                        inputSchema=rt.input_schema,
-                    )
+            remote_names = {rt.name for rt in response.tools}
+            replaced_names = tools.mcp_tools_replaced_by_remote(remote_names)
+            visible_static_tools = [
+                tool for tool in static_tools if tool.name not in replaced_names
+            ]
+            remote_tools = [
+                MCPTool(
+                    name=rt.name,
+                    description=rt.description,
+                    inputSchema=rt.input_schema,
                 )
-            return static_tools + remote_tools
+                for rt in response.tools
+            ]
+            return visible_static_tools + remote_tools
         except Exception:
             self._logger.exception("error fetching remote tools")
             return static_tools
