@@ -30,9 +30,11 @@ from operator import ior
 from pathlib import Path
 from shutil import which
 from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlsplit
 
 import jwt
 import uvicorn
+from aiohttp import ClientError, ClientSession, ClientTimeout
 from click import Choice
 from mcp.cli.claude import get_claude_config_path
 from mcp.server.auth.json_response import PydanticJSONResponse
@@ -319,6 +321,40 @@ def build_protected_resource_metadata(
     return OAuthProtectedResourceMetadata.model_validate(metadata)
 
 
+async def exchange_pat_for_jwt(pat: str, token_endpoint: str) -> str | None:
+    if urlsplit(token_endpoint).scheme != "https":
+        log.logger("exchange_pat_for_jwt").warning(
+            "PAT exchange requires an HTTPS token endpoint"
+        )
+        return None
+
+    form = {
+        "subject_token": pat,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:dremio:personal-access-token",
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "scope": "dremio.all",
+    }
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=5)) as session:
+            async with session.post(
+                token_endpoint, data=form, allow_redirects=False
+            ) as response:
+                if response.status != HTTPStatus.OK:
+                    return None
+                payload = await response.json()
+                access_token = (
+                    payload.get("access_token") if isinstance(payload, dict) else None
+                )
+                return (
+                    access_token
+                    if isinstance(access_token, str) and access_token
+                    else None
+                )
+    except (ClientError, TimeoutError, ValueError):
+        log.logger("exchange_pat_for_jwt").warning("PAT exchange failed", exc_info=True)
+        return None
+
+
 class FastMCPServerWithAuthToken(FastMCP):
     _logger = log.logger("FastMCPServerWithAuthToken")
 
@@ -349,10 +385,31 @@ class FastMCPServerWithAuthToken(FastMCP):
                 )
                 return None
 
-        async def verify_token(self, token: str) -> AccessToken | None:
+        async def verify_token(
+            self, token: str, allow_pat_exchange: bool = True
+        ) -> AccessToken | None:
             if not token:
                 self.logger.info("Token not provided")
                 return None
+
+            dremio = settings.instance().dremio
+            if (
+                allow_pat_exchange
+                and token.count(".") != 2
+                and dremio.get("implicit_pat_exchange")
+            ):
+                if not isinstance(self._jwks_verifier, JWKSVerifier):
+                    self.logger.warning("PAT exchange requires JWKS verification")
+                    return None
+                metadata = build_authorization_server_metadata()
+                if metadata is None:
+                    return None
+                exchanged = await exchange_pat_for_jwt(
+                    token, str(metadata.token_endpoint)
+                )
+                if exchanged is None:
+                    return None
+                return await self.verify_token(exchanged, allow_pat_exchange=False)
 
             expires_at = org_id = user_id = None
             if isinstance(self._jwks_verifier, JWKSVerifier):
