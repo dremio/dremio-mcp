@@ -300,6 +300,12 @@ class Dremio(FlagAwareModel):
         "so expired tokens trigger HTTP 401 and the client's OAuth refresh flow. "
         "Example: https://your-auth0-tenant.auth0.com/.well-known/jwks.json",
     )
+    implicit_pat_exchange: Annotated[bool, RuntimeMutable()] = Field(
+        default=True,
+        description="Accept a PAT as an MCP bearer token by exchanging it for a JWT at the "
+        "configured OAuth token endpoint when jwks_uri is configured. Enabled by "
+        "default; set to false to disable automatic exchange.",
+    )
     jwks_cache_lifespan: Optional[int] = Field(
         default=3600,
         description="How long (seconds) to cache JWKS keys before refetching. Default: 3600 (1 hour).",

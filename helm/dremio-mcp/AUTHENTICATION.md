@@ -11,6 +11,16 @@ This guide explains how to implement secure authentication for the Dremio MCP Se
 - CI/CD pipelines with service accounts
 - Non-production environments
 
+For those non-production uses, streamable-HTTP MCP automatically recognizes a
+Dremio PAT when `dremio.jwks_uri` is configured. It exchanges the PAT at the
+configured HTTPS OAuth token endpoint, verifies the returned JWT with JWKS,
+and forwards only that JWT to Dremio. An invalid PAT or failed exchange is
+rejected with HTTP 401. Set `dremio.implicit_pat_exchange: false` to disable
+this behavior. Without JWKS, the existing bearer-token forwarding behavior is
+unchanged. The exchange endpoint is derived from the configured Dremio API URI,
+not from an OAuth issuer override. The stdio transport already supports a
+configured PAT.
+
 ## Recommended Architecture: OAuth + External Token Provider
 
 ### Why This Approach?
@@ -273,4 +283,3 @@ See [examples/values-oauth-production.yaml](examples/values-oauth-production.yam
 - [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typescript-sdk)
 - [OAuth 2.0 Token Exchange RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
-

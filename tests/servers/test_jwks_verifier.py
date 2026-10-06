@@ -17,6 +17,7 @@
 Tests for JWKSVerifier — JWKS-based JWT verification and claims extraction.
 """
 
+import base64
 import logging
 import time
 import pytest
@@ -42,12 +43,16 @@ from dremioai.servers.mcp import (
     FastMCPServerWithAuthToken,
     MCPTransportLoggingMiddleware,
     Transports,
+    build_pat_exchange_endpoint,
+    exchange_pat_for_jwt,
+    is_dremio_pat,
     init,
     make_logged_invoke,
     RequireAuthWithWWWAuthenticateMiddleware,
 )
 
 JWKS_DECODE = "dremioai.servers.jwks_verifier.pyjwt.decode"
+SAMPLE_PAT = base64.b64encode(bytes(range(46))).decode("ascii")
 
 
 @pytest.fixture
@@ -263,6 +268,223 @@ class TestTokenExpiryBuffer:
         assert result is None
         warning_messages = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("JWKS verify" in msg for msg in warning_messages)
+
+
+class TestPATExchange:
+    @pytest.fixture(autouse=True)
+    def _configure_verifier(self):
+        dremio = MagicMock()
+        flags = {
+            "jwks_uri": "https://login.example.com/.well-known/jwks.json",
+            "jwks_cache_lifespan": 3600,
+            "jwks_token_expiry_buffer_secs": 60,
+            "implicit_pat_exchange": True,
+        }
+        dremio.get.side_effect = flags.get
+        dremio.uri = "https://api.qaemea1.dremio.site"
+        dremio.is_cloud = True
+        dremio.auth_issuer_uri_override = "https://unrelated-issuer.example.com"
+        dremio.auth_issuer_uri = "https://login.example.com"
+        dremio.auth_endpoints = (
+            "https://login.example.com/oauth/authorize",
+            "https://login.example.com/oauth/token",
+            "https://login.example.com/oauth/register",
+        )
+        with patch("dremioai.servers.mcp.settings") as mock_settings, patch.object(
+            PyJWKClient, "__init__", return_value=None
+        ):
+            mock_settings.instance.return_value.dremio = dremio
+            verifier = FastMCPServerWithAuthToken.DelegatingTokenVerifier()
+            verifier._jwks_verifier.verify = AsyncMock(
+                return_value=VerifiedClaims(
+                    exp=int(time.time()) + 3600, org_id="org-1", user_id="user-1"
+                )
+            )
+            self.verifier = verifier
+            self.dremio = dremio
+            self.flags = flags
+            yield
+
+    @pytest.mark.asyncio
+    async def test_pat_is_exchanged_and_downstream_receives_verified_jwt(self):
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt",
+            new=AsyncMock(return_value="header.payload.signature"),
+        ) as exchange:
+            result = await self.verifier.verify_token(SAMPLE_PAT)
+
+        exchange.assert_awaited_once_with(
+            SAMPLE_PAT, "https://login.qaemea1.dremio.site/oauth/token"
+        )
+        self.verifier._jwks_verifier.verify.assert_awaited_once_with(
+            "header.payload.signature"
+        )
+        assert result.token == "header.payload.signature"
+        assert result.client_id == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_jwt_does_not_trigger_pat_exchange(self):
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt", new_callable=AsyncMock
+        ) as exchange:
+            result = await self.verifier.verify_token("header.payload.signature")
+
+        exchange.assert_not_awaited()
+        assert result.token == "header.payload.signature"
+
+    @pytest.mark.asyncio
+    async def test_failed_exchange_rejects_pat(self):
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt",
+            new=AsyncMock(return_value=None),
+        ):
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
+        self.verifier._jwks_verifier.verify.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unverified_exchanged_token_is_rejected_without_retry(self):
+        self.verifier._jwks_verifier.verify.return_value = None
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt",
+            new=AsyncMock(return_value="opaque-token"),
+        ) as exchange:
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
+        exchange.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_expired_exchanged_token_is_rejected(self):
+        self.verifier._jwks_verifier.verify.side_effect = TokenExpiredError()
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt",
+            new=AsyncMock(return_value="header.payload.signature"),
+        ):
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
+
+    @pytest.mark.asyncio
+    async def test_without_jwks_preserves_pat_passthrough(self):
+        self.verifier._jwks_verifier = None
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt", new_callable=AsyncMock
+        ) as exchange:
+            result = await self.verifier.verify_token(SAMPLE_PAT)
+        exchange.assert_not_awaited()
+        assert result.token == SAMPLE_PAT
+
+    @pytest.mark.asyncio
+    async def test_disabled_pat_exchange_preserves_existing_rejection(self):
+        self.flags["implicit_pat_exchange"] = False
+        self.verifier._jwks_verifier.verify.return_value = None
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt", new_callable=AsyncMock
+        ) as exchange:
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
+        exchange.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_other_opaque_bearer_does_not_trigger_exchange(self):
+        self.verifier._jwks_verifier.verify.return_value = None
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt", new_callable=AsyncMock
+        ) as exchange:
+            assert await self.verifier.verify_token("not-a-dremio-pat") is None
+        exchange.assert_not_awaited()
+
+
+def test_pat_detection_accepts_only_canonical_dremio_format():
+    assert is_dremio_pat(SAMPLE_PAT)
+    assert not is_dremio_pat("header.payload.signature")
+    assert not is_dremio_pat("opaque-token")
+    assert not is_dremio_pat(SAMPLE_PAT[:-2] + "??")
+    assert not is_dremio_pat(SAMPLE_PAT[:-1] + "A")
+
+
+def test_pat_exchange_endpoint_ignores_oauth_issuer_override():
+    dremio = settings.Dremio.model_validate(
+        {
+            "uri": "https://api.qaemea1.dremio.site",
+            "project_id": "DREMIO_DYNAMIC",
+            "auth_issuer_uri_override": "https://unrelated-issuer.example.com",
+        }
+    )
+    assert build_pat_exchange_endpoint(dremio) == (
+        "https://login.qaemea1.dremio.site/oauth/token"
+    )
+
+
+def test_pat_exchange_endpoint_uses_software_origin():
+    dremio = settings.Dremio(
+        uri="https://dremio.example.com:9047",
+        auth_issuer_uri_override="https://unrelated-issuer.example.com",
+    )
+    assert build_pat_exchange_endpoint(dremio) == (
+        "https://dremio.example.com:9047/oauth/token"
+    )
+
+
+def test_pat_exchange_endpoint_rejects_insecure_or_unexpected_cloud_origins():
+    for uri in (
+        "http://api.qaemea1.dremio.site",
+        "https://other.qaemea1.dremio.site",
+        "https://api.qaemea1.dremio.site:9047",
+    ):
+        dremio = settings.Dremio.model_validate(
+            {"uri": uri, "project_id": "DREMIO_DYNAMIC"}
+        )
+        assert build_pat_exchange_endpoint(dremio) is None
+
+
+@pytest.mark.asyncio
+async def test_pat_exchange_posts_form_to_https_endpoint():
+    response = MagicMock(status=200)
+    response.json = AsyncMock(return_value={"access_token": "jwt"})
+    session = MagicMock()
+    session.__aenter__.return_value = session
+    session.post.return_value.__aenter__.return_value = response
+
+    with patch("dremioai.servers.mcp.ClientSession", return_value=session):
+        result = await exchange_pat_for_jwt(
+            "opaque-pat", "https://login.example.com/oauth/token"
+        )
+
+    assert result == "jwt"
+    (endpoint,) = session.post.call_args.args
+    assert endpoint == "https://login.example.com/oauth/token"
+    assert session.post.call_args.kwargs["data"] == {
+        "subject_token": "opaque-pat",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:dremio:personal-access-token",
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "scope": "dremio.all",
+    }
+    assert session.post.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_pat_exchange_refuses_plain_http():
+    with patch("dremioai.servers.mcp.ClientSession") as client:
+        assert (
+            await exchange_pat_for_jwt(
+                "opaque-pat", "http://login.example.com/token"
+            )
+            is None
+        )
+    client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pat_exchange_does_not_follow_redirects():
+    response = MagicMock(status=302)
+    response.json = AsyncMock()
+    session = MagicMock()
+    session.__aenter__.return_value = session
+    session.post.return_value.__aenter__.return_value = response
+
+    with patch("dremioai.servers.mcp.ClientSession", return_value=session):
+        assert await exchange_pat_for_jwt(
+            "opaque-pat", "https://login.example.com/oauth/token"
+        ) is None
+
+    assert session.post.call_args.kwargs["allow_redirects"] is False
+    response.json.assert_not_awaited()
 
 
 class TestStreamableHttpLogging:

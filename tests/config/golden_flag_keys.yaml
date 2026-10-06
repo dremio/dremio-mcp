@@ -10,6 +10,7 @@ flag_keys:
 - dremio.enable_search
 - dremio.enable_semantic_layer
 - dremio.extract_org_id_from_jwt
+- dremio.implicit_pat_exchange
 - dremio.jwks_cache_lifespan
 - dremio.jwks_token_expiry_buffer_secs
 - dremio.jwks_uri
