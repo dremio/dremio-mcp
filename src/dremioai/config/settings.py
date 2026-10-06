@@ -319,8 +319,8 @@ class Dremio(FlagAwareModel):
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
     enable_remote_tools: Annotated[Optional[bool], RuntimeMutable()] = Field(
-        default=False,
-        description="Enable dynamic registration of remote tools from Dremio's Java-side tool registry",
+        default=True,
+        description="Expose remote tools from Dremio's Java-side tool registry (enabled by default)",
     )
     enable_semantic_layer: Annotated[Optional[bool], RuntimeMutable()] = Field(
         default=False,

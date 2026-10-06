@@ -419,10 +419,7 @@ class FastMCPServerWithAuthToken(FastMCP):
         return await ai_tools.invoke_tool(tool_name, args)
 
     def expose_remote_tools(self) -> bool:
-        if not settings.instance().dremio.get("enable_remote_tools"):
-            return False
-        mode = settings.instance().tools.server_mode
-        return mode & tools.ToolType.DYNAMIC_REMOTE_TOOLS != 0
+        return bool(settings.instance().dremio.get("enable_remote_tools"))
 
     async def list_tools(self) -> list[MCPTool]:
         static_tools = await super().list_tools()
