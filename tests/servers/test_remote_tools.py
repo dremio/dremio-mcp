@@ -73,6 +73,28 @@ async def test_list_tools_includes_remote_tools():
 
 
 @pytest.mark.asyncio
+async def test_remote_tools_enabled_by_default_in_data_patterns_mode():
+    settings.set_base_settings(
+        settings.Settings.model_validate(
+            {
+                "dremio": {"uri": "https://dremio.example.com", "pat": "test-pat"},
+                "tools": {"server_mode": ToolType.FOR_DATA_PATTERNS.name},
+            }
+        )
+    )
+    server = _make_server()
+    remote = [AiTool(name="remote_tool_1")]
+
+    with patch.object(
+        server,
+        "_list_remote_tools",
+        new=AsyncMock(return_value=ListToolsResponse(tools=remote)),
+    ) as mock_list:
+        assert "remote_tool_1" in {tool.name for tool in await server.list_tools()}
+        mock_list.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_list_tools_excludes_remote_when_disabled():
     """enable_remote_tools=False → static tools only; backend not called."""
     settings.set_base_settings(_make_settings(enable_remote_tools=False))
