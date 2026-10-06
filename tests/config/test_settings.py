@@ -83,6 +83,11 @@ def test_create_default_config(mock_config_dir):
     assert tools.server_mode == mode
 
 
+def test_pat_exchange_enabled_by_default():
+    dremio = settings.Dremio(uri="https://api.dremio.cloud")
+    assert dremio.implicit_pat_exchange is True
+
+
 async def _read_runtime_settings():
     cfg = settings.instance()
     return (

@@ -17,6 +17,7 @@
 Tests for JWKSVerifier — JWKS-based JWT verification and claims extraction.
 """
 
+import base64
 import logging
 import time
 import pytest
@@ -43,12 +44,14 @@ from dremioai.servers.mcp import (
     MCPTransportLoggingMiddleware,
     Transports,
     exchange_pat_for_jwt,
+    is_dremio_pat,
     init,
     make_logged_invoke,
     RequireAuthWithWWWAuthenticateMiddleware,
 )
 
 JWKS_DECODE = "dremioai.servers.jwks_verifier.pyjwt.decode"
+SAMPLE_PAT = base64.b64encode(bytes(range(46))).decode("ascii")
 
 
 @pytest.fixture
@@ -304,10 +307,10 @@ class TestPATExchange:
             "dremioai.servers.mcp.exchange_pat_for_jwt",
             new=AsyncMock(return_value="header.payload.signature"),
         ) as exchange:
-            result = await self.verifier.verify_token("opaque-pat")
+            result = await self.verifier.verify_token(SAMPLE_PAT)
 
         exchange.assert_awaited_once_with(
-            "opaque-pat", "https://login.example.com/oauth/token"
+            SAMPLE_PAT, "https://login.example.com/oauth/token"
         )
         self.verifier._jwks_verifier.verify.assert_awaited_once_with(
             "header.payload.signature"
@@ -331,7 +334,7 @@ class TestPATExchange:
             "dremioai.servers.mcp.exchange_pat_for_jwt",
             new=AsyncMock(return_value=None),
         ):
-            assert await self.verifier.verify_token("opaque-pat") is None
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
         self.verifier._jwks_verifier.verify.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -341,7 +344,7 @@ class TestPATExchange:
             "dremioai.servers.mcp.exchange_pat_for_jwt",
             new=AsyncMock(return_value="opaque-token"),
         ) as exchange:
-            assert await self.verifier.verify_token("opaque-pat") is None
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
         exchange.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -351,16 +354,17 @@ class TestPATExchange:
             "dremioai.servers.mcp.exchange_pat_for_jwt",
             new=AsyncMock(return_value="header.payload.signature"),
         ):
-            assert await self.verifier.verify_token("opaque-pat") is None
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
 
     @pytest.mark.asyncio
-    async def test_pat_exchange_requires_jwks(self):
+    async def test_without_jwks_preserves_pat_passthrough(self):
         self.verifier._jwks_verifier = None
         with patch(
             "dremioai.servers.mcp.exchange_pat_for_jwt", new_callable=AsyncMock
         ) as exchange:
-            assert await self.verifier.verify_token("opaque-pat") is None
+            result = await self.verifier.verify_token(SAMPLE_PAT)
         exchange.assert_not_awaited()
+        assert result.token == SAMPLE_PAT
 
     @pytest.mark.asyncio
     async def test_disabled_pat_exchange_preserves_existing_rejection(self):
@@ -369,8 +373,25 @@ class TestPATExchange:
         with patch(
             "dremioai.servers.mcp.exchange_pat_for_jwt", new_callable=AsyncMock
         ) as exchange:
-            assert await self.verifier.verify_token("opaque-pat") is None
+            assert await self.verifier.verify_token(SAMPLE_PAT) is None
         exchange.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_other_opaque_bearer_does_not_trigger_exchange(self):
+        self.verifier._jwks_verifier.verify.return_value = None
+        with patch(
+            "dremioai.servers.mcp.exchange_pat_for_jwt", new_callable=AsyncMock
+        ) as exchange:
+            assert await self.verifier.verify_token("not-a-dremio-pat") is None
+        exchange.assert_not_awaited()
+
+
+def test_pat_detection_accepts_only_canonical_dremio_format():
+    assert is_dremio_pat(SAMPLE_PAT)
+    assert not is_dremio_pat("header.payload.signature")
+    assert not is_dremio_pat("opaque-token")
+    assert not is_dremio_pat(SAMPLE_PAT[:-2] + "??")
+    assert not is_dremio_pat(SAMPLE_PAT[:-1] + "A")
 
 
 @pytest.mark.asyncio

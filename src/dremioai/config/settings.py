@@ -301,10 +301,10 @@ class Dremio(FlagAwareModel):
         "Example: https://your-auth0-tenant.auth0.com/.well-known/jwks.json",
     )
     implicit_pat_exchange: Annotated[bool, RuntimeMutable()] = Field(
-        default=False,
+        default=True,
         description="Accept a PAT as an MCP bearer token by exchanging it for a JWT at the "
-        "configured OAuth token endpoint. Requires jwks_uri so the exchanged JWT can "
-        "be verified before use. Disabled by default.",
+        "configured OAuth token endpoint when jwks_uri is configured. Enabled by "
+        "default; set to false to disable automatic exchange.",
     )
     jwks_cache_lifespan: Optional[int] = Field(
         default=3600,

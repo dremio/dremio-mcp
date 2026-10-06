@@ -14,6 +14,8 @@
 #  limitations under the License.
 #
 import asyncio
+import base64
+import binascii
 import contextlib
 import logging
 import os
@@ -321,6 +323,17 @@ def build_protected_resource_metadata(
     return OAuthProtectedResourceMetadata.model_validate(metadata)
 
 
+def is_dremio_pat(token: str) -> bool:
+    # Dremio PATs encode a 16-byte UUID and 30 random bytes as standard Base64.
+    if len(token) != 64:
+        return False
+    try:
+        decoded = base64.b64decode(token, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return len(decoded) == 46 and base64.b64encode(decoded).decode("ascii") == token
+
+
 async def exchange_pat_for_jwt(pat: str, token_endpoint: str) -> str | None:
     if urlsplit(token_endpoint).scheme != "https":
         log.logger("exchange_pat_for_jwt").warning(
@@ -395,12 +408,10 @@ class FastMCPServerWithAuthToken(FastMCP):
             dremio = settings.instance().dremio
             if (
                 allow_pat_exchange
-                and token.count(".") != 2
+                and isinstance(self._jwks_verifier, JWKSVerifier)
+                and is_dremio_pat(token)
                 and dremio.get("implicit_pat_exchange")
             ):
-                if not isinstance(self._jwks_verifier, JWKSVerifier):
-                    self.logger.warning("PAT exchange requires JWKS verification")
-                    return None
                 metadata = build_authorization_server_metadata()
                 if metadata is None:
                     return None
