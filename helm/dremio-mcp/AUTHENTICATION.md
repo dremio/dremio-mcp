@@ -17,7 +17,9 @@ configured HTTPS OAuth token endpoint, verifies the returned JWT with JWKS,
 and forwards only that JWT to Dremio. An invalid PAT or failed exchange is
 rejected with HTTP 401. Set `dremio.implicit_pat_exchange: false` to disable
 this behavior. Without JWKS, the existing bearer-token forwarding behavior is
-unchanged. The stdio transport already supports a configured PAT.
+unchanged. The exchange endpoint is derived from the configured Dremio API URI,
+not from an OAuth issuer override. The stdio transport already supports a
+configured PAT.
 
 ## Recommended Architecture: OAuth + External Token Provider
 

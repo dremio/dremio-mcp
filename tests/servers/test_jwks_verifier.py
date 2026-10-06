@@ -43,6 +43,7 @@ from dremioai.servers.mcp import (
     FastMCPServerWithAuthToken,
     MCPTransportLoggingMiddleware,
     Transports,
+    build_pat_exchange_endpoint,
     exchange_pat_for_jwt,
     is_dremio_pat,
     init,
@@ -280,6 +281,9 @@ class TestPATExchange:
             "implicit_pat_exchange": True,
         }
         dremio.get.side_effect = flags.get
+        dremio.uri = "https://api.qaemea1.dremio.site"
+        dremio.is_cloud = True
+        dremio.auth_issuer_uri_override = "https://unrelated-issuer.example.com"
         dremio.auth_issuer_uri = "https://login.example.com"
         dremio.auth_endpoints = (
             "https://login.example.com/oauth/authorize",
@@ -310,7 +314,7 @@ class TestPATExchange:
             result = await self.verifier.verify_token(SAMPLE_PAT)
 
         exchange.assert_awaited_once_with(
-            SAMPLE_PAT, "https://login.example.com/oauth/token"
+            SAMPLE_PAT, "https://login.qaemea1.dremio.site/oauth/token"
         )
         self.verifier._jwks_verifier.verify.assert_awaited_once_with(
             "header.payload.signature"
@@ -392,6 +396,41 @@ def test_pat_detection_accepts_only_canonical_dremio_format():
     assert not is_dremio_pat("opaque-token")
     assert not is_dremio_pat(SAMPLE_PAT[:-2] + "??")
     assert not is_dremio_pat(SAMPLE_PAT[:-1] + "A")
+
+
+def test_pat_exchange_endpoint_ignores_oauth_issuer_override():
+    dremio = settings.Dremio.model_validate(
+        {
+            "uri": "https://api.qaemea1.dremio.site",
+            "project_id": "DREMIO_DYNAMIC",
+            "auth_issuer_uri_override": "https://unrelated-issuer.example.com",
+        }
+    )
+    assert build_pat_exchange_endpoint(dremio) == (
+        "https://login.qaemea1.dremio.site/oauth/token"
+    )
+
+
+def test_pat_exchange_endpoint_uses_software_origin():
+    dremio = settings.Dremio(
+        uri="https://dremio.example.com:9047",
+        auth_issuer_uri_override="https://unrelated-issuer.example.com",
+    )
+    assert build_pat_exchange_endpoint(dremio) == (
+        "https://dremio.example.com:9047/oauth/token"
+    )
+
+
+def test_pat_exchange_endpoint_rejects_insecure_or_unexpected_cloud_origins():
+    for uri in (
+        "http://api.qaemea1.dremio.site",
+        "https://other.qaemea1.dremio.site",
+        "https://api.qaemea1.dremio.site:9047",
+    ):
+        dremio = settings.Dremio.model_validate(
+            {"uri": uri, "project_id": "DREMIO_DYNAMIC"}
+        )
+        assert build_pat_exchange_endpoint(dremio) is None
 
 
 @pytest.mark.asyncio

@@ -334,6 +334,26 @@ def is_dremio_pat(token: str) -> bool:
     return len(decoded) == 46 and base64.b64encode(decoded).decode("ascii") == token
 
 
+def build_pat_exchange_endpoint(dremio: settings.Dremio) -> str | None:
+    uri = urlsplit(str(dremio.uri))
+    if (
+        uri.scheme != "https"
+        or not uri.hostname
+        or uri.username
+        or uri.password
+        or uri.path not in ("", "/")
+        or uri.query
+        or uri.fragment
+    ):
+        return None
+
+    if dremio.is_cloud:
+        if not uri.hostname.startswith("api.") or uri.port not in (None, 443):
+            return None
+        return f"https://login.{uri.hostname[4:]}/oauth/token"
+    return f"https://{uri.netloc}/oauth/token"
+
+
 async def exchange_pat_for_jwt(pat: str, token_endpoint: str) -> str | None:
     if urlsplit(token_endpoint).scheme != "https":
         log.logger("exchange_pat_for_jwt").warning(
@@ -412,12 +432,10 @@ class FastMCPServerWithAuthToken(FastMCP):
                 and is_dremio_pat(token)
                 and dremio.get("implicit_pat_exchange")
             ):
-                metadata = build_authorization_server_metadata()
-                if metadata is None:
+                token_endpoint = build_pat_exchange_endpoint(dremio)
+                if token_endpoint is None:
                     return None
-                exchanged = await exchange_pat_for_jwt(
-                    token, str(metadata.token_endpoint)
-                )
+                exchanged = await exchange_pat_for_jwt(token, token_endpoint)
                 if exchanged is None:
                     return None
                 return await self.verify_token(exchanged, allow_pat_exchange=False)
