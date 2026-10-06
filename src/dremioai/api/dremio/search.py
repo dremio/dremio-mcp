@@ -20,6 +20,7 @@ from pydantic import (
     Field,
     ConfigDict,
     field_validator,
+    model_validator,
 )
 from typing import (
     Any,
@@ -213,7 +214,9 @@ class Search(BaseModel):
     max_results: Optional[int] = Field(default=50, alias="maxResults")
     next_page_token: Optional[str] = Field(default=None, alias="pageToken")
     filter: Optional[Union[str, List[Category]]] = ""
-    query: str = None
+    queries: Optional[List[str]] = Field(default=None, min_length=1)
+    # Deprecated scalar field; still sent so older Dremio versions keep working.
+    query: Optional[str] = None
 
     @field_validator("filter", mode="after")
     @classmethod
@@ -226,6 +229,14 @@ class Search(BaseModel):
         else:
             v = ""
         return v
+
+    @model_validator(mode="after")
+    def sync_query_and_queries(self) -> "Search":
+        if self.queries is None:
+            self.queries = [self.query or ""]
+        if self.query is None:
+            self.query = self.queries[0]
+        return self
 
     model_config: ConfigDict = ConfigDict(serialize_by_alias=True)
 
