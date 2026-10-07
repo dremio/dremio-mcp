@@ -335,23 +335,10 @@ def is_dremio_pat(token: str) -> bool:
 
 
 def build_pat_exchange_endpoint(dremio: settings.Dremio) -> str | None:
-    uri = urlsplit(str(dremio.uri))
-    if (
-        uri.scheme != "https"
-        or not uri.hostname
-        or uri.username
-        or uri.password
-        or uri.path not in ("", "/")
-        or uri.query
-        or uri.fragment
-    ):
-        return None
-
-    if dremio.is_cloud:
-        if not uri.hostname.startswith("api.") or uri.port not in (None, 443):
-            return None
-        return f"https://login.{uri.hostname[4:]}/oauth/token"
-    return f"https://{uri.netloc}/oauth/token"
+    if endpoints := dremio.auth_endpoints:
+        _, token_endpoint, _ = endpoints
+        return token_endpoint
+    return None
 
 
 async def exchange_pat_for_jwt(pat: str, token_endpoint: str) -> str | None:

@@ -314,7 +314,7 @@ class TestPATExchange:
             result = await self.verifier.verify_token(SAMPLE_PAT)
 
         exchange.assert_awaited_once_with(
-            SAMPLE_PAT, "https://login.qaemea1.dremio.site/oauth/token"
+            SAMPLE_PAT, "https://login.example.com/oauth/token"
         )
         self.verifier._jwks_verifier.verify.assert_awaited_once_with(
             "header.payload.signature"
@@ -398,39 +398,31 @@ def test_pat_detection_accepts_only_canonical_dremio_format():
     assert not is_dremio_pat(SAMPLE_PAT[:-1] + "A")
 
 
-def test_pat_exchange_endpoint_ignores_oauth_issuer_override():
+def test_pat_exchange_endpoint_uses_cloud_login_host():
     dremio = settings.Dremio.model_validate(
-        {
-            "uri": "https://api.qaemea1.dremio.site",
-            "project_id": "DREMIO_DYNAMIC",
-            "auth_issuer_uri_override": "https://unrelated-issuer.example.com",
-        }
+        {"uri": "https://api.qaemea1.dremio.site", "project_id": "DREMIO_DYNAMIC"}
     )
     assert build_pat_exchange_endpoint(dremio) == (
         "https://login.qaemea1.dremio.site/oauth/token"
     )
 
 
-def test_pat_exchange_endpoint_uses_software_origin():
-    dremio = settings.Dremio(
-        uri="https://dremio.example.com:9047",
-        auth_issuer_uri_override="https://unrelated-issuer.example.com",
+def test_pat_exchange_endpoint_honors_issuer_override():
+    dremio = settings.Dremio.model_validate(
+        {
+            "uri": "https://ci-dremio.example.com",
+            "project_id": "DREMIO_DYNAMIC",
+            "auth_issuer_uri_override": "https://ci-login.example.com",
+        }
     )
     assert build_pat_exchange_endpoint(dremio) == (
-        "https://dremio.example.com:9047/oauth/token"
+        "https://ci-login.example.com/oauth/token"
     )
 
 
-def test_pat_exchange_endpoint_rejects_insecure_or_unexpected_cloud_origins():
-    for uri in (
-        "http://api.qaemea1.dremio.site",
-        "https://other.qaemea1.dremio.site",
-        "https://api.qaemea1.dremio.site:9047",
-    ):
-        dremio = settings.Dremio.model_validate(
-            {"uri": uri, "project_id": "DREMIO_DYNAMIC"}
-        )
-        assert build_pat_exchange_endpoint(dremio) is None
+def test_pat_exchange_endpoint_is_none_without_issuer():
+    dremio = settings.Dremio(uri="https://dremio.example.com:9047")
+    assert build_pat_exchange_endpoint(dremio) is None
 
 
 @pytest.mark.asyncio
