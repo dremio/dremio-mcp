@@ -36,6 +36,7 @@ from http import HTTPStatus
 
 from dremioai.config import settings
 from dremioai.api.oauth2 import get_oauth2_tokens
+from dremioai.api.basic_auth import get_session_token
 
 DeserializationStrategy: TypeAlias = Union[Callable, BaseModel]
 
@@ -221,6 +222,12 @@ class DremioAsyncHttpClient(AsyncHttpClient):
         ):
             oauth = get_oauth2_tokens()
             oauth.update_settings()
+
+        if dremio.basic_auth_configured and (
+            dremio.pat is None or dremio.basic_auth.has_expired
+        ):
+            session = get_session_token()
+            session.update_settings()
 
         uri = dremio.uri
         pat = dremio.pat
