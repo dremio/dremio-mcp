@@ -15,7 +15,7 @@
 #
 
 from pydantic import BaseModel, Field
-from typing import List, Dict, Union, Optional, Any
+from typing import List, Dict, Union, Optional, Any, Callable
 from dataclasses import dataclass
 
 from enum import auto
@@ -25,6 +25,7 @@ from dremioai.api.util import UStrEnum, run_in_parallel
 import pandas as pd
 import asyncio
 import itertools
+import json
 
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.config import settings
@@ -246,10 +247,16 @@ async def get_results(
 
 
 async def run_query(
-    query: Union[Query, str], use_df: bool = False, with_guardrails: bool = True
+    query: Union[Query, str],
+    use_df: bool = False,
+    with_guardrails: bool = True,
+    max_bytes: Optional[int] = None,
+    row_size: Optional[Callable[[Dict[str, Any]], int]] = None,
 ) -> Union[JobResultsWrapper, pd.DataFrame, "QueryResult"]:
     if with_guardrails:
-        qr = await _run_query_result(query=query)
+        qr = await _run_query_result(
+            query=query, max_bytes=max_bytes, row_size=row_size
+        )
         if use_df:
             return _query_result_to_df(qr)
         return qr
@@ -286,6 +293,8 @@ class QueryResult:
     returned_rows: int
     pages_fetched: int
     result_schema: Optional[List[ResultSchema]] = None
+    # True when the fetch stopped early because the rows already exceed max_bytes
+    stopped_at_bytes: bool = False
 
     @property
     def truncated(self) -> bool:
@@ -307,7 +316,11 @@ def _query_result_to_df(qr: QueryResult) -> pd.DataFrame:
     return df
 
 
-async def _run_query_result(query: Union[Query, str]) -> QueryResult:
+async def _run_query_result(
+    query: Union[Query, str],
+    max_bytes: Optional[int] = None,
+    row_size: Optional[Callable[[Dict[str, Any]], int]] = None,
+) -> QueryResult:
     client = AsyncHttpClient()
     dremio_settings = settings.instance().dremio
     if not isinstance(query, Query):
@@ -342,6 +355,7 @@ async def _run_query_result(query: Union[Query, str]) -> QueryResult:
     rows: List[Dict[str, Any]] = []
     result_schema: Optional[List[ResultSchema]] = None
     pages_fetched = 0
+    fetched_bytes, stopped_at_bytes = 0, False
 
     for off in range(0, fetch_rows, page_size):
         remaining = fetch_rows - len(rows)
@@ -353,6 +367,15 @@ async def _run_query_result(query: Union[Query, str]) -> QueryResult:
         if not page.rows:
             break
         rows.extend(page.rows[:remaining])
+        if max_bytes:
+            size = row_size or (
+                lambda r: len(json.dumps(r, default=str).encode("utf-8"))
+            )
+            fetched_bytes += sum(size(r) for r in page.rows[:remaining])
+            if fetched_bytes > max_bytes and len(rows) < fetch_rows:
+                # already over the cap: the rest could not be returned anyway
+                stopped_at_bytes = True
+                break
         if len(rows) >= fetch_rows:
             break
 
@@ -362,4 +385,5 @@ async def _run_query_result(query: Union[Query, str]) -> QueryResult:
         returned_rows=len(rows),
         pages_fetched=pages_fetched,
         result_schema=result_schema,
+        stopped_at_bytes=stopped_at_bytes,
     )

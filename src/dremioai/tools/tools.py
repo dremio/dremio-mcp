@@ -417,7 +417,12 @@ class RunSqlQuery(Tools):
             if max_bytes is None:
                 max_bytes = 204_800
 
-            qr = await sql.run_query(query=tagged_query, with_guardrails=True)
+            qr = await sql.run_query(
+                query=tagged_query,
+                with_guardrails=True,
+                max_bytes=max_bytes or None,
+                row_size=lambda r: len(json.dumps(_json_safe_row(r)).encode("utf-8")),
+            )
             project_id = dremio_settings.project_id
             sql_result_total_rows.labels(project_id=project_id).observe(qr.total_rows)
             sql_result_pages_fetched.labels(project_id=project_id).observe(
@@ -441,6 +446,10 @@ class RunSqlQuery(Tools):
             sql_result_response_bytes.labels(project_id=project_id).observe(
                 response_bytes
             )
+
+            if truncation_reason is None and qr.stopped_at_bytes:
+                # never return part of a result as if it were the whole
+                truncation_reason = "byte_limit"
 
             if truncation_reason:
                 sql_result_truncations.labels(
