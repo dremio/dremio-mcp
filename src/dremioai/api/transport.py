@@ -15,6 +15,7 @@
 #
 import logging
 import asyncio
+from ssl import SSLContext
 
 from aiohttp import ClientSession, ClientResponse, ClientResponseError
 from typing import (
@@ -174,6 +175,7 @@ class AsyncHttpClient:
         body: Dict[AnyStr, AnyStr] = None,
         file: Optional[TextIO] = None,
         top_level_list: bool = False,
+        ssl: Union[bool, SSLContext] = False,
     ):
         async with ClientSession(middlewares=(retry_middleware,)) as session:
             self.log_request("GET", endpoint, params)
@@ -182,7 +184,7 @@ class AsyncHttpClient:
                 headers=self.headers,
                 json=body,
                 params=params,
-                ssl=False,
+                ssl=ssl,
             ) as response:
                 return await self.handle_response(
                     response, deser, file, top_level_list=top_level_list
@@ -196,6 +198,7 @@ class AsyncHttpClient:
         file: Optional[TextIO] = None,
         top_level_list: bool = False,
         params: Dict[AnyStr, Any] = None,
+        ssl: Union[bool, SSLContext] = False,
     ):
         async with ClientSession(middlewares=(retry_middleware,)) as session:
             self.log_request("POST", endpoint, params)
@@ -204,7 +207,7 @@ class AsyncHttpClient:
                 params=params,
                 headers=self.headers,
                 json=body,
-                ssl=False,
+                ssl=ssl,
             ) as response:
                 return await self.handle_response(
                     response, deser, file, top_level_list=top_level_list
