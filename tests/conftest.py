@@ -205,7 +205,7 @@ def _create_logging_server(log_level="warning"):
             (r"/search", "search/search_results.json"),  # Search endpoints
             (r"/catalog/.*/wiki", "catalog/wiki.json"),  # Wiki endpoints
             (r"/catalog/.*/tags", "catalog/tags.json"),  # Tags endpoints
-            (r"/catalog/.*/graph", "catalog/lineage.json"),  # Lineage endpoints
+            (r"/catalog/.*/lineage", "catalog/lineage.json"),  # Lineage endpoints
             (r"/catalog(/by-path)?", "catalog/table_schema.json"),  # Schema endpoints
         ]
     )

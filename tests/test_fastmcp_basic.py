@@ -76,7 +76,7 @@ async def test_create_fastmcp_server_and_register_tools():
             (r"/search", "search/search_results.json"),  # Search endpoints
             (r"/catalog/.*/wiki", "catalog/wiki.json"),  # Wiki endpoints
             (r"/catalog/.*/tags", "catalog/tags.json"),  # Tags endpoints
-            (r"/catalog/.*/graph", "catalog/lineage.json"),  # Lineage endpoints
+            (r"/catalog/.*/lineage", "catalog/lineage.json"),  # Lineage endpoints
             (r"/catalog(/by-path)?", "catalog/table_schema.json"),  # Schema endpoints
         ]
     )

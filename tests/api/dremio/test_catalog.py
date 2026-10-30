@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import inspect
 from unittest.mock import patch
 from types import SimpleNamespace
 
@@ -132,3 +133,140 @@ async def test_get_descriptions_raises_on_schema_fetch_error():
         with pytest.raises(ClientResponseError):
             await catalog.get_descriptions([["a", "b"]])
 
+
+
+class _FakeLineageClient:
+    """Stands in for AsyncHttpClient: records the request, validates the payload like the real one."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    async def get(self, url, params=None, deser=None):
+        self.calls.append((url, params))
+        return deser.model_validate(self.payload)
+
+
+def _settings_without_project():
+    return SimpleNamespace(dremio=SimpleNamespace(project_id=None))
+
+
+async def _get_lineage(payload, dataset="11111111-1111-1111-1111-111111111111"):
+    client = _FakeLineageClient(payload)
+    with patch.object(catalog, "AsyncHttpClient", return_value=client), patch.object(
+        catalog.settings, "instance", return_value=_settings_without_project()
+    ):
+        result = await catalog.get_lineage(dataset)
+    return result, client
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_uses_lineage_endpoint():
+    result, client = await _get_lineage({"entities": []})
+
+    url, params = client.calls[0]
+    assert url == "/api/v3/catalog/11111111-1111-1111-1111-111111111111/lineage"
+    assert "graph" not in url
+    assert params == {"removeCatalogName": "true"}
+    assert result["entities"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_parses_entities_and_edges():
+    payload = {
+        "entities": [
+            {"id": "a", "name": "t", "path": ["Samples", "t"], "type": "TABLE"},
+            {"id": "b", "name": "v", "path": ["space", "v"], "type": "VIEW"},
+        ],
+        "sourceEdges": [],
+        "datasetEdges": [
+            {"upstream": {"entityId": "a"}, "downstream": {"entityId": "b"}}
+        ],
+    }
+    result, _ = await _get_lineage(payload)
+
+    assert [e["id"] for e in result["entities"]] == ["a", "b"]
+    assert result["datasetEdges"][0]["upstream"]["entityId"] == "a"
+    assert result["datasetEdges"][0]["downstream"]["entityId"] == "b"
+    assert result["sourceEdges"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_accepts_view_over_space_dataset():
+    """DX-110949: a VDS built on a dataset that lives in a Space must not fail to parse.
+    /lineage reports the Space as an entity; the old /graph models rejected containerType SPACE."""
+    payload = {
+        "entities": [
+            {"id": "s", "name": "samples", "path": ["samples"], "type": "SOURCE"},
+            {"id": "t", "name": "t", "path": ["samples", "t"], "type": "TABLE"},
+            {"id": "v", "name": "v", "path": ["my_space", "v"], "type": "VIEW"},
+        ],
+        "sourceEdges": [
+            {"upstream": {"entityId": "s"}, "downstream": {"entityId": "t"}}
+        ],
+        "datasetEdges": [
+            {"upstream": {"entityId": "t"}, "downstream": {"entityId": "v"}}
+        ],
+    }
+    result, _ = await _get_lineage(payload)
+
+    assert len(result["entities"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_tolerates_unknown_entity_type():
+    result, _ = await _get_lineage(
+        {"entities": [{"id": "x", "path": ["x"], "type": "SOMETHING_NEW"}]}
+    )
+
+    assert result["entities"][0]["type"] == "SOMETHING_NEW"
+
+
+@pytest.mark.asyncio
+async def test_get_lineage_view_without_dependencies():
+    result, _ = await _get_lineage(
+        {
+            "entities": [{"id": "v", "name": "v", "path": ["s", "v"], "type": "VIEW"}],
+            "sourceEdges": [],
+            "datasetEdges": [],
+        }
+    )
+
+    assert len(result["entities"]) == 1
+    assert result["sourceEdges"] == [] and result["datasetEdges"] == []
+
+
+async def _lineage_tool_result(exc: Exception):
+    with patch.object(tools_mod, "get_lineage", side_effect=exc):
+        invoke = inspect.unwrap(tools_mod.GetTableOrViewLineage.invoke)
+        return await invoke(tools_mod.GetTableOrViewLineage(), "some.table")
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [
+        (404, "not found"),
+        (403, "was denied"),
+        (401, "was denied"),
+        (500, "lineage lookup failed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_lineage_tool_error_message_depends_on_status(status, expected):
+    result = await _lineage_tool_result(_client_response_error(status, "boom"))
+
+    assert result["error"] == "Unable to retrieve lineage for the specified table or view."
+    assert expected in result["message"]
+    assert "http" not in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_lineage_tool_reports_unexpected_response_format():
+    from pydantic import TypeAdapter
+
+    try:
+        TypeAdapter(int).validate_python("x")
+    except Exception as validation_error:
+        result = await _lineage_tool_result(validation_error)
+
+    assert "unexpected format" in result["message"]
