@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.13-alpine3.24 AS builder
+FROM python:3.13.18-alpine3.24 AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -21,7 +21,7 @@ RUN uv build --wheel -o /dist
 
 
 # Runtime stage
-FROM python:3.13-alpine3.24
+FROM python:3.13.18-alpine3.24
 
 # Create non-root user (Alpine/busybox: adduser, not useradd)
 RUN adduser -D -u 1001 appuser
