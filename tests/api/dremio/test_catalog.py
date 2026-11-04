@@ -23,6 +23,7 @@ import pytest
 from aiohttp import ClientResponseError
 
 from dremioai.api.dremio import catalog, search
+from dremioai.api.transport import AsyncHttpClient, DeserializationError
 from dremioai.tools import tools as tools_mod
 
 
@@ -246,6 +247,7 @@ async def _lineage_tool_result(exc: Exception):
     "status, expected",
     [
         (404, "not found"),
+        (400, "versioned"),
         (403, "was denied"),
         (401, "was denied"),
         (500, "lineage lookup failed"),
@@ -262,11 +264,23 @@ async def test_lineage_tool_error_message_depends_on_status(status, expected):
 
 @pytest.mark.asyncio
 async def test_lineage_tool_reports_unexpected_response_format():
-    from pydantic import TypeAdapter
+    """Goes through the real AsyncHttpClient.deserialize, which wraps the pydantic
+    ValidationError; the tool must still report the format problem, not the generic retry message."""
 
-    try:
-        TypeAdapter(int).validate_python("x")
-    except Exception as validation_error:
-        result = await _lineage_tool_result(validation_error)
+    class _Response:
+        request_info = SimpleNamespace(method="GET", url="http://test/lineage")
+
+        async def text(self):
+            return '{"entities": [{"id": "v"}]}'  # entity without a path
+
+    client = AsyncHttpClient("http://test", "token")
+
+    async def get_lineage_via_transport(*_a, **_kw):
+        return await client.deserialize(_Response(), catalog.LineageResponse)
+
+    with pytest.raises(DeserializationError):
+        await get_lineage_via_transport()
+
+    result = await _lineage_tool_result(get_lineage_via_transport)
 
     assert "unexpected format" in result["message"]

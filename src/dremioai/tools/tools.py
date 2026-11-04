@@ -38,7 +38,6 @@ from decimal import Decimal
 from http import HTTPStatus
 
 from aiohttp import ClientResponseError
-from pydantic import ValidationError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dremioai import log
@@ -52,6 +51,7 @@ from dremioai.config import settings
 from dremioai.config.tools import ToolType
 from dremioai.api.prometheus import vm
 from dremioai.api.dremio.catalog import get_schema, get_lineage, get_descriptions
+from dremioai.api.transport import DeserializationError
 from dremioai.api.util import run_in_parallel
 from csv import reader
 from io import StringIO
@@ -601,6 +601,11 @@ class GetTableOrViewLineage(Tools):
             logger.error(f"Lineage lookup failed for {table_name}: HTTP {e.status} {e.message}")
             if e.status == HTTPStatus.NOT_FOUND:
                 message = "The table or view was not found. Please verify the table name and try again."
+            elif e.status == HTTPStatus.BAD_REQUEST:
+                message = (
+                    "Lineage is not available for this table or view. Lineage is not supported for "
+                    "versioned datasets, and the lineage graph may be too large to return."
+                )
             elif e.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
                 message = "Access to the lineage of this table or view was denied. It may not exist, or you may not have permission to see it."
             else:
@@ -609,7 +614,7 @@ class GetTableOrViewLineage(Tools):
                 "error": "Unable to retrieve lineage for the specified table or view.",
                 "message": message,
             }
-        except ValidationError as e:
+        except DeserializationError as e:
             logger.error(f"Lineage response for {table_name} could not be parsed: {e}")
             return {
                 "error": "Unable to retrieve lineage for the specified table or view.",
