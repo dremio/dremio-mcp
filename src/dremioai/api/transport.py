@@ -99,6 +99,10 @@ async def retry_middleware(
     return response
 
 
+class DeserializationError(RuntimeError):
+    """The HTTP response body did not match the expected model."""
+
+
 class AsyncHttpClient:
     def __init__(self, uri: AnyStr, token: AnyStr):
         self.uri = uri
@@ -134,7 +138,9 @@ class AsyncHttpClient:
             logger().error(
                 f"in {response.request_info.method} {response.request_info.url}: {e.errors()}\ndata = {js}"
             )
-            raise RuntimeError(f"Unable to parse {e}, deser={deser}\n{e.errors()}")
+            raise DeserializationError(
+                f"Unable to parse {e}, deser={deser}\n{e.errors()}"
+            ) from e
         except Exception as e:
             logger().error(
                 f"in {response.request_info.method} {response.request_info.url} deser={deser}: unable to parse {js}: {e}"

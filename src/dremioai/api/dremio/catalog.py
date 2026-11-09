@@ -14,11 +14,10 @@
 #  limitations under the License.
 #
 
-from pydantic import BaseModel, Field, AfterValidator, ValidationError
+from pydantic import BaseModel, Field
 from typing import Annotated, List, Set, Tuple, Dict, AnyStr, Any, Union, Optional
 from datetime import datetime
 from enum import StrEnum, auto
-from functools import partial
 
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.api.util import UStrEnum, run_in_parallel
@@ -48,66 +47,30 @@ class DatasetSubType(UStrEnum):
     DIRECT = auto()
 
 
-def subset_validator(elem: UStrEnum, values: List[UStrEnum]) -> UStrEnum:
-    if elem in values:
-        return elem
-    raise ValidationError(f"{elem} not in {values}")
-
-
-class LineageBase(BaseModel):
-    id: AnyStr
+class LineageEntity(BaseModel):
+    id: str
+    name: Optional[str] = None
     path: List[str]
-    tag: AnyStr
-    created_at: Optional[datetime] = Field(..., alias="createdAt")
+    type: Optional[str] = None
 
 
-class LineageSource(LineageBase):
-    type: Annotated[
-        CatalogItemType,
-        AfterValidator(partial(subset_validator, values=[CatalogItemType.CONTAINER])),
-    ]
-    container_type: Annotated[
-        ContainerSubType,
-        AfterValidator(
-            partial(
-                subset_validator,
-                values=[ContainerSubType.HOME, ContainerSubType.SOURCE],
-            )
-        ),
-    ] = Field(..., alias="containerType")
+class LineageEdgeEnd(BaseModel):
+    entity_id: str = Field(..., alias="entityId")
 
 
-class LineageParents(LineageBase):
-    type: Annotated[
-        CatalogItemType,
-        AfterValidator(partial(subset_validator, values=[CatalogItemType.DATASET])),
-    ]
-    dataset_type: Annotated[
-        DatasetSubType,
-        AfterValidator(
-            partial(
-                subset_validator,
-                values=[DatasetSubType.PROMOTED, DatasetSubType.VIRTUAL],
-            )
-        ),
-    ] = Field(..., alias="datasetType")
-
-
-class LineageChildren(LineageBase):
-    type: Annotated[
-        CatalogItemType,
-        AfterValidator(partial(subset_validator, values=[CatalogItemType.DATASET])),
-    ]
-    dataset_type: Annotated[
-        DatasetSubType,
-        AfterValidator(partial(subset_validator, values=[DatasetSubType.VIRTUAL])),
-    ] = Field(..., alias="datasetType")
+class LineageEdge(BaseModel):
+    upstream: LineageEdgeEnd
+    downstream: LineageEdgeEnd
 
 
 class LineageResponse(BaseModel):
-    sources: List[LineageSource]
-    parents: List[LineageParents]
-    children: List[LineageChildren]
+    entities: List[LineageEntity] = Field(default_factory=list)
+    source_edges: List[LineageEdge] = Field(
+        default_factory=list, alias="sourceEdges"
+    )
+    dataset_edges: List[LineageEdge] = Field(
+        default_factory=list, alias="datasetEdges"
+    )
 
 
 async def get_lineage(
@@ -123,11 +86,11 @@ async def get_lineage(
     endpoint = f"/v0/projects/{project_id}/catalog" if project_id else "/api/v3/catalog"
     params = {"removeCatalogName": str(remove_catalog_name).lower()}
     result: LineageResponse = await client.get(
-        f"{endpoint}/{dataset_id_or_path}/graph",
+        f"{endpoint}/{dataset_id_or_path}/lineage",
         params=params,
         deser=LineageResponse,
     )
-    return result.model_dump()
+    return result.model_dump(by_alias=True)
 
 
 async def get_schema(
