@@ -178,9 +178,7 @@ async def _fetch_results(
     )
 
 
-async def _wait_for_job(
-    client: AsyncHttpClient, endpoint: str, job_id: str
-) -> Job:
+async def _wait_for_job(client: AsyncHttpClient, endpoint: str, job_id: str) -> Job:
     delay = settings.instance().dremio.api.get("polling_interval")
 
     job: Job = await client.get(f"{endpoint}/job/{job_id}", deser=Job)

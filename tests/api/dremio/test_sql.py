@@ -83,15 +83,19 @@ async def test_get_results_uses_polling_interval_get_for_ld_precedence(mock_ldcl
 
 
 def _make_completed_job(row_count: int) -> Job:
-    return Job(jobState=JobState.COMPLETED, rowCount=row_count, queryType=QueryType.REST)
+    return Job(
+        jobState=JobState.COMPLETED, rowCount=row_count, queryType=QueryType.REST
+    )
 
 
 def _make_job_results(rows):
     return JobResults(
         rowCount=len(rows),
-        schema=[{"name": name, "type": {"name": "VARCHAR"}} for name in rows[0].keys()]
-        if rows
-        else [],
+        schema=(
+            [{"name": name, "type": {"name": "VARCHAR"}} for name in rows[0].keys()]
+            if rows
+            else []
+        ),
         rows=rows,
     )
 
@@ -215,7 +219,12 @@ async def test_run_query_can_disable_guardrails_for_full_results():
 
     settings.set_base_settings(
         settings.Settings.model_validate(
-            {"dremio": {"uri": "https://test.dremio.cloud", "api": {"polling_interval": 0}}}
+            {
+                "dremio": {
+                    "uri": "https://test.dremio.cloud",
+                    "api": {"polling_interval": 0},
+                }
+            }
         )
     )
 

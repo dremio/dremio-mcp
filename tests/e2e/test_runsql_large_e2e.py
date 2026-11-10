@@ -50,7 +50,8 @@ async def test_run_sql_query_large_mock_fetches_multiple_pages(
         result_fetches = [
             le
             for le in logging_server.logs()
-            if le.path.endswith(f"/job/{LARGE_SQL_JOB_ID}/results") and le.method == "GET"
+            if le.path.endswith(f"/job/{LARGE_SQL_JOB_ID}/results")
+            and le.method == "GET"
         ]
         assert len(result_fetches) == 3
         assert result_fetches[0].query_params == {"offset": "0", "limit": "500"}

@@ -315,9 +315,7 @@ def with_metrics(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
                 _tool_result_bytes(result)
             )
             if _tool_result_is_error(result):
-                tool_result_errors.labels(
-                    project_id=project_id, tool=tool_name
-                ).inc()
+                tool_result_errors.labels(project_id=project_id, tool=tool_name).inc()
             return result
         except Exception:
             tool_result_errors.labels(project_id=project_id, tool=tool_name).inc()
@@ -387,9 +385,7 @@ class RunSqlQuery(Tools):
 
     @secured
     @with_metrics
-    async def invoke(
-        self, query: str
-    ) -> CallToolResult:
+    async def invoke(self, query: str) -> CallToolResult:
         """Run a SQL query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
@@ -415,7 +411,9 @@ class RunSqlQuery(Tools):
                 include_structured=False,
             )
         try:
-            tagged_query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            tagged_query = (
+                f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            )
             dremio_settings = settings.instance().dremio
             max_bytes = dremio_settings.get("max_result_bytes")
             if max_bytes is None:
@@ -614,7 +612,9 @@ class GetTableOrViewLineage(Tools):
         try:
             return await get_lineage(table_name)
         except ClientResponseError as e:
-            logger.error(f"Lineage lookup failed for {table_name}: HTTP {e.status} {e.message}")
+            logger.error(
+                f"Lineage lookup failed for {table_name}: HTTP {e.status} {e.message}"
+            )
             if e.status == HTTPStatus.NOT_FOUND:
                 message = "The table or view was not found. Please verify the table name and try again."
             elif e.status == HTTPStatus.BAD_REQUEST:
