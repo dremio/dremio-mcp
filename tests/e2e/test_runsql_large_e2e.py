@@ -59,7 +59,7 @@ async def test_run_sql_query_large_mock_fetches_multiple_pages(
 
 
 @pytest.mark.asyncio
-async def test_run_sql_query_large_mock_byte_truncation_sets_tool_error(
+async def test_run_sql_query_large_mock_oversized_rows_are_not_an_error(
     mock_config_dir, logging_server, logging_level
 ):
     async with http_streamable_mcp_server(
@@ -76,7 +76,7 @@ async def test_run_sql_query_large_mock_byte_truncation_sets_tool_error(
             )
 
         assert result is not None
-        assert result.isError
+        assert not result.isError
         assert result.structuredContent is None
         payload = json.loads(result.content[0].text)
         assert payload["truncated"] is True
@@ -84,4 +84,39 @@ async def test_run_sql_query_large_mock_byte_truncation_sets_tool_error(
         assert payload["returned_rows"] == 0
         assert payload["total_rows"] == 1200
         assert payload["result"] == []
-        assert "returned too much data" in result.content[0].text
+        assert "even a single row exceeds" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_run_sql_query_large_mock_partial_rows_stop_fetching_early(
+    mock_config_dir, logging_server, logging_level
+):
+    async with http_streamable_mcp_server(
+        logging_server,
+        logging_level,
+        dremio_overrides={"max_result_bytes": 2000},
+    ) as sf:
+        async with http_streamable_client_server(
+            sf.mcp_server, token="my-token"
+        ) as session:
+            result: CallToolResult = await session.call_tool(
+                "RunSqlQuery",
+                {"query": f"SELECT 1 /* {LARGE_SQL_MARKER} */"},
+            )
+
+        assert result is not None
+        assert not result.isError
+        payload = json.loads(result.content[0].text)
+        assert payload["truncated"] is True
+        assert payload["total_rows"] == 1200
+        assert 0 < payload["returned_rows"] < 1200
+        assert len(payload["result"]) == payload["returned_rows"]
+        assert "Partial result" in payload["message"]
+
+        result_fetches = [
+            le
+            for le in logging_server.logs()
+            if le.path.endswith(f"/job/{LARGE_SQL_JOB_ID}/results")
+            and le.method == "GET"
+        ]
+        assert len(result_fetches) == 1

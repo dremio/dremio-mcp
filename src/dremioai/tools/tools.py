@@ -395,10 +395,11 @@ class RunSqlQuery(Tools):
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
         If a DML query is not allowed, this will return an error.
 
-        Results are capped at a server-decided response size limit. If the query returns too much
-        data, this tool returns an error instructing the client to retry with a narrower query,
-        for example by selecting fewer columns, filtering more aggressively, aggregating, or
-        fetching the data in stages.
+        Results are capped at a server-decided response size limit. If the query returns more
+        data than fits, this tool returns the first rows that fit with "truncated": true,
+        "total_rows", "returned_rows", and a message. Treat such a result as partial: for answers
+        over all rows, refine the query, for example by aggregating, filtering more aggressively,
+        selecting fewer columns, or fetching the data in stages.
 
         Args:
         query: sql query
@@ -420,7 +421,9 @@ class RunSqlQuery(Tools):
             if max_bytes is None:
                 max_bytes = 204_800
 
-            qr = await sql.run_query(query=tagged_query, with_guardrails=True)
+            qr = await sql.run_query(
+                query=tagged_query, with_guardrails=True, max_bytes=max_bytes
+            )
             project_id = dremio_settings.project_id
             sql_result_total_rows.labels(project_id=project_id).observe(qr.total_rows)
             sql_result_pages_fetched.labels(project_id=project_id).observe(
@@ -445,24 +448,23 @@ class RunSqlQuery(Tools):
                 response_bytes
             )
 
+            if truncation_reason is None and len(records) < qr.total_rows:
+                truncation_reason = "byte_limit"
+
             if truncation_reason:
                 sql_result_truncations.labels(
                     project_id=project_id, reason=truncation_reason
                 ).inc()
                 return _call_tool_result(
                     {
-                        "error": (
-                            "This query returned too much data. Try again with a "
-                            "different strategy that reduces the selected data, "
-                            "such as adding LIMIT, filtering, or aggregating."
-                        ),
-                        "result": [],
+                        "result": records,
                         "truncated": True,
                         "total_rows": qr.total_rows,
-                        "returned_rows": 0,
+                        "returned_rows": len(records),
                         "truncation_reason": truncation_reason,
+                        "message": _partial_result_message(len(records), qr.total_rows),
                     },
-                    is_error=True,
+                    is_error=False,
                     include_structured=False,
                 )
 
@@ -478,6 +480,20 @@ class RunSqlQuery(Tools):
                 is_error=True,
                 include_structured=False,
             )
+
+
+def _partial_result_message(returned_rows: int, total_rows: int) -> str:
+    if returned_rows == 0:
+        return (
+            f"The query returned {total_rows} rows, but even a single row exceeds the "
+            "response size limit, so no rows are shown. Select fewer or narrower columns."
+        )
+    return (
+        f"Partial result: showing the first {returned_rows} of {total_rows} rows because "
+        "the full result exceeds the response size limit. Do not treat these rows as "
+        "complete; for answers over all rows, aggregate, filter, or select fewer columns "
+        "in SQL."
+    )
 
 
 class BuildUsageReport(Tools):

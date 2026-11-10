@@ -20,7 +20,7 @@ import pytest
 from mcp.types import CallToolResult
 
 from conftest import http_streamable_client_server, http_streamable_mcp_server
-from dremioai.metrics.tool_metrics import tool_result_errors
+from dremioai.metrics.tool_metrics import sql_result_truncations
 from mocks.http_mock import LARGE_SQL_MARKER
 
 
@@ -148,7 +148,7 @@ async def test_metrics_with_tool_invocation(
 
 
 @pytest.mark.asyncio
-async def test_error_metrics_with_truncated_tool_result(
+async def test_truncated_tool_result_records_truncation_metric(
     mock_config_dir, logging_server, logging_level
 ):
     async with http_streamable_mcp_server(
@@ -166,15 +166,15 @@ async def test_error_metrics_with_truncated_tool_result(
             result: CallToolResult = await session.call_tool(
                 "RunSqlQuery", {"query": f"SELECT 1 /* {LARGE_SQL_MARKER} */"}
             )
-            assert result is not None and result.isError
+            assert result is not None and not result.isError
 
         samples = []
-        for metric in tool_result_errors.collect():
+        for metric in sql_result_truncations.collect():
             samples.extend(metric.samples)
 
         assert any(
-            sample.name == "mcp_tool_result_errors_total"
-            and sample.labels.get("tool") == "RunSqlQuery"
+            sample.name == "mcp_runsql_truncations_total"
+            and sample.labels.get("reason") == "byte_limit"
             and sample.value >= 1
             for sample in samples
         )

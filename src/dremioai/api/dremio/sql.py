@@ -25,6 +25,7 @@ from dremioai.api.util import UStrEnum, run_in_parallel
 import pandas as pd
 import asyncio
 import itertools
+import json
 
 from dremioai.api.transport import DremioAsyncHttpClient as AsyncHttpClient
 from dremioai.config import settings
@@ -246,10 +247,19 @@ async def get_results(
 
 
 async def run_query(
-    query: Union[Query, str], use_df: bool = False, with_guardrails: bool = True
+    query: Union[Query, str],
+    use_df: bool = False,
+    with_guardrails: bool = True,
+    max_bytes: Optional[int] = None,
 ) -> Union[JobResultsWrapper, pd.DataFrame, "QueryResult"]:
+    """Run ``query`` and return its rows.
+
+    With guardrails, ``max_bytes`` (when positive) stops fetching result pages once the
+    rows read so far exceed that many JSON bytes, so large results are never fully
+    downloaded. The returned ``QueryResult.truncated`` tells whether rows were left unread.
+    """
     if with_guardrails:
-        qr = await _run_query_result(query=query)
+        qr = await _run_query_result(query=query, max_bytes=max_bytes)
         if use_df:
             return _query_result_to_df(qr)
         return qr
@@ -307,7 +317,13 @@ def _query_result_to_df(qr: QueryResult) -> pd.DataFrame:
     return df
 
 
-async def _run_query_result(query: Union[Query, str]) -> QueryResult:
+def _approx_row_bytes(row: Dict[str, Any]) -> int:
+    return len(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8"))
+
+
+async def _run_query_result(
+    query: Union[Query, str], max_bytes: Optional[int] = None
+) -> QueryResult:
     client = AsyncHttpClient()
     dremio_settings = settings.instance().dremio
     if not isinstance(query, Query):
@@ -342,6 +358,7 @@ async def _run_query_result(query: Union[Query, str]) -> QueryResult:
     rows: List[Dict[str, Any]] = []
     result_schema: Optional[List[ResultSchema]] = None
     pages_fetched = 0
+    fetched_bytes = 0
 
     for off in range(0, fetch_rows, page_size):
         remaining = fetch_rows - len(rows)
@@ -352,9 +369,14 @@ async def _run_query_result(query: Union[Query, str]) -> QueryResult:
             result_schema = page.result_schema
         if not page.rows:
             break
-        rows.extend(page.rows[:remaining])
+        page_rows = page.rows[:remaining]
+        rows.extend(page_rows)
         if len(rows) >= fetch_rows:
             break
+        if max_bytes and max_bytes > 0:
+            fetched_bytes += sum(_approx_row_bytes(row) for row in page_rows)
+            if fetched_bytes > max_bytes:
+                break
 
     return QueryResult(
         rows=rows,
