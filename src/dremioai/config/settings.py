@@ -86,14 +86,17 @@ class NoFlag:
 
     pass
 
+
 class RuntimeMutable:
     """Mark a field as safe to update from a runtime config reload."""
+
     pass
 
 
 @dataclass
 class FlagName:
     name: str = None
+
 
 def _has_no_flag(model_cls: type[BaseModel], field_name: str) -> bool:
     """Check if a field has the NoFlag annotation marker."""
@@ -320,7 +323,9 @@ class Dremio(FlagAwareModel):
     wlm: Optional[Wlm] = None
     max_result_bytes: Annotated[Optional[int], RuntimeMutable()] = Field(
         default=204_800,
-        description="Maximum UTF-8 byte size of RunSqlQuery results returned to the MCP client. Use 0 for unlimited.",
+        description="Maximum UTF-8 byte size of the RunSqlQuery response text returned to the MCP client, "
+        "including its metadata; rows that do not fit are dropped and the result is marked partial. "
+        "Use 0 for unlimited.",
     )
     api: Optional[ApiSettings] = Field(default_factory=ApiSettings)
     metrics: Optional[Metrics] = None
@@ -565,6 +570,7 @@ def collect_flag_keys(model_cls: type, prefix: str = "") -> list[str]:
 
 # Module-level holder so configure() can pass the YAML path to the Settings constructor
 _yaml_file: Path | None = None
+
 
 @dataclass(frozen=True)
 class ConfigFingerprint:
