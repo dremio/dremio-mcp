@@ -198,17 +198,18 @@ def _json_payload_bytes(payload: Any) -> int:
 
 
 def _call_tool_result(
-    payload: Dict[str, Any], *, is_error: bool, include_structured: bool = True
+    payload: Dict[str, Any],
+    *,
+    is_error: bool,
+    include_structured: bool = True,
+    text: Optional[str] = None,
 ) -> CallToolResult:
+    if text is None:
+        text = json.dumps(
+            payload, ensure_ascii=False, indent=2, default=_json_safe_value
+        )
     return CallToolResult(
-        content=[
-            TextContent(
-                type="text",
-                text=json.dumps(
-                    payload, ensure_ascii=False, indent=2, default=_json_safe_value
-                ),
-            )
-        ],
+        content=[TextContent(type="text", text=text)],
         structuredContent={"result": payload} if include_structured else None,
         isError=is_error,
     )
@@ -315,9 +316,7 @@ def with_metrics(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
                 _tool_result_bytes(result)
             )
             if _tool_result_is_error(result):
-                tool_result_errors.labels(
-                    project_id=project_id, tool=tool_name
-                ).inc()
+                tool_result_errors.labels(project_id=project_id, tool=tool_name).inc()
             return result
         except Exception:
             tool_result_errors.labels(project_id=project_id, tool=tool_name).inc()
@@ -387,18 +386,17 @@ class RunSqlQuery(Tools):
 
     @secured
     @with_metrics
-    async def invoke(
-        self, query: str
-    ) -> CallToolResult:
+    async def invoke(self, query: str) -> CallToolResult:
         """Run a SQL query on the Dremio cluster and return the results.
         Ensure that SQL keywords like 'day', 'month', 'count', 'table' etc are enclosed in double quotes.
         DML statements (INSERT, UPDATE, DELETE, etc.) may or may not be permitted depending on project configuration.
         If a DML query is not allowed, this will return an error.
 
-        Results are capped at a server-decided response size limit. If the query returns too much
-        data, this tool returns an error instructing the client to retry with a narrower query,
-        for example by selecting fewer columns, filtering more aggressively, aggregating, or
-        fetching the data in stages.
+        Results are capped at a server-decided response size limit. If the query returns more
+        data than fits, this tool returns the first rows that fit with "truncated": true,
+        "total_rows", "returned_rows", and a message. Treat such a result as partial: for answers
+        over all rows, refine the query, for example by aggregating, filtering more aggressively,
+        selecting fewer columns, or fetching the data in stages.
 
         Args:
         query: sql query
@@ -414,60 +412,38 @@ class RunSqlQuery(Tools):
                 include_structured=False,
             )
         try:
-            tagged_query = f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            tagged_query = (
+                f"/* dremioai: submitter={self.__class__.__name__} */\n{query}"
+            )
             dremio_settings = settings.instance().dremio
             max_bytes = dremio_settings.get("max_result_bytes")
             if max_bytes is None:
                 max_bytes = 204_800
 
-            qr = await sql.run_query(query=tagged_query, with_guardrails=True)
+            qr = await sql.run_query(
+                query=tagged_query, with_guardrails=True, max_bytes=max_bytes
+            )
             project_id = dremio_settings.project_id
             sql_result_total_rows.labels(project_id=project_id).observe(qr.total_rows)
             sql_result_pages_fetched.labels(project_id=project_id).observe(
                 qr.pages_fetched
             )
-            records = []
-            response_bytes = 0
-            truncation_reason = None
+            records = _rows_within_budget(qr.rows, max_bytes)
+            payload, text = _fit_sql_payload(records, qr.total_rows, max_bytes)
+            truncated = payload.get("truncated", False)
 
-            for row in qr.rows:
-                record = _json_safe_row(row)
-                if max_bytes > 0:
-                    record_bytes = len(json.dumps(record).encode("utf-8"))
-                    if response_bytes + record_bytes > max_bytes:
-                        truncation_reason = "byte_limit"
-                        break
-                    response_bytes += record_bytes
-                records.append(record)
-
-            sql_result_returned_rows.labels(project_id=project_id).observe(len(records))
-            sql_result_response_bytes.labels(project_id=project_id).observe(
-                response_bytes
+            sql_result_returned_rows.labels(project_id=project_id).observe(
+                len(payload["result"])
             )
-
-            if truncation_reason:
+            sql_result_response_bytes.labels(project_id=project_id).observe(
+                len(text.encode("utf-8"))
+            )
+            if truncated:
                 sql_result_truncations.labels(
-                    project_id=project_id, reason=truncation_reason
+                    project_id=project_id, reason=payload["truncation_reason"]
                 ).inc()
-                return _call_tool_result(
-                    {
-                        "error": (
-                            "This query returned too much data. Try again with a "
-                            "different strategy that reduces the selected data, "
-                            "such as adding LIMIT, filtering, or aggregating."
-                        ),
-                        "result": [],
-                        "truncated": True,
-                        "total_rows": qr.total_rows,
-                        "returned_rows": 0,
-                        "truncation_reason": truncation_reason,
-                    },
-                    is_error=True,
-                    include_structured=False,
-                )
-
             return _call_tool_result(
-                {"result": records}, is_error=False, include_structured=False
+                payload, is_error=False, include_structured=False, text=text
             )
         except RuntimeError as e:
             return _call_tool_result(
@@ -478,6 +454,75 @@ class RunSqlQuery(Tools):
                 is_error=True,
                 include_structured=False,
             )
+
+
+def _rows_within_budget(rows: List[Dict[str, Any]], max_bytes: int) -> List[Any]:
+    """Convert rows to JSON-safe records, stopping once their compact size passes max_bytes."""
+    records = []
+    used = 0
+    for row in rows:
+        record = _json_safe_row(row)
+        if max_bytes > 0:
+            used += len(_compact_json(record).encode("utf-8")) + 1
+            if used > max_bytes:
+                break
+        records.append(record)
+    return records
+
+
+def _compact_json(value: Any) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), default=_json_safe_value
+    )
+
+
+def _sql_payload(records: List[Any], total_rows: int, max_bytes: int) -> Dict[str, Any]:
+    if len(records) >= total_rows:
+        return {"result": records}
+    return {
+        "result": records,
+        "truncated": True,
+        "total_rows": total_rows,
+        "returned_rows": len(records),
+        "truncation_reason": "byte_limit",
+        "message": _partial_result_message(len(records), total_rows, max_bytes),
+    }
+
+
+def _fit_sql_payload(
+    records: List[Any], total_rows: int, max_bytes: int
+) -> Tuple[Dict[str, Any], str]:
+    """Build the RunSqlQuery payload and its compact JSON text, dropping trailing rows
+    until the whole serialized response fits in max_bytes (0 = unlimited).
+
+    The metadata-only response (no rows) is always returned, even if it alone exceeds
+    a very small limit, so the client still learns why no rows are shown."""
+    records = list(records)
+    while True:
+        payload = _sql_payload(records, total_rows, max_bytes)
+        text = _compact_json(payload)
+        if max_bytes <= 0 or not records or len(text.encode("utf-8")) <= max_bytes:
+            return payload, text
+        records.pop()
+
+
+def _partial_result_message(returned_rows: int, total_rows: int, max_bytes: int) -> str:
+    limit = (
+        f"{max_bytes:,}-byte response size limit"
+        if max_bytes > 0
+        else "response size limit"
+    )
+    if returned_rows == 0:
+        return (
+            f"The query returned {total_rows} rows, but even a single row exceeds the "
+            f"{limit}, so no rows are shown. Select fewer or narrower columns."
+        )
+    return (
+        f"Partial result: showing the first {returned_rows} of {total_rows} rows because "
+        f"the full result exceeds the {limit}. Do not treat these rows as "
+        "complete; for answers over all rows, aggregate, filter, or select fewer columns "
+        "in SQL."
+    )
 
 
 class BuildUsageReport(Tools):
@@ -598,7 +643,9 @@ class GetTableOrViewLineage(Tools):
         try:
             return await get_lineage(table_name)
         except ClientResponseError as e:
-            logger.error(f"Lineage lookup failed for {table_name}: HTTP {e.status} {e.message}")
+            logger.error(
+                f"Lineage lookup failed for {table_name}: HTTP {e.status} {e.message}"
+            )
             if e.status == HTTPStatus.NOT_FOUND:
                 message = "The table or view was not found. Please verify the table name and try again."
             elif e.status == HTTPStatus.BAD_REQUEST:

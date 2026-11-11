@@ -83,15 +83,19 @@ async def test_get_results_uses_polling_interval_get_for_ld_precedence(mock_ldcl
 
 
 def _make_completed_job(row_count: int) -> Job:
-    return Job(jobState=JobState.COMPLETED, rowCount=row_count, queryType=QueryType.REST)
+    return Job(
+        jobState=JobState.COMPLETED, rowCount=row_count, queryType=QueryType.REST
+    )
 
 
 def _make_job_results(rows):
     return JobResults(
         rowCount=len(rows),
-        schema=[{"name": name, "type": {"name": "VARCHAR"}} for name in rows[0].keys()]
-        if rows
-        else [],
+        schema=(
+            [{"name": name, "type": {"name": "VARCHAR"}} for name in rows[0].keys()]
+            if rows
+            else []
+        ),
         rows=rows,
     )
 
@@ -215,7 +219,12 @@ async def test_run_query_can_disable_guardrails_for_full_results():
 
     settings.set_base_settings(
         settings.Settings.model_validate(
-            {"dremio": {"uri": "https://test.dremio.cloud", "api": {"polling_interval": 0}}}
+            {
+                "dremio": {
+                    "uri": "https://test.dremio.cloud",
+                    "api": {"polling_interval": 0},
+                }
+            }
         )
     )
 
@@ -231,3 +240,48 @@ async def test_run_query_can_disable_guardrails_for_full_results():
 
     assert isinstance(result, JobResultsWrapper)
     assert list(result)[0].rows == rows
+
+
+@pytest.mark.asyncio
+async def test_run_query_with_max_bytes_stops_fetching_once_budget_exceeded():
+    job = _make_completed_job(1_000_000)
+    page = _make_job_results([{"a": "x" * 100} for _ in range(500)])
+    client = AsyncMock()
+    client.post.return_value = QuerySubmission(id="job-1")
+
+    with (
+        patch("dremioai.api.dremio.sql.AsyncHttpClient", return_value=client),
+        patch("dremioai.api.dremio.sql._wait_for_job", new=AsyncMock(return_value=job)),
+        patch(
+            "dremioai.api.dremio.sql._fetch_results",
+            new=AsyncMock(return_value=page),
+        ) as mock_fetch,
+    ):
+        qr = await run_query("SELECT 1", max_bytes=204_800)
+
+    assert qr.truncated is True
+    assert qr.total_rows == 1_000_000
+    assert mock_fetch.await_count == qr.pages_fetched
+    assert qr.pages_fetched <= 5
+    assert qr.returned_rows == 500 * qr.pages_fetched
+
+
+@pytest.mark.asyncio
+async def test_run_query_without_max_bytes_still_fetches_every_page():
+    job = _make_completed_job(1500)
+    page = _make_job_results([{"a": "x" * 100} for _ in range(500)])
+    client = AsyncMock()
+    client.post.return_value = QuerySubmission(id="job-1")
+
+    with (
+        patch("dremioai.api.dremio.sql.AsyncHttpClient", return_value=client),
+        patch("dremioai.api.dremio.sql._wait_for_job", new=AsyncMock(return_value=job)),
+        patch(
+            "dremioai.api.dremio.sql._fetch_results",
+            new=AsyncMock(return_value=page),
+        ) as mock_fetch,
+    ):
+        qr = await run_query("SELECT 1")
+
+    assert qr.truncated is False
+    assert mock_fetch.await_count == 3
