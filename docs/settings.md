@@ -70,6 +70,22 @@ PAT can be provided:
 -   Directly as a string
 -   As a file path prefixed with '@' (e.g., "@~/tokens/dremio.token")
 
+#### Basic auth (Dremio Software without PAT support)
+
+Dremio Software deployments that cannot issue PATs (e.g. Community edition)
+can authenticate with username/password instead. The server exchanges the
+credentials for a session token via `POST /apiv2/login` and refreshes it
+automatically before it expires. Ignored for Dremio Cloud; if both `pat` and
+`basic_auth` are configured, the PAT wins.
+
+```yaml
+dremio:
+  uri: https://your-dremio-instance:9047
+  basic_auth:
+    username: <string> # Dremio username
+    password: <string> # Direct value or '@' file reference, e.g. "@~/tokens/dremio.password"
+```
+
 ### Tools Settings
 
 ```yaml
